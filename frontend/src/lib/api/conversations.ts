@@ -26,6 +26,10 @@ export interface Conversation {
     status?: string;
     tags?: string[];
   };
+   assignedUser?: { // NEW: Add this
+    name?: string;
+    email?: string;
+  };
 }
 
 export interface Message {
@@ -110,6 +114,35 @@ export const conversationsApi = {
     const queryString = buildQueryString({ page, limit });
     return await api.request(`/conversations/${id}${queryString}`);
   },
+
+    getAssignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+    const queryString = buildQueryString(filters);
+    return await api.request(`/conversations/assigned/me${queryString}`);
+  },
+
+  // Get unassigned conversations
+  getUnassignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+    const queryString = buildQueryString(filters);
+    return await api.request(`/conversations/unassigned${queryString}`);
+  },
+
+  // Assign conversation to user
+  assignConversation: async (id: string, assignedToUserId?: string): Promise<{ 
+    success: boolean; 
+    conversation: Conversation;
+    assignedUser?: { name: string; email: string };
+  }> => {
+    return await api.request(`/conversations/${id}/assign`, {
+      method: 'PATCH',
+      body: JSON.stringify({ assignedToUserId }),
+    });
+  },
+  
+  // Get available users for assignment (you'll need to create this endpoint)
+  getAvailableUsers: async (): Promise<{ success: boolean; users: Array<{ id: string; name: string; email: string }> }> => {
+    return await api.request('/users/available');
+  },
+
 
   // Send message
   sendMessage: async (conversationId: string, message: string): Promise<{ success: boolean; message: Message }> => {

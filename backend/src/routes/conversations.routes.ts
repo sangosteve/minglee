@@ -5,7 +5,253 @@ import { conversations, contacts, messages, users } from '../db/schema';
 import { eq, and, or, like, desc, asc, sql } from 'drizzle-orm';
 
 const router = Router();
-
+// GET /api/conversations/unread/count - Get unread count
+router.get('/unread/count', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const db = getDb();
+    
+    const result = await db.select({ 
+      count: sql`sum(${conversations.unreadCount})` 
+    })
+      .from(conversations)
+      .where(eq(conversations.userId, userId));
+    
+    const count = result[0]?.count || 0;
+    
+    res.json({
+      success: true,
+      count: Number(count),
+    });
+    
+  } catch (error: any) {
+    console.error('Error getting unread count:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get unread count' 
+    });
+  }
+});
+// GET /api/conversations/assigned - Get conversations assigned to current user
+router.get('/assigned/me', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20 
+    } = req.query;
+    
+    const db = getDb();
+    const offset = (Number(page) - 1) * Number(limit);
+    const userId = req.user!.userId;
+    
+    // Build WHERE clause for assigned conversations
+    let whereClause = `c.assigned_to_user_id = '${userId}'`;
+    
+    // You can add status filter if needed
+    // if (status && status !== 'all') {
+    //   whereClause += ` AND c.status = '${status}'`;
+    // }
+    
+    const conversationsQuery = `
+      SELECT 
+        c.id,
+        c.contact_id as "contactId",
+        c.user_id as "userId",
+        c.assigned_to_user_id as "assignedToUserId",
+        c.whatsapp_phone_number_id as "whatsappPhoneNumberId",
+        c.last_message as "lastMessage",
+        c.last_message_at as "lastMessageAt",
+        c.unread_count as "unreadCount",
+        c.status,
+        c.created_at as "createdAt",
+        c.updated_at as "updatedAt",
+        con.id as "contact_id",
+        con.name as "contact_name",
+        con.phone as "contact_phone",
+        con.email as "contact_email",
+        con.status as "contact_status",
+        con.tags as "contact_tags",
+        assigned_user.name as "assigned_user_name",
+        assigned_user.email as "assigned_user_email"
+      FROM conversations c
+      LEFT JOIN contacts con ON c.contact_id = con.id
+      LEFT JOIN users assigned_user ON c.assigned_to_user_id = assigned_user.id
+      WHERE ${whereClause}
+      ORDER BY c.last_message_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    
+    const conversationsResult = await db.execute(sql.raw(conversationsQuery));
+    
+    // Format the response
+    const formattedConversations = conversationsResult.rows.map((row: any) => {
+      const conversation = {
+        id: row.id,
+        contactId: row.contactId,
+        userId: row.userId,
+        assignedToUserId: row.assignedToUserId,
+        whatsappPhoneNumberId: row.whatsappPhoneNumberId,
+        lastMessage: row.lastMessage,
+        lastMessageAt: row.lastMessageAt,
+        unreadCount: row.unreadCount,
+        status: row.status,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        assignedUser: row.assignedToUserId ? {
+          name: row.assigned_user_name,
+          email: row.assigned_user_email
+        } : null
+      };
+      
+      const contact = row.contact_id ? {
+        id: row.contact_id,
+        name: row.contact_name,
+        phone: row.contact_phone,
+        email: row.contact_email,
+        status: row.contact_status,
+        tags: row.contact_tags || [],
+      } : null;
+      
+      return {
+        ...conversation,
+        contact,
+      };
+    });
+    
+    // Count total
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM conversations c
+      WHERE ${whereClause}
+    `;
+    
+    const countResult = await db.execute(sql.raw(countQuery));
+    const total = countResult.rows[0]?.total || 0;
+    
+    res.json({
+      success: true,
+      conversations: formattedConversations,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total: Number(total),
+        pages: Math.ceil(Number(total) / Number(limit)),
+      },
+    });
+    
+  } catch (error: any) {
+    console.error('❌ Error fetching assigned conversations:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch assigned conversations',
+      details: error.message 
+    });
+  }
+});
+// GET /api/conversations/unassigned - Get unassigned conversations
+router.get('/unassigned', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20 
+    } = req.query;
+    
+    const db = getDb();
+    const offset = (Number(page) - 1) * Number(limit);
+    const userId = req.user!.userId;
+    
+    // Build WHERE clause for unassigned conversations
+    let whereClause = `c.user_id = '${userId}' AND c.assigned_to_user_id IS NULL`;
+    
+    const conversationsQuery = `
+      SELECT 
+        c.id,
+        c.contact_id as "contactId",
+        c.user_id as "userId",
+        c.assigned_to_user_id as "assignedToUserId",
+        c.whatsapp_phone_number_id as "whatsappPhoneNumberId",
+        c.last_message as "lastMessage",
+        c.last_message_at as "lastMessageAt",
+        c.unread_count as "unreadCount",
+        c.status,
+        c.created_at as "createdAt",
+        c.updated_at as "updatedAt",
+        con.id as "contact_id",
+        con.name as "contact_name",
+        con.phone as "contact_phone",
+        con.email as "contact_email",
+        con.status as "contact_status",
+        con.tags as "contact_tags"
+      FROM conversations c
+      LEFT JOIN contacts con ON c.contact_id = con.id
+      WHERE ${whereClause}
+      ORDER BY c.last_message_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    
+    const conversationsResult = await db.execute(sql.raw(conversationsQuery));
+    
+    // Format the response (same as above)
+    const formattedConversations = conversationsResult.rows.map((row: any) => {
+      const conversation = {
+        id: row.id,
+        contactId: row.contactId,
+        userId: row.userId,
+        assignedToUserId: row.assignedToUserId,
+        whatsappPhoneNumberId: row.whatsappPhoneNumberId,
+        lastMessage: row.lastMessage,
+        lastMessageAt: row.lastMessageAt,
+        unreadCount: row.unreadCount,
+        status: row.status,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+      
+      const contact = row.contact_id ? {
+        id: row.contact_id,
+        name: row.contact_name,
+        phone: row.contact_phone,
+        email: row.contact_email,
+        status: row.contact_status,
+        tags: row.contact_tags || [],
+      } : null;
+      
+      return {
+        ...conversation,
+        contact,
+      };
+    });
+    
+    // Count total
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM conversations c
+      WHERE ${whereClause}
+    `;
+    
+    const countResult = await db.execute(sql.raw(countQuery));
+    const total = countResult.rows[0]?.total || 0;
+    
+    res.json({
+      success: true,
+      conversations: formattedConversations,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total: Number(total),
+        pages: Math.ceil(Number(total) / Number(limit)),
+      },
+    });
+    
+  } catch (error: any) {
+    console.error('❌ Error fetching unassigned conversations:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch unassigned conversations',
+      details: error.message 
+    });
+  }
+});
 // GET /api/conversations - Get all conversations for user
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -51,6 +297,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
         c.id,
         c.contact_id as "contactId",
         c.user_id as "userId",
+        c.assigned_to_user_id as "assignedToUserId",
         c.whatsapp_phone_number_id as "whatsappPhoneNumberId",
         c.last_message as "lastMessage",
         c.last_message_at as "lastMessageAt",
@@ -493,32 +740,90 @@ router.patch('/:id/read', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// GET /api/conversations/unread/count - Get unread count
-router.get('/unread/count', authenticate, async (req: AuthRequest, res) => {
+
+
+
+// PATCH /api/conversations/:id/assign - Assign conversation to user
+router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
   try {
+    const { id } = req.params;
+    const { assignedToUserId } = req.body;
     const userId = req.user!.userId;
+    
     const db = getDb();
     
-    const result = await db.select({ 
-      count: sql`sum(${conversations.unreadCount})` 
-    })
+    // First, verify the conversation exists and user has access
+    const conversationResult = await db.select()
       .from(conversations)
-      .where(eq(conversations.userId, userId));
+      .where(
+        and(
+          eq(conversations.id, id),
+          eq(conversations.userId, userId) // User must own the conversation to assign it
+        )
+      )
+      .limit(1);
     
-    const count = result[0]?.count || 0;
+    if (conversationResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conversation not found or you do not have permission',
+      });
+    }
+    
+    // If assigning to a specific user, verify that user exists
+    if (assignedToUserId) {
+      const userResult = await db.select()
+        .from(users)
+        .where(eq(users.id, assignedToUserId))
+        .limit(1);
+      
+      if (userResult.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User to assign to not found',
+        });
+      }
+    }
+    
+    // Update the assignment
+    const [updatedConversation] = await db.update(conversations)
+      .set({
+        assignedToUserId: assignedToUserId || null, // null to unassign
+        updatedAt: new Date(),
+      })
+      .where(eq(conversations.id, id))
+      .returning();
+    
+    // Get assigned user details if assigned
+    let assignedUser = null;
+    if (assignedToUserId) {
+      const userResult = await db.select({
+        name: users.name,
+        email: users.email
+      })
+        .from(users)
+        .where(eq(users.id, assignedToUserId))
+        .limit(1);
+      
+      assignedUser = userResult[0] || null;
+    }
     
     res.json({
       success: true,
-      count: Number(count),
+      conversation: updatedConversation,
+      assignedUser
     });
     
   } catch (error: any) {
-    console.error('Error getting unread count:', error);
+    console.error('❌ Error assigning conversation:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Failed to get unread count' 
+      error: 'Failed to assign conversation',
+      details: error.message 
     });
   }
 });
+
+
 
 export default router;

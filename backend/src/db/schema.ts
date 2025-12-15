@@ -100,7 +100,7 @@ export const conversations = pgTable("conversations", {
   // Relationships - using UUIDs
   contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
-  
+  assignedToUserId: uuid("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
   whatsappPhoneNumberId: varchar("whatsapp_phone_number_id", { length: 255 }),
   lastMessage: text("last_message"),
   lastMessageAt: timestamp("last_message_at").defaultNow(),

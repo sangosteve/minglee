@@ -12,6 +12,7 @@ import authRoutes from "./routes/auth.routes";
 import whatsappRoutes from "./routes/whatsapp.routes";
 import conversationsRoute from "./routes/conversations.routes";
 import mediaRoutes from "./routes/media.routes";
+import usersRoutes from "./routes/users.routes";
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use([
   "/api/whatsapp/send", // Only the text send route
   "/api/whatsapp/config",
   "/api/whatsapp/conversations",
+  "/api/users",
   "/api/whatsapp/health"
 ], express.json({ limit: '50mb' }));
 
@@ -49,7 +51,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
-
+app.use("/api/users", usersRoutes);
 // 5. Health check
 app.get("/health", (_req, res) => {
   res.json({ 

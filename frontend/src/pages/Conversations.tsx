@@ -11,6 +11,7 @@ import {
   useSendMediaMessage,
   type Conversation,
   type Message,
+  conversationsApi,
 } from "@/lib/api/conversations";
 import {
   MagnifyingGlassIcon,
@@ -47,7 +48,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
-
+import { AssignmentDropdown } from "@/components/chat/AssignmentDropdown";
+import { useQuery } from '@tanstack/react-query';
 // Helper functions
 const getInitials = (name?: string | null) => {
   if (!name) return "??";
@@ -225,6 +227,18 @@ const Conversations = () => {
     1,
     50
   );
+
+  const { data: assignedConversations } = useQuery({
+  queryKey: ['conversations-assigned'],
+  queryFn: () => conversationsApi.getAssignedConversations(),
+  staleTime: 1000 * 30,
+});
+
+const { data: unassignedConversations } = useQuery({
+  queryKey: ['conversations-unassigned'],
+  queryFn: () => conversationsApi.getUnassignedConversations(),
+  staleTime: 1000 * 30,
+});
   
   const sendMessage = useSendMessage();
   const sendMediaMessage = useSendMediaMessage();
@@ -441,7 +455,7 @@ const handleSendMessage = async () => {
               </div>
             </div>
             <div className="flex border-b border-border">
-              {["All", "Unread", "Open", "Resolved"].map((tab) => (
+              {["All", "Unassigned", "Assigned", "Unread", "Open", "Resolved"].map((tab) => (
                 <div key={tab} className="flex-1 py-3">
                   <div className="h-4 bg-secondary rounded mx-2 animate-pulse"></div>
                 </div>
@@ -626,6 +640,13 @@ const handleSendMessage = async () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                   <AssignmentDropdown 
+      conversationId={selectedConversation.id}
+      currentAssignment={selectedConversation.assignedToUserId}
+      onAssignmentChange={() => {
+        // Optional: Show toast or refresh data
+      }}
+    />
                   <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
                     <PhoneIcon className="w-5 h-5 text-muted-foreground" />
                   </button>
