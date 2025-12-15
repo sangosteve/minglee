@@ -11,6 +11,7 @@ import { CheckIcon as CheckSolid } from "@heroicons/react/24/solid";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { conversationsApi } from '@/lib/api/conversations';
+import { useAuthStore } from '@/stores/auth.store'; // Import auth store
 
 interface User {
   id: string;
@@ -31,6 +32,10 @@ export const AssignmentDropdown: React.FC<AssignmentDropdownProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const queryClient = useQueryClient();
+  
+  // Get current user ID from auth store
+  const { user: currentAuthUser } = useAuthStore();
+  const currentUserId = currentAuthUser?.id;
   
   // Fetch available users
   const { data: usersData, isLoading: usersLoading } = useQuery({
@@ -63,6 +68,21 @@ export const AssignmentDropdown: React.FC<AssignmentDropdownProps> = ({
     setIsOpen(false);
   };
   
+  // Get display name with "ME" indicator
+  const getDisplayName = (user: User) => {
+    if (user.id === currentUserId) {
+      return `${user.name} (ME)`;
+    }
+    return user.name;
+  };
+  
+  // Sort users: current user first, then others
+  const sortedUsers = [...users].sort((a, b) => {
+    if (a.id === currentUserId) return -1;
+    if (b.id === currentUserId) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuTrigger asChild>
@@ -80,7 +100,9 @@ export const AssignmentDropdown: React.FC<AssignmentDropdownProps> = ({
           ) : currentUser ? (
             <>
               <UserIcon className="w-4 h-4" />
-              <span className="font-medium">{currentUser.name}</span>
+              <span className="font-medium">
+                {currentUser.id === currentUserId ? `${currentUser.name} (ME)` : currentUser.name}
+              </span>
               <span className="text-xs opacity-70">(Assigned)</span>
             </>
           ) : (
@@ -122,28 +144,40 @@ export const AssignmentDropdown: React.FC<AssignmentDropdownProps> = ({
           <div className="px-2 py-3 text-center text-sm text-muted-foreground">
             Loading users...
           </div>
-        ) : users.length === 0 ? (
+        ) : sortedUsers.length === 0 ? (
           <div className="px-2 py-3 text-center text-sm text-muted-foreground">
             No other users available
           </div>
         ) : (
-          users.map((user) => (
+          sortedUsers.map((user) => (
             <DropdownMenuItem
               key={user.id}
               onClick={() => handleAssign(user.id)}
               className={cn(
                 "flex items-center justify-between cursor-pointer",
-                currentAssignment === user.id && "bg-primary/10 text-primary font-medium"
+                currentAssignment === user.id && "bg-primary/10 text-primary font-medium",
+                user.id === currentUserId && "bg-primary/5" // Optional: highlight current user
               )}
             >
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <span className="text-xs font-medium text-primary">
+                <div className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center",
+                  user.id === currentUserId ? "bg-primary/20" : "bg-primary/10"
+                )}>
+                  <span className={cn(
+                    "text-xs font-medium",
+                    user.id === currentUserId ? "text-primary" : "text-primary/70"
+                  )}>
                     {user.name.charAt(0).toUpperCase()}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="font-medium">{user.name}</span>
+                  <span className={cn(
+                    "font-medium",
+                    user.id === currentUserId && "text-primary"
+                  )}>
+                    {getDisplayName(user)}
+                  </span>
                   <span className="text-xs text-muted-foreground">{user.email}</span>
                 </div>
               </div>
