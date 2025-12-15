@@ -10,11 +10,12 @@ class ApiClient {
   ): Promise<T> {
     const { accessToken, refreshToken, clearAuth, setAuth } = useAuthStore.getState();
     
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    };
-
+ const headers: HeadersInit = {};
+    
+    // Don't automatically set Content-Type for FormData
+    if (!(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+    }
     if (accessToken) {
       headers['Authorization'] = `Bearer ${accessToken}`;
     }
