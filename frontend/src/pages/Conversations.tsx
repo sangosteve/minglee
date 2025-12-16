@@ -1,6 +1,4 @@
-// frontend/src/pages/Conversations.tsx
-import React, { useState, useEffect, useRef } from "react";
-
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   useConversations,
   useConversation,
@@ -49,7 +47,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { AssignmentDropdown } from "@/components/chat/AssignmentDropdown";
-import { useQuery } from '@tanstack/react-query';
+import { ConversationSidebar, ConversationFilters } from "@/components/chat/ConversationSidebar";
+import { useAuthStore } from "@/stores/auth.store";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useQuery } from "@tanstack/react-query";
+
 // Helper functions
 const getInitials = (name?: string | null) => {
   if (!name) return "??";
@@ -81,7 +93,6 @@ const formatMessageTime = (dateString: string) => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-// File type helper
 const getFileIconColor = (filename: string) => {
   if (!filename) return { bg: "bg-primary/20", text: "text-primary" };
   if (filename.endsWith('.pdf')) return { bg: "bg-red-500/20", text: "text-red-500" };
@@ -94,7 +105,6 @@ const getFileIconColor = (filename: string) => {
   return { bg: "bg-primary/20", text: "text-primary" };
 };
 
-// Format file size
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return 'N/A';
   if (bytes < 1024) return bytes + ' B';
@@ -103,7 +113,6 @@ const formatFileSize = (bytes?: number): string => {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 };
 
-// Determine if message has media content
 const hasMediaContent = (message: Message): boolean => {
   const metadata = message.metadata || {};
   return !!(
@@ -118,7 +127,6 @@ const hasMediaContent = (message: Message): boolean => {
   );
 };
 
-// Get media type from message
 const getMediaType = (message: Message): string => {
   const metadata = message.metadata || {};
   
@@ -133,7 +141,6 @@ const getMediaType = (message: Message): string => {
   return 'text';
 };
 
-// Get media URL from message
 const getMediaUrl = (message: Message): string | undefined => {
   const metadata = message.metadata || {};
   return metadata.cloudinaryUrl || 
@@ -143,7 +150,6 @@ const getMediaUrl = (message: Message): string | undefined => {
          metadata.video?.url;
 };
 
-// Get filename from message
 const getFilename = (message: Message): string => {
   const metadata = message.metadata || {};
   return metadata.originalFilename || 
@@ -153,7 +159,6 @@ const getFilename = (message: Message): string => {
          'file';
 };
 
-// Message status icon
 const getMessageStatusIcon = (status: string) => {
   switch (status) {
     case "read":
@@ -167,7 +172,6 @@ const getMessageStatusIcon = (status: string) => {
   }
 };
 
-// Status indicator
 const getStatusIndicator = (status: string) => {
   const statusMap: Record<string, string> = {
     'active': 'bg-success',
@@ -179,13 +183,11 @@ const getStatusIndicator = (status: string) => {
   return statusMap[status] || 'bg-muted-foreground';
 };
 
-// Get contact status for UI
 const getContactStatus = (contactStatus?: string): "online" | "offline" => {
   if (contactStatus === 'active' || contactStatus === 'online') return 'online';
   return 'offline';
 };
 
-// File type detection
 type MediaType = "image" | "video" | "audio" | "document" | "compressed";
 
 interface AttachmentPreview {
@@ -215,41 +217,109 @@ const Conversations = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
-
-  // React Query
-  const { data: conversationsData, isLoading: conversationsLoading } = useConversations({
-    search: searchQuery || undefined,
-    status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
+  const [sidebarFilters, setSidebarFilters] = useState<ConversationFilters>({
+    inboxType: 'all',
+    lifecycle: '',
+    status: 'open',
+    teamInbox: '',
+    customInbox: '',
+    viewType: 'chats',
   });
-  
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  const { user } = useAuthStore();
+
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Fetch ALL conversations once
+  const { data: allConversationsData, isLoading: conversationsLoading } = useQuery({
+    queryKey: ['conversations', { 
+      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined, 
+      search: debouncedSearch 
+    }],
+    queryFn: () => conversationsApi.getAllConversations({
+      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
+      search: debouncedSearch || undefined,
+    }),
+    staleTime: 1000 * 30,
+  });
+
+  // Fetch assigned conversations (for "Mine" filter)
+  const { data: assignedConversationsData, isLoading: assignedLoading } = useQuery({
+    queryKey: ['conversations-assigned', { user: user?.id }],
+    queryFn: () => conversationsApi.getAssignedConversations(),
+    enabled: sidebarFilters.inboxType === 'mine' && !!user?.id,
+    staleTime: 1000 * 30,
+  });
+
+  // Fetch unassigned conversations (for "Unassigned" filter)
+  const { data: unassignedConversationsData, isLoading: unassignedLoading } = useQuery({
+    queryKey: ['conversations-unassigned'],
+    queryFn: () => conversationsApi.getUnassignedConversations(),
+    enabled: sidebarFilters.inboxType === 'unassigned',
+    staleTime: 1000 * 30,
+  });
+
   const { data: conversationData, isLoading: conversationLoading } = useConversation(
     selectedConversationId || "",
     1,
     50
   );
 
-  const { data: assignedConversations } = useQuery({
-  queryKey: ['conversations-assigned'],
-  queryFn: () => conversationsApi.getAssignedConversations(),
-  staleTime: 1000 * 30,
-});
-
-const { data: unassignedConversations } = useQuery({
-  queryKey: ['conversations-unassigned'],
-  queryFn: () => conversationsApi.getUnassignedConversations(),
-  staleTime: 1000 * 30,
-});
-  
   const sendMessage = useSendMessage();
   const sendMediaMessage = useSendMediaMessage();
   const updateStatus = useUpdateConversationStatus();
   const markAsRead = useMarkAsRead();
   const { data: unreadCount } = useUnreadCount();
 
-  const conversations = conversationsData?.conversations || [];
+  // Select the appropriate data based on active filter
+  const conversations = useMemo(() => {
+    switch (sidebarFilters.inboxType) {
+      case 'mine':
+        return assignedConversationsData?.conversations || [];
+      case 'unassigned':
+        return unassignedConversationsData?.conversations || [];
+      case 'all':
+      default:
+        return allConversationsData?.conversations || [];
+    }
+  }, [
+    sidebarFilters.inboxType,
+    allConversationsData?.conversations,
+    assignedConversationsData?.conversations,
+    unassignedConversationsData?.conversations,
+  ]);
+
+  const allConversations = allConversationsData?.conversations || [];
   const selectedConversation = conversationData?.conversation;
   const messages = conversationData?.messages || [];
   const contact = conversationData?.contact;
+
+  // Calculate counts for sidebar
+  const getInboxCounts = useMemo(() => {
+    const currentUserId = user?.id ? String(user.id) : null;
+    
+    const mineCount = allConversations.filter(conv => {
+      if (!currentUserId || !conv.assignedToUserId) return false;
+      return String(conv.assignedToUserId) === currentUserId;
+    }).length;
+
+    const unassignedCount = allConversations.filter(conv => {
+      return conv.assignedToUserId === null || conv.assignedToUserId === undefined;
+    }).length;
+
+    return {
+      all: allConversations.length,
+      mine: mineCount,
+      unassigned: unassignedCount,
+    };
+  }, [allConversations, user?.id]);
 
   // Auto-select first conversation
   useEffect(() => {
@@ -308,58 +378,47 @@ const { data: unassignedConversations } = useQuery({
     setCaption("");
   };
 
-const handleSendMessage = async () => {
-  if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0)) return;
+  const handleSendMessage = async () => {
+    if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0)) return;
 
-  try {
-    if (attachments.length > 0) {
-      // Send media message with attachments
-      const formData = new FormData();
-      
-      // Make sure contact has a phone number
-      if (!contact?.phone) {
-        toast({
-          title: "Cannot send message",
-          description: "Contact phone number is missing",
-          variant: "destructive",
+    try {
+      if (attachments.length > 0) {
+        const formData = new FormData();
+        
+        if (!contact?.phone) {
+          toast({
+            title: "Cannot send message",
+            description: "Contact phone number is missing",
+            variant: "destructive",
+          });
+          return;
+        }
+        
+        formData.append('phoneNumber', contact.phone);
+        formData.append('caption', caption || '');
+        
+        if (attachments[0]) {
+          formData.append('file', attachments[0].file);
+        }
+
+        await sendMediaMessage.mutateAsync(formData);
+        handleClearAllAttachments();
+      } else {
+        await sendMessage.mutateAsync({
+          conversationId: selectedConversationId,
+          message: messageInput.trim(),
         });
-        return;
       }
       
-      formData.append('phoneNumber', contact.phone);
-      formData.append('caption', caption || '');
-      
-      // Send only the FIRST file (multer.single expects one file)
-      if (attachments[0]) {
-        formData.append('file', attachments[0].file);
-      }
-
-      console.log('📤 Sending FormData with:', {
-        phoneNumber: contact.phone,
-        caption: caption || '',
-        fileCount: 1,
-        fileName: attachments[0]?.file.name
-      });
-
-      await sendMediaMessage.mutateAsync(formData);
-      handleClearAllAttachments();
-    } else {
-      // Send text message
-      await sendMessage.mutateAsync({
-        conversationId: selectedConversationId,
-        message: messageInput.trim(),
+      setMessageInput("");
+    } catch (error) {
+      toast({
+        title: "Failed to send message",
+        description: "Please try again",
+        variant: "destructive",
       });
     }
-    
-    setMessageInput("");
-  } catch (error) {
-    toast({
-      title: "Failed to send message",
-      description: "Please try again",
-      variant: "destructive",
-    });
-  }
-};
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -375,7 +434,6 @@ const handleSendMessage = async () => {
     }
   };
 
-  // Handle media download
   const handleDownloadMedia = (message: Message) => {
     const mediaUrl = getMediaUrl(message);
     const filename = getFilename(message);
@@ -389,7 +447,6 @@ const handleSendMessage = async () => {
       return;
     }
 
-    // Create a temporary link to trigger download
     const link = document.createElement('a');
     link.href = mediaUrl;
     link.download = filename;
@@ -403,7 +460,6 @@ const handleSendMessage = async () => {
     });
   };
 
-  // Handle view media in new tab
   const handleViewMedia = (message: Message) => {
     const mediaUrl = getMediaUrl(message);
     if (mediaUrl) {
@@ -411,7 +467,6 @@ const handleSendMessage = async () => {
     }
   };
 
-  // Drag and drop handlers
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -443,92 +498,137 @@ const handleSendMessage = async () => {
     setMessageInput(prev => prev + emoji);
   };
 
-  if (conversationsLoading) {
+  const handleSidebarFilterChange = (filters: ConversationFilters) => {
+    setSidebarFilters(filters);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+  };
+
+  const isLoading = conversationsLoading || assignedLoading || unassignedLoading;
+
+  if (isLoading) {
     return (
-    
-        <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
-          {/* Loading skeleton */}
-          <div className="w-80 border-r border-border flex flex-col">
-            <div className="p-4 border-b border-border">
-              <div className="relative">
-                <div className="w-full h-9 bg-secondary rounded-lg animate-pulse"></div>
-              </div>
-            </div>
-            <div className="flex border-b border-border">
-              {["All", "Unassigned", "Assigned", "Unread", "Open", "Resolved"].map((tab) => (
-                <div key={tab} className="flex-1 py-3">
-                  <div className="h-4 bg-secondary rounded mx-2 animate-pulse"></div>
-                </div>
-              ))}
-            </div>
-            <div className="flex-1 p-4 space-y-4">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-secondary animate-pulse"></div>
-                  <div className="flex-1 space-y-2">
-                    <div className="h-4 bg-secondary rounded animate-pulse"></div>
-                    <div className="h-3 bg-secondary rounded animate-pulse w-2/3"></div>
-                  </div>
-                </div>
-              ))}
+      <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
+        <ConversationSidebar 
+          onFilterChange={handleSidebarFilterChange}
+          currentUserId={user?.id}
+          inboxCounts={getInboxCounts}
+        />
+
+        <div className="w-80 border-r border-border flex flex-col">
+          <div className="p-4 border-b border-border">
+            <div className="relative">
+              <div className="w-full h-9 bg-secondary rounded-lg animate-pulse"></div>
             </div>
           </div>
+          <div className="flex border-b border-border">
+            {["All", "Unassigned", "Assigned", "Unread", "Open", "Resolved"].map((tab) => (
+              <div key={tab} className="flex-1 py-3">
+                <div className="h-4 bg-secondary rounded mx-2 animate-pulse"></div>
+              </div>
+            ))}
+          </div>
+          <div className="flex-1 p-4 space-y-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-secondary animate-pulse"></div>
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-secondary rounded animate-pulse"></div>
+                  <div className="h-3 bg-secondary rounded animate-pulse w-2/3"></div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
- 
+
+        <div className="flex-1 flex items-center justify-center bg-secondary/30">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-secondary rounded-full animate-pulse mx-auto mb-4"></div>
+            <div className="h-4 w-48 bg-secondary rounded animate-pulse mx-auto mb-2"></div>
+            <div className="h-3 w-64 bg-secondary rounded animate-pulse mx-auto"></div>
+          </div>
+        </div>
+      </div>
     );
   }
 
   return (
-   
+    <TooltipProvider>
       <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
-        {/* Contact List */}
+        <ConversationSidebar 
+          onFilterChange={handleSidebarFilterChange}
+          currentUserId={user?.id}
+          inboxCounts={getInboxCounts}
+        />
+
         <div className="w-80 border-r border-border flex flex-col">
-          {/* Search */}
           <div className="p-4 border-b border-border">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
+              <Input
                 type="text"
                 placeholder="Search conversations..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-10 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="w-full pl-9 pr-10"
               />
-              <button className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded">
-                <FunnelIcon className="w-4 h-4 text-muted-foreground" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 h-auto"
+                  >
+                    <FunnelIcon className="w-4 h-4 text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Advanced filters</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex border-b border-border">
-            {["All", "Unread", "Open", "Resolved"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setSelectedTab(tab)}
-                className={cn(
-                  "flex-1 py-3 text-sm font-medium transition-colors",
-                  selectedTab === tab
-                    ? "text-primary border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {tab}
-                {tab === "Unread" && unreadCount && unreadCount > 0 && (
-                  <span className="ml-1 inline-flex items-center justify-center w-5 h-5 text-xs bg-primary text-primary-foreground rounded-full">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
-            ))}
+          <div className="px-4 py-2 border-b border-border">
+            <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
+              <TabsList className="grid grid-cols-4 w-full">
+                <TabsTrigger value="All" className="text-xs">All</TabsTrigger>
+                <TabsTrigger value="Unread" className="text-xs">
+                  Unread
+                  {unreadCount && unreadCount > 0 && (
+                    <Badge variant="secondary" className="ml-1 h-4 w-4 p-0">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="Open" className="text-xs">Open</TabsTrigger>
+                <TabsTrigger value="Resolved" className="text-xs">Resolved</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
 
-          {/* Contact List */}
-          <div className="flex-1 overflow-y-auto">
+          <ScrollArea className="flex-1">
             {conversations.length === 0 ? (
               <div className="p-8 text-center">
                 <ChatBubbleLeftRightIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-muted-foreground">No conversations found</p>
+                {sidebarFilters.inboxType === 'mine' && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    You don't have any assigned conversations
+                  </p>
+                )}
+                {sidebarFilters.inboxType === 'unassigned' && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    All conversations are assigned
+                  </p>
+                )}
+                {searchQuery && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Try a different search term
+                  </p>
+                )}
               </div>
             ) : (
               conversations.map((conv) => {
@@ -537,13 +637,14 @@ const handleSendMessage = async () => {
                 const contactStatus = getContactStatus(contact?.status);
                 
                 return (
-                  <button
+                  <Button
                     key={conv.id}
-                    onClick={() => setSelectedConversationId(conv.id)}
+                    variant="ghost"
                     className={cn(
-                      "w-full flex items-center gap-3 p-4 hover:bg-secondary/50 transition-colors border-b border-border",
+                      "w-full flex items-center gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none",
                       isSelected && "bg-primary/5 border-l-2 border-l-primary"
                     )}
+                    onClick={() => setSelectedConversationId(conv.id)}
                   >
                     <div className="relative flex-shrink-0">
                       <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -572,18 +673,17 @@ const handleSendMessage = async () => {
                       </p>
                     </div>
                     {conv.unreadCount > 0 && (
-                      <span className="flex-shrink-0 w-5 h-5 bg-primary text-primary-foreground text-xs rounded-full flex items-center justify-center">
-                        {conv.unreadCount}
-                      </span>
+                      <Badge className="flex-shrink-0 w-5 h-5 p-0 flex items-center justify-center">
+                        {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
+                      </Badge>
                     )}
-                  </button>
+                  </Button>
                 );
               })
             )}
-          </div>
+          </ScrollArea>
         </div>
 
-        {/* Chat Area */}
         <div 
           ref={dropZoneRef}
           className="flex-1 flex flex-col relative"
@@ -592,7 +692,6 @@ const handleSendMessage = async () => {
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {/* Hidden File Input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -601,7 +700,6 @@ const handleSendMessage = async () => {
             onChange={handleFileSelect}
           />
 
-          {/* Drag & Drop Overlay */}
           {isDragging && (
             <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-xl flex items-center justify-center z-50 backdrop-blur-sm">
               <div className="text-center">
@@ -612,7 +710,6 @@ const handleSendMessage = async () => {
             </div>
           )}
 
-          {/* Chat Header */}
           {selectedConversation && contact ? (
             <>
               <div className="h-16 px-6 flex items-center justify-between border-b border-border">
@@ -640,27 +737,47 @@ const handleSendMessage = async () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                   <AssignmentDropdown 
-      conversationId={selectedConversation.id}
-      currentAssignment={selectedConversation.assignedToUserId}
-      onAssignmentChange={() => {
-        // Optional: Show toast or refresh data
-      }}
-    />
-                  <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
-                    <PhoneIcon className="w-5 h-5 text-muted-foreground" />
-                  </button>
-                  <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
-                    <VideoCameraIcon className="w-5 h-5 text-muted-foreground" />
-                  </button>
-                  <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
-                    <EllipsisVerticalIcon className="w-5 h-5 text-muted-foreground" />
-                  </button>
+                  <AssignmentDropdown 
+                    conversationId={selectedConversation.id}
+                    currentAssignment={selectedConversation.assignedToUserId}
+                    onAssignmentChange={() => {
+                      // Invalidate queries to refresh data
+                    }}
+                  />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon">
+                        <PhoneIcon className="w-5 h-5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Call</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon">
+                        <VideoCameraIcon className="w-5 h-5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Video call</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon">
+                        <EllipsisVerticalIcon className="w-5 h-5 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>More options</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-secondary/30">
+              <ScrollArea className="flex-1 p-6 bg-secondary/30">
                 {conversationLoading ? (
                   <div className="space-y-4">
                     {[...Array(5)].map((_, i) => (
@@ -695,7 +812,7 @@ const handleSendMessage = async () => {
                         <div
                           key={message.id}
                           className={cn(
-                            "flex",
+                            "flex mb-4",
                             isOutgoing ? "justify-end" : "justify-start"
                           )}
                         >
@@ -708,10 +825,8 @@ const handleSendMessage = async () => {
                                 : "bg-card border border-border text-foreground rounded-bl-md"
                             )}
                           >
-                            {/* Media Content */}
                             {hasMedia && (
                               <div className="relative">
-                                {/* Image */}
                                 {mediaType === "image" && mediaUrl && (
                                   <div className="relative">
                                     <img 
@@ -720,31 +835,57 @@ const handleSendMessage = async () => {
                                       className="w-full h-auto object-cover cursor-pointer"
                                       onClick={() => handleViewMedia(message)}
                                     />
-                                    <button 
-                                      onClick={() => handleDownloadMedia(message)}
-                                      className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                    >
-                                      <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                    </button>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
+                                          onClick={() => handleDownloadMedia(message)}
+                                        >
+                                          <ArrowDownTrayIcon className="w-4 h-4 text-white" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Download</p>
+                                      </TooltipContent>
+                                    </Tooltip>
                                   </div>
                                 )}
 
-                                {/* Video */}
                                 {mediaType === "video" && mediaUrl && (
                                   <div className="relative w-full aspect-video bg-black/90 flex items-center justify-center">
                                     <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/50" />
-                                    <button 
-                                      onClick={() => handleViewMedia(message)}
-                                      className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center hover:bg-white/30 transition-colors"
-                                    >
-                                      <PlayIcon className="w-7 h-7 text-white ml-1" />
-                                    </button>
-                                    <button 
-                                      onClick={() => handleDownloadMedia(message)}
-                                      className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                    >
-                                      <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                    </button>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="w-14 h-14 bg-white/20 backdrop-blur-sm rounded-full hover:bg-white/30 transition-colors"
+                                          onClick={() => handleViewMedia(message)}
+                                        >
+                                          <PlayIcon className="w-7 h-7 text-white ml-1" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Play video</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
+                                          onClick={() => handleDownloadMedia(message)}
+                                        >
+                                          <ArrowDownTrayIcon className="w-4 h-4 text-white" />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Download video</p>
+                                      </TooltipContent>
+                                    </Tooltip>
                                     <div className="absolute bottom-2 left-2 flex items-center gap-1 text-white text-xs">
                                       <VideoCameraIcon className="w-4 h-4" />
                                       <span>{message.metadata?.duration || "0:00"}</span>
@@ -752,25 +893,33 @@ const handleSendMessage = async () => {
                                   </div>
                                 )}
 
-                                {/* Audio */}
                                 {mediaType === "audio" && (
                                   <div className={cn(
                                     "w-full p-3",
                                     isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
                                   )}>
                                     <div className="flex items-center gap-3">
-                                      <button 
-                                        onClick={() => handleDownloadMedia(message)}
-                                        className={cn(
-                                          "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
-                                          isOutgoing ? "bg-primary-foreground/20" : "bg-primary/10"
-                                        )}
-                                      >
-                                        <PlayIcon className={cn(
-                                          "w-5 h-5 ml-0.5",
-                                          isOutgoing ? "text-primary-foreground" : "text-primary"
-                                        )} />
-                                      </button>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn(
+                                              "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
+                                              isOutgoing ? "bg-primary-foreground/20" : "bg-primary/10"
+                                            )}
+                                            onClick={() => handleDownloadMedia(message)}
+                                          >
+                                            <PlayIcon className={cn(
+                                              "w-5 h-5 ml-0.5",
+                                              isOutgoing ? "text-primary-foreground" : "text-primary"
+                                            )} />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p>Play audio</p>
+                                        </TooltipContent>
+                                      </Tooltip>
                                       <div className="flex-1">
                                         <div className="flex items-center gap-1 mb-1">
                                           {[...Array(20)].map((_, i) => (
@@ -801,7 +950,6 @@ const handleSendMessage = async () => {
                                   </div>
                                 )}
 
-                                {/* Document */}
                                 {(mediaType === "document" || mediaType === "sticker") && (
                                   <div className={cn(
                                     "w-full p-3",
@@ -832,23 +980,31 @@ const handleSendMessage = async () => {
                                           {formatFileSize(message.metadata?.fileSize)}
                                         </p>
                                       </div>
-                                      <button 
-                                        onClick={() => handleDownloadMedia(message)}
-                                        className={cn(
-                                          "p-2 rounded-full transition-colors",
-                                          isOutgoing ? "hover:bg-primary-foreground/10" : "hover:bg-muted"
-                                        )}
-                                      >
-                                        <ArrowDownTrayIcon className={cn(
-                                          "w-4 h-4",
-                                          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                        )} />
-                                      </button>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn(
+                                              "p-2 rounded-full transition-colors",
+                                              isOutgoing ? "hover:bg-primary-foreground/10" : "hover:bg-muted"
+                                            )}
+                                            onClick={() => handleDownloadMedia(message)}
+                                          >
+                                            <ArrowDownTrayIcon className={cn(
+                                              "w-4 h-4",
+                                              isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                            )} />
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p>Download file</p>
+                                        </TooltipContent>
+                                      </Tooltip>
                                     </div>
                                   </div>
                                 )}
 
-                                {/* Location */}
                                 {mediaType === "location" && (
                                   <div className={cn(
                                     "w-full p-3",
@@ -874,18 +1030,24 @@ const handleSendMessage = async () => {
                                       </div>
                                     </div>
                                     {message.metadata?.location && (
-                                      <button className={cn(
-                                        "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors",
-                                        isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30" 
-                                                   : "bg-primary/10 text-primary hover:bg-primary/20"
-                                      )}>
-                                        View on Map
-                                      </button>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button className={cn(
+                                            "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors",
+                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30" 
+                                                      : "bg-primary/10 text-primary hover:bg-primary/20"
+                                          )}>
+                                            View on Map
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p>Open location in maps</p>
+                                        </TooltipContent>
+                                      </Tooltip>
                                     )}
                                   </div>
                                 )}
 
-                                {/* Caption */}
                                 {message.body && hasMedia && (
                                   <div className="px-3 py-2">
                                     <p className={cn(
@@ -899,12 +1061,10 @@ const handleSendMessage = async () => {
                               </div>
                             )}
                             
-                            {/* Text Content - only show if it's a text message */}
                             {message.body && !hasMedia && (
                               <p className="text-sm whitespace-pre-wrap">{message.body}</p>
                             )}
 
-                            {/* Timestamp */}
                             <div className={cn(
                               "flex items-center gap-1 px-3 pb-2",
                               hasMedia ? "" : "px-0 pb-0 mt-1",
@@ -925,9 +1085,8 @@ const handleSendMessage = async () => {
                     <div ref={messagesEndRef} />
                   </>
                 )}
-              </div>
+              </ScrollArea>
 
-              {/* Attachment Preview */}
               {attachments.length > 0 && (
                 <div className="p-4 pb-0">
                   <div className="bg-secondary rounded-xl p-3">
@@ -935,24 +1094,34 @@ const handleSendMessage = async () => {
                       <span className="text-sm font-medium text-foreground">
                         {attachments.length} file{attachments.length > 1 ? "s" : ""} attached
                       </span>
-                      <button 
-                        onClick={handleClearAllAttachments}
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
                         className="text-xs text-destructive hover:text-destructive/80 transition-colors"
+                        onClick={handleClearAllAttachments}
                       >
                         Clear all
-                      </button>
+                      </Button>
                     </div>
                     
-                    {/* Files Grid */}
                     <div className="flex flex-wrap gap-2 mb-3">
                       {attachments.map((attachment, index) => (
                         <div key={index} className="relative group">
-                          <button 
-                            onClick={() => handleRemoveAttachment(index)}
-                            className="absolute -top-1.5 -right-1.5 p-0.5 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors shadow-md z-10 opacity-0 group-hover:opacity-100"
-                          >
-                            <XMarkIcon className="w-3 h-3" />
-                          </button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="absolute -top-1.5 -right-1.5 p-0.5 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors shadow-md z-10 opacity-0 group-hover:opacity-100"
+                                onClick={() => handleRemoveAttachment(index)}
+                              >
+                                <XMarkIcon className="w-3 h-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Remove attachment</p>
+                            </TooltipContent>
+                          </Tooltip>
                           
                           {attachment.type === "image" && (
                             <img 
@@ -989,27 +1158,32 @@ const handleSendMessage = async () => {
                       ))}
                     </div>
 
-                    {/* Caption */}
-                    <input
+                    <Input
                       type="text"
                       placeholder="Add a caption for all files..."
                       value={caption}
                       onChange={(e) => setCaption(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      className="w-full"
                     />
                   </div>
                 </div>
               )}
 
-              {/* Message Input */}
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3">
                   <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="p-2 hover:bg-secondary rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20">
-                        <PaperClipIcon className="w-5 h-5 text-muted-foreground" />
-                      </button>
-                    </DropdownMenuTrigger>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <PaperClipIcon className="w-5 h-5 text-muted-foreground" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Attach files</p>
+                      </TooltipContent>
+                    </Tooltip>
                     <DropdownMenuContent align="start" className="w-48 bg-card border-border z-50" sideOffset={8}>
                       <DropdownMenuItem 
                         onClick={() => triggerFileInput("image/*")}
@@ -1049,21 +1223,30 @@ const handleSendMessage = async () => {
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <div className="flex-1 relative">
-                    <input
+                    <Input
                       type="text"
                       placeholder="Type a message..."
                       value={messageInput}
                       onChange={(e) => setMessageInput(e.target.value)}
                       onKeyDown={handleKeyPress}
                       disabled={sendMessage.isPending || sendMediaMessage.isPending}
-                      className="w-full px-4 py-2.5 pr-10 bg-secondary border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 text-sm"
+                      className="w-full pr-10"
                     />
-                    <button 
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2"
-                    >
-                      <FaceSmileIcon className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors" />
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-3 top-1/2 -translate-y-1/2"
+                          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                        >
+                          <FaceSmileIcon className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Emoji</p>
+                      </TooltipContent>
+                    </Tooltip>
                     {showEmojiPicker && (
                       <>
                         <div 
@@ -1077,17 +1260,24 @@ const handleSendMessage = async () => {
                       </>
                     )}
                   </div>
-                  <button 
-                    onClick={handleSendMessage}
-                    disabled={(!messageInput.trim() && attachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
-                    className="p-3 bg-primary text-primary-foreground rounded-xl hover:bg-primary-hover transition-colors shadow-indigo disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {sendMessage.isPending || sendMediaMessage.isPending ? (
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <PaperAirplaneIcon className="w-5 h-5" />
-                    )}
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        onClick={handleSendMessage}
+                        disabled={(!messageInput.trim() && attachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
+                        className="p-3"
+                      >
+                        {sendMessage.isPending || sendMediaMessage.isPending ? (
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <PaperAirplaneIcon className="w-5 h-5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Send message</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </>
@@ -1104,7 +1294,6 @@ const handleSendMessage = async () => {
           )}
         </div>
 
-        {/* Contact Details Sidebar */}
         {selectedConversation && contact && (
           <div className="w-72 border-l border-border p-6 hidden xl:block">
             <div className="text-center mb-6">
@@ -1147,12 +1336,9 @@ const handleSendMessage = async () => {
                   <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Tags</h4>
                   <div className="flex flex-wrap gap-2">
                     {contact.tags.map((tag) => (
-                      <span 
-                        key={tag} 
-                        className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full"
-                      >
+                      <Badge key={tag} variant="secondary" className="px-2 py-1">
                         {tag}
-                      </span>
+                      </Badge>
                     ))}
                   </div>
                 </div>
@@ -1190,7 +1376,7 @@ const handleSendMessage = async () => {
           </div>
         )}
       </div>
- 
+    </TooltipProvider>
   );
 };
 

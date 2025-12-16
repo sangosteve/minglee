@@ -13,6 +13,7 @@ import whatsappRoutes from "./routes/whatsapp.routes";
 import conversationsRoute from "./routes/conversations.routes";
 import mediaRoutes from "./routes/media.routes";
 import usersRoutes from "./routes/users.routes";
+import tagRoutes from "./routes/tags.routes";
 
 const app = express();
 
@@ -34,9 +35,12 @@ app.use([
   "/api/whatsapp/config",
   "/api/whatsapp/conversations",
   "/api/users",
+  "/api/tags",
   "/api/whatsapp/health"
 ], express.json({ limit: '50mb' }));
 
+
+app.use(express.json()); // This line is crucial
 // 3. URL encoded for form submissions (not multipart)
 app.use(express.urlencoded({ 
   limit: '50mb', 
@@ -52,6 +56,7 @@ app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
+app.use("/api/tags",tagRoutes);
 // 5. Health check
 app.get("/health", (_req, res) => {
   res.json({ 

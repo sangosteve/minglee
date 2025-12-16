@@ -8,6 +8,7 @@ export interface Conversation {
   id: string;
   contactId: string;
   userId: string;
+  assignedToUserId?: string; // Add this field
   whatsappPhoneNumberId?: string;
   lastMessage?: string;
   lastMessageAt: string;
@@ -26,7 +27,7 @@ export interface Conversation {
     status?: string;
     tags?: string[];
   };
-   assignedUser?: { // NEW: Add this
+  assignedUser?: {
     name?: string;
     email?: string;
   };
@@ -104,9 +105,18 @@ const buildQueryString = (filters: any = {}): string => {
 // API Calls
 export const conversationsApi = {
   // Get conversations with filters
-  getConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+ getConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
     const queryString = buildQueryString(filters);
-    return await api.request(`/conversations${queryString}`);
+    const response = await api.request(`/conversations${queryString}`);
+    
+    // Ensure assignedToUserId is included in the response
+    return {
+      ...response,
+      conversations: response.conversations?.map((conv: any) => ({
+        ...conv,
+        assignedToUserId: conv.assignedToUserId || conv.assigned_to_user_id,
+      })) || []
+    };
   },
 
   // Get single conversation with messages
@@ -115,17 +125,38 @@ export const conversationsApi = {
     return await api.request(`/conversations/${id}${queryString}`);
   },
 
-    getAssignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+ // Get conversations assigned to current user
+   getAssignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
     const queryString = buildQueryString(filters);
-    return await api.request(`/conversations/assigned/me${queryString}`);
+    const response = await api.request(`/conversations/assigned/me${queryString}`);
+    
+    return {
+      ...response,
+      conversations: response.conversations?.map((conv: any) => ({
+        ...conv,
+        assignedToUserId: conv.assignedToUserId || conv.assigned_to_user_id,
+      })) || []
+    };
   },
 
-  // Get unassigned conversations
-  getUnassignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+
+ // Get unassigned conversations
+ getUnassignedConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
     const queryString = buildQueryString(filters);
-    return await api.request(`/conversations/unassigned${queryString}`);
+    const response = await api.request(`/conversations/unassigned${queryString}`);
+    
+    return {
+      ...response,
+      conversations: response.conversations?.map((conv: any) => ({
+        ...conv,
+        assignedToUserId: conv.assignedToUserId || conv.assigned_to_user_id,
+      })) || []
+    };
   },
 
+  getAllConversations: async (filters: ConversationFilters = {}): Promise<ConversationsResponse> => {
+    return conversationsApi.getConversations(filters);
+  },
   // Assign conversation to user
   assignConversation: async (id: string, assignedToUserId?: string): Promise<{ 
     success: boolean; 

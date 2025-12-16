@@ -36,6 +36,13 @@
       "when": 1765634409345,
       "tag": "0004_charming_xavin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1765827994148,
+      "tag": "0005_quiet_metal_master",
+      "breakpoints": true
     }
   ]
 }

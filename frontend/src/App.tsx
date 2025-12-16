@@ -23,6 +23,7 @@ import ForgotPassword from "./pages/auth/ForgotPassword";
 import Logout from "./pages/auth/Logout";
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthInterceptor } from "./components/auth/AuthInterceptor";
+import { TagsProvider } from "./components/tags/TagsProvider";
 
 const queryClient = new QueryClient();
 
@@ -206,7 +207,9 @@ const App = () => {
         <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
           <BrowserRouter>
             <AuthInterceptor>
+               <TagsProvider>
               <AppContent />
+              </TagsProvider>
             </AuthInterceptor>
           </BrowserRouter>
         </GoogleOAuthProvider>

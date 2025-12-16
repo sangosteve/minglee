@@ -55,6 +55,17 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+
+export const tags = pgTable("tags", {
+  id: uuid("id").primaryKey().default(generateUuid()),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color code
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Contacts table with UUID primary key
 export const contacts = pgTable("contacts", {
   id: uuid("id").primaryKey().default(generateUuid()),
@@ -78,7 +89,7 @@ export const contacts = pgTable("contacts", {
   
   whatsappBusinessId: varchar("whatsapp_business_id", { length: 255 }),
   whatsappPhoneNumberId: varchar("whatsapp_phone_number_id", { length: 255 }),
-  tags: text("tags").array().default([]),
+  tagIds: uuid("tag_ids").array().default([]),
   
   // Status and source using enums
   status: contactStatusEnum("status").default("active"),
@@ -174,6 +185,9 @@ export const campaigns = pgTable("campaigns", {
   description: text("description").default(""),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+
+
 
 // Refresh tokens table with UUID primary key
 export const refreshTokens = pgTable("refresh_tokens", {
