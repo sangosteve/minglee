@@ -24,6 +24,7 @@ import Logout from "./pages/auth/Logout";
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthInterceptor } from "./components/auth/AuthInterceptor";
 import { TagsProvider } from "./components/tags/TagsProvider";
+import Settings from "./pages/Settings";
 
 const queryClient = new QueryClient();
 
@@ -164,6 +165,17 @@ const AppContent = () => {
           </MainLayout>
         </ProtectedRoute>
       } />
+
+        <Route path="/settings" element={
+        <ProtectedRoute>
+          <MainLayout title="Settings" subtitle="Organize with tags and labels">
+            <Settings />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+
+      
 
       {/* Catch-all route */}
       <Route path="*" element={<NotFound />} />

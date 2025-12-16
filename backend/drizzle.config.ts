@@ -11,4 +11,10 @@ export default defineConfig({
     // Use your full Neon connection string with http(s)://
     url: process.env.DATABASE_URL!,
   },
+    introspect: {
+    casing: 'camel',  // 'camel' | 'snake' | 'preserve'
+  },
+  // Optional: Verbose output
+  verbose: true,
+  strict: true,
 });

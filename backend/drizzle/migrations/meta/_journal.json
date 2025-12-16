@@ -43,6 +43,13 @@
       "when": 1765827994148,
       "tag": "0005_quiet_metal_master",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1765878553086,
+      "tag": "0006_yellow_hydra",
+      "breakpoints": true
     }
   ]
 }

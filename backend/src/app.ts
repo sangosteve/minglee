@@ -14,6 +14,7 @@ import conversationsRoute from "./routes/conversations.routes";
 import mediaRoutes from "./routes/media.routes";
 import usersRoutes from "./routes/users.routes";
 import tagRoutes from "./routes/tags.routes";
+import quickRepliesRoutes from './routes/quick-replies.routes';
 
 const app = express();
 
@@ -57,6 +58,7 @@ app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tags",tagRoutes);
+app.use('/api/quick-replies', quickRepliesRoutes);
 // 5. Health check
 app.get("/health", (_req, res) => {
   res.json({ 

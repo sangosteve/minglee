@@ -1,3 +1,4 @@
+// src/db/schema.ts
 import { 
   pgTable, 
   uuid,
@@ -8,9 +9,7 @@ import {
   integer, 
   jsonb,
   doublePrecision,
-  pgEnum,
-  index,
-  unique
+  pgEnum
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -56,18 +55,16 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Tags table
+
 export const tags = pgTable("tags", {
   id: uuid("id").primaryKey().default(generateUuid()),
   name: varchar("name", { length: 100 }).notNull(),
   description: text("description"),
-  color: varchar("color", { length: 7 }).default("#3B82F6"),
+  color: varchar("color", { length: 7 }).default("#3B82F6"), // Hex color code
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => [
-  index("idx_tags_user_id").on(table.userId),
-]);
+});
 
 // Contacts table with UUID primary key
 export const contacts = pgTable("contacts", {
@@ -87,7 +84,7 @@ export const contacts = pgTable("contacts", {
   
   note: text("note").default(""),
   
-  // Relationships
+  // Relationships - using UUIDs
   userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   
   whatsappBusinessId: varchar("whatsapp_business_id", { length: 255 }),
@@ -105,108 +102,83 @@ export const contacts = pgTable("contacts", {
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => [
-  index("idx_contacts_tag_ids").on(table.tagIds),
-]);
+});
 
-// Conversations table
+// Conversations table with UUID primary key
 export const conversations = pgTable("conversations", {
   id: uuid("id").primaryKey().default(generateUuid()),
   
-  // Relationships
+  // Relationships - using UUIDs
   contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
   assignedToUserId: uuid("assigned_to_user_id").references(() => users.id, { onDelete: "set null" }),
   whatsappPhoneNumberId: varchar("whatsapp_phone_number_id", { length: 255 }),
-  
-  // Conversation data
   lastMessage: text("last_message"),
   lastMessageAt: timestamp("last_message_at").defaultNow(),
   unreadCount: integer("unread_count").default(0),
-  tagIds: uuid("tag_ids").array().default([]),
   
-  // Status
+  // Status enum for conversations
   status: varchar("status", { length: 50 }).default("active"),
   
-  // Timestamps
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => [
-  index("idx_conversations_tag_ids").on(table.tagIds),
-]);
-
-// Media attachments table (must be defined before messages)
-export const mediaAttachments = pgTable("media_attachments", {
-  id: uuid("id").primaryKey().default(generateUuid()),
-  
-  // Relationships
-  messageId: uuid("message_id").notNull(),
-  uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, { onDelete: "set null" }),
-  
-  // Cloudinary-specific fields
-  publicId: varchar("public_id", { length: 255 }).notNull(),
-  resourceType: varchar("resource_type", { length: 20 }).default('image'),
-  format: varchar("format", { length: 10 }),
-  version: varchar("version", { length: 20 }),
-  
-  // File metadata
-  originalFilename: varchar("original_filename", { length: 255 }),
-  mimeType: varchar("mime_type", { length: 100 }),
-  fileSize: integer("file_size"),
-  width: integer("width"),
-  height: integer("height"),
-  duration: integer("duration"),
-  
-  // Cloudinary URLs
-  secureUrl: text("secure_url").notNull(),
-  thumbnailUrl: text("thumbnail_url"),
-  
-  // Additional metadata
-  caption: text("caption"),
-  tags: text("tags").array().default([]),
-  
-  // Status and timestamps
-  status: varchar("status", { length: 20 }).default('active'),
-  uploadedAt: timestamp("uploaded_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Messages table
+// Messages table with UUID primary key
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().default(generateUuid()),
   
-  // Relationships
+  // Relationships - using UUIDs
   contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "cascade" }),
-  mediaAttachmentId: uuid('media_attachment_id').references(() => mediaAttachments.id),
-  
-  // Message data
+   mediaAttachmentId: uuid('media_attachment_id').references(() => mediaAttachments.id),
   whatsappMessageId: varchar("whatsapp_message_id", { length: 255 }),
   direction: varchar("direction", { length: 10 }).default("outgoing"),
   messageType: varchar("message_type", { length: 50 }).default("text"),
   body: text("body"),
   status: varchar("status", { length: 50 }).default("sent"),
   metadata: jsonb("metadata").default({}),
-  
-  // Timestamps
   timestamp: timestamp("timestamp").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Now update mediaAttachments to reference messages properly
-// (This is a workaround for circular dependency)
-import { relations } from 'drizzle-orm';
+export const mediaAttachments = pgTable("media_attachments", {
+  id: uuid("id").primaryKey().default(generateUuid()),
+  
+  // Relationships
+  messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }).notNull(),
+  uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  
+  // Cloudinary-specific fields
+  publicId: varchar("public_id", { length: 255 }).notNull(), // Cloudinary public ID
+  resourceType: varchar("resource_type", { length: 20 }).default('image'), // image, video, raw
+  format: varchar("format", { length: 10 }), // jpg, png, mp4, pdf, etc.
+  version: varchar("version", { length: 20 }),
+  
+  // File metadata
+  originalFilename: varchar("original_filename", { length: 255 }),
+  mimeType: varchar("mime_type", { length: 100 }),
+  fileSize: integer("file_size"), // Size in bytes
+  width: integer("width"), // For images/videos
+  height: integer("height"), // For images/videos
+  duration: integer("duration"), // For audio/video in seconds
+  
+  // Cloudinary URLs
+  secureUrl: text("secure_url").notNull(), // HTTPS URL for delivery
+  thumbnailUrl: text("thumbnail_url"), // Generated thumbnail URL
+  
+  // Additional metadata
+  caption: text("caption"),
+  tags: text("tags").array().default([]),
+  
+  // Status and timestamps
+  status: varchar("status", { length: 20 }).default('active'), // active, deleted
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
-// You can define relations separately if needed
-export const mediaAttachmentsRelations = relations(mediaAttachments, ({ one }) => ({
-  message: one(messages, {
-    fields: [mediaAttachments.messageId],
-    references: [messages.id],
-  }),
-}));
-
-// Campaigns table
+// Campaigns table with UUID primary key
 export const campaigns = pgTable("campaigns", {
   id: uuid("id").primaryKey().default(generateUuid()),
   name: varchar("name", { length: 255 }),
@@ -214,7 +186,8 @@ export const campaigns = pgTable("campaigns", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Quick Replies table
+// Quick Replies table with UUID primary key
+
 export const quickReplies = pgTable("quick_replies", {
   id: uuid("id").primaryKey().default(generateUuid()),
   name: varchar("name", { length: 255 }).notNull(),
@@ -233,13 +206,12 @@ export const quickReplies = pgTable("quick_replies", {
   // Timestamps
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => [
-  index("idx_quick_replies_user_id").on(table.userId),
-  index("idx_quick_replies_is_active").on(table.isActive),
-  index("idx_quick_replies_media_attachment_ids").on(table.mediaAttachmentIds),
-]);
+});
 
-// Refresh tokens table
+
+
+
+// Refresh tokens table with UUID primary key
 export const refreshTokens = pgTable("refresh_tokens", {
   id: uuid("id").primaryKey().default(generateUuid()),
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
@@ -251,7 +223,7 @@ export const refreshTokens = pgTable("refresh_tokens", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// API keys table
+// API keys table with UUID primary key
 export const apiKeys = pgTable("api_keys", {
   id: uuid("id").primaryKey().default(generateUuid()),
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
