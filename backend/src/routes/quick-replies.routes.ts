@@ -1,9 +1,13 @@
 //backend/src/routes/quick-replies.routes.ts
 import { Router } from 'express';
+import { eq, and, or, like, desc, asc, sql,isNull } from 'drizzle-orm';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { QuickRepliesService } from '../services/quick-replies.service';
 import  upload  from '../middleware/multer.middleware';
 import { CloudinaryService } from '../services/cloudinary.service';
+import { VariableService } from '../services/variable.service';
+import { getDb } from '../db/client';
+import { contacts, conversations, users } from '../db/schema';
 
 const router = Router();
 
@@ -319,4 +323,76 @@ router.get('/topics/all', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+router.post('/:id/preview', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { conversationId } = req.body;
+    const userId = req.user!.userId;
+
+    if (!conversationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'conversationId is required'
+      });
+    }
+
+    const db = getDb();
+
+    // Get conversation data
+    const [conversationData] = await db.select({
+      conversation: conversations,
+      contact: contacts,
+      user: users,
+    })
+      .from(conversations)
+      .leftJoin(contacts, eq(conversations.contactId, contacts.id))
+      .leftJoin(users, eq(conversations.userId, users.id))
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!conversationData) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conversation not found'
+      });
+    }
+
+    const { conversation, contact, user } = conversationData;
+
+    // Get the quick reply
+    const quickReply = await QuickRepliesService.getQuickReplyById(userId, id);
+
+    if (!quickReply) {
+      return res.status(404).json({
+        success: false,
+        error: 'Quick reply not found'
+      });
+    }
+
+    // Get personalized message
+    const variables = VariableService.getAvailableVariables(conversation, contact, user);
+    const personalizedMessage = VariableService.replaceVariables(quickReply.message, variables);
+
+    res.json({
+      success: true,
+      preview: {
+        original: quickReply.message,
+        personalized: personalizedMessage,
+        variables: VariableService.extractVariables(quickReply.message),
+      },
+    });
+
+  } catch (error: any) {
+    console.error('Error previewing quick reply:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to preview quick reply'
+    });
+  }
+});
 export default router;

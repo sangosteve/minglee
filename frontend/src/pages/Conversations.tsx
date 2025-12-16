@@ -1191,17 +1191,21 @@ const Conversations = () => {
 
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3">
-                 <QuickRepliesDropdown
+  <QuickRepliesDropdown
   quickReplies={quickReplies}
   isLoading={quickRepliesLoading}
-  onSelect={(message) => {
-    setMessageInput((prev) =>
-      prev ? `${prev} ${message}` : message
-    );
+  onInsertIntoInput={(personalizedMessage) => {
+    // Replace the entire input with the personalized message
+    setMessageInput(personalizedMessage);
+    
+    // Optional: Focus on the input field
+    setTimeout(() => {
+      const input = document.querySelector('input[placeholder="Type a message..."]');
+      if (input) (input as HTMLInputElement).focus();
+    }, 100);
   }}
   conversationId={selectedConversationId || undefined}
   contact={contact}
-  sendQuickReply={sendQuickReply}
 />
                   <DropdownMenu>
                     <Tooltip>
