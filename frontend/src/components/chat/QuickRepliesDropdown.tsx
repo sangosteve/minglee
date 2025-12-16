@@ -15,10 +15,12 @@ import {
   BoltIcon,
   MagnifyingGlassIcon,
   InformationCircleIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import type { QuickReply } from '@/lib/api/quick-replies';
-import { usePersonalizedQuickReplies } from '@/hooks/use-personalized-quick-replies';
+import { VariableService } from '@/lib/variable-service';
 import { toast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface QuickRepliesDropdownProps {
   quickReplies: QuickReply[];
@@ -26,6 +28,8 @@ interface QuickRepliesDropdownProps {
   onInsertIntoInput: (message: string) => void;
   conversationId?: string;
   contact?: any;
+  user?: any; // Add user prop
+  conversation?: any; // Add conversation prop
 }
 
 const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
@@ -34,10 +38,11 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
   onInsertIntoInput,
   conversationId,
   contact,
+  user,
+  conversation,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
-  const { preview: previewQuickReply } = usePersonalizedQuickReplies();
 
   // Filter quick replies
   const filteredReplies = quickReplies.filter((reply) => {
@@ -58,44 +63,31 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
     new Set(quickReplies.flatMap((reply) => reply.topics.split(',').map((t) => t.trim())))
   ).filter(Boolean);
 
-  const handleSelectQuickReply = async (quickReply: QuickReply) => {
-    if (conversationId && contact) {
-      // If we have a conversation, get the personalized version
-      try {
-        const result = await previewQuickReply.mutateAsync({
-          quickReplyId: quickReply.id,
-          conversationId,
-        });
-        
-        // Insert the personalized message into input
-        onInsertIntoInput(result.preview.personalized);
-        
-        toast({
-          title: "Quick reply inserted",
-          description: "Personalized message added to input field",
-        });
-        
-      } catch (error) {
-        console.error('Error previewing quick reply:', error);
-        // Fallback: insert template without personalization
-        onInsertIntoInput(quickReply.message);
-        
-        toast({
-          title: "Template inserted",
-          description: "Could not personalize. Template added to input field.",
-          variant: "default",
-        });
-      }
-    } else {
-      // No conversation selected, insert template
-      onInsertIntoInput(quickReply.message);
-      
-      toast({
-        title: "Template inserted",
-        description: "Select a conversation to personalize quick replies",
-      });
-    }
+  const handleSelectQuickReply = (quickReply: QuickReply) => {
+    // Client-side personalization - INSTANT!
+    const personalizedMessage = VariableService.replaceVariables(
+      quickReply.message,
+      { contact, user, conversation }
+    );
+    
+    // Insert into input field
+    onInsertIntoInput(personalizedMessage);
+    
+    // Show success toast
+    toast({
+      title: "Quick reply inserted",
+      description: "Personalized message added to input field",
+    });
   };
+
+  // Check which quick replies have variables
+  const quickRepliesWithVariables = filteredReplies.map(reply => ({
+    ...reply,
+    hasVariables: VariableService.extractVariables(reply.message).length > 0,
+    preview: conversationId && contact && user 
+      ? VariableService.replaceVariables(reply.message, { contact, user, conversation })
+      : reply.message,
+  }));
 
   return (
     <DropdownMenu>
@@ -110,6 +102,7 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
             <span>Quick Replies</span>
             {conversationId && contact && (
               <Badge variant="outline" className="text-xs">
+                <SparklesIcon className="w-3 h-3 mr-1" />
                 Personalized
               </Badge>
             )}
@@ -162,30 +155,53 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
             <div className="p-4 text-center">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mx-auto" />
             </div>
-          ) : filteredReplies.length === 0 ? (
+          ) : quickRepliesWithVariables.length === 0 ? (
             <div className="p-4 text-center text-muted-foreground">
               No quick replies found
             </div>
           ) : (
-            filteredReplies.map((reply) => (
+            quickRepliesWithVariables.map((reply) => (
               <div key={reply.id} className="border-b border-border last:border-0">
                 <DropdownMenuItem
-                  className="flex flex-col items-start p-3 cursor-pointer hover:bg-secondary"
+                  className="flex flex-col items-start p-3 cursor-pointer hover:bg-secondary group"
                   onClick={() => handleSelectQuickReply(reply)}
                 >
                   <div className="flex items-start justify-between w-full">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium truncate">{reply.name}</span>
-                        {reply.mediaAttachments && reply.mediaAttachments.length > 0 && (
+                        {reply.hasVariables && conversationId && contact && (
                           <Badge variant="secondary" className="text-xs">
+                            <SparklesIcon className="w-3 h-3 mr-1" />
+                            Personalized
+                          </Badge>
+                        )}
+                        {reply.mediaAttachments && reply.mediaAttachments.length > 0 && (
+                          <Badge variant="outline" className="text-xs">
                             +{reply.mediaAttachments.length} media
                           </Badge>
                         )}
                       </div>
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {reply.message}
-                      </p>
+                      
+                      {/* Show preview (personalized if available) */}
+                      <div className="space-y-1">
+                        <p className={cn(
+                          "text-sm line-clamp-2",
+                          reply.hasVariables && conversationId && contact
+                            ? "text-foreground"
+                            : "text-muted-foreground"
+                        )}>
+                          {reply.preview}
+                        </p>
+                        
+                        {/* Show original template if personalized */}
+                        {reply.hasVariables && conversationId && contact && reply.message !== reply.preview && (
+                          <p className="text-xs text-muted-foreground line-clamp-1">
+                            Template: {reply.message}
+                          </p>
+                        )}
+                      </div>
+                      
                       {reply.topics && (
                         <div className="mt-1 flex items-center gap-1">
                           {reply.topics.split(',').map((topic) => (
@@ -207,17 +223,29 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
         </ScrollArea>
 
         {/* Variables info */}
-        {conversationId && contact && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="flex items-center gap-2 text-xs text-muted-foreground p-2">
-              <InformationCircleIcon className="w-4 h-4" />
-              <span>
-                Quick replies are personalized with variables like {'{{contact.name}}'}, {'{{date.today}}'}, etc.
-              </span>
-            </DropdownMenuItem>
-          </>
-        )}
+        <DropdownMenuSeparator />
+        <div className="p-2">
+          <div className="flex items-start gap-2 text-xs text-muted-foreground">
+            <InformationCircleIcon className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-medium mb-1">Available variables:</p>
+              <div className="flex flex-wrap gap-1">
+                {VariableService.getAvailableVariables().slice(0, 6).map((variable) => (
+                  <code
+                    key={variable.placeholder}
+                    className="px-1.5 py-0.5 bg-muted rounded text-[10px]"
+                    title={variable.description}
+                  >
+                    {variable.placeholder}
+                  </code>
+                ))}
+                {VariableService.getAvailableVariables().length > 6 && (
+                  <span className="text-[10px]">+{VariableService.getAvailableVariables().length - 6} more</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -123,16 +123,6 @@ export const quickRepliesApi = {
     return await api.get('/quick-replies/topics/all');
   },
 
-previewQuickReply: async (id: string, conversationId: string): Promise<{
-  success: boolean;
-  preview: {
-    original: string;
-    personalized: string;
-    variables: string[];
-  };
-}> => {
-  return await api.post(`/quick-replies/${id}/preview`, { conversationId });
-},
 
 // Send quick reply to conversation
 sendQuickReply: async (conversationId: string, quickReplyId: string): Promise<{

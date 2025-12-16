@@ -398,47 +398,65 @@ const Conversations = () => {
     setCaption("");
   };
 
-  const handleSendMessage = async () => {
-    if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0)) return;
+const handleSendMessage = async () => {
+  if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0)) return;
 
-    try {
-      if (attachments.length > 0) {
-        const formData = new FormData();
+  try {
+    // Check if message contains variables that need personalization
+    let finalMessage = messageInput.trim();
+    
+    if (messageInput.includes('{{') && contact && user) {
+      // Personalize variables on client-side before sending
+      const personalizedMessage = VariableService.replaceVariables(
+        messageInput,
+        { contact, user, conversation: selectedConversation }
+      );
+      
+      finalMessage = personalizedMessage.trim();
+      
+      // Update input field to show what's being sent
+      if (messageInput !== finalMessage) {
+        setMessageInput(finalMessage);
+      }
+    }
 
-        if (!contact?.phone) {
-          toast({
-            title: "Cannot send message",
-            description: "Contact phone number is missing",
-            variant: "destructive",
-          });
-          return;
-        }
+    if (attachments.length > 0) {
+      const formData = new FormData();
 
-        formData.append('phoneNumber', contact.phone);
-        formData.append('caption', caption || '');
-
-        if (attachments[0]) {
-          formData.append('file', attachments[0].file);
-        }
-
-        await sendMediaMessage.mutateAsync(formData);
-        handleClearAllAttachments();
-      } else {
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversationId,
-          message: messageInput.trim(),
+      if (!contact?.phone) {
+        toast({
+          title: "Cannot send message",
+          description: "Contact phone number is missing",
+          variant: "destructive",
         });
+        return;
       }
 
-      setMessageInput("");
-    } catch (error) {
-      toast({
-        title: "Failed to send message",
-        description: "Please try again",
-        variant: "destructive",
+      formData.append('phoneNumber', contact.phone);
+      formData.append('caption', finalMessage || caption || '');
+
+      if (attachments[0]) {
+        formData.append('file', attachments[0].file);
+      }
+
+      await sendMediaMessage.mutateAsync(formData);
+      handleClearAllAttachments();
+    } else {
+      await sendMessage.mutateAsync({
+        conversationId: selectedConversationId,
+        message: finalMessage,
       });
     }
-  };
+
+    setMessageInput("");
+  } catch (error) {
+    toast({
+      title: "Failed to send message",
+      description: "Please try again",
+      variant: "destructive",
+    });
+  }
+};
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1191,21 +1209,30 @@ const Conversations = () => {
 
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3">
-  <QuickRepliesDropdown
+<QuickRepliesDropdown
   quickReplies={quickReplies}
   isLoading={quickRepliesLoading}
-  onInsertIntoInput={(personalizedMessage) => {
+  onInsertIntoInput={(message) => {
     // Replace the entire input with the personalized message
-    setMessageInput(personalizedMessage);
+    setMessageInput(message);
     
-    // Optional: Focus on the input field
+    // Focus on the input field after a short delay
     setTimeout(() => {
       const input = document.querySelector('input[placeholder="Type a message..."]');
-      if (input) (input as HTMLInputElement).focus();
-    }, 100);
+      if (input) {
+        (input as HTMLInputElement).focus();
+        // Move cursor to end
+        (input as HTMLInputElement).setSelectionRange(
+          message.length,
+          message.length
+        );
+      }
+    }, 10);
   }}
   conversationId={selectedConversationId || undefined}
   contact={contact}
+  user={user} // Pass the current user
+  conversation={selectedConversation} // Pass the conversation
 />
                   <DropdownMenu>
                     <Tooltip>

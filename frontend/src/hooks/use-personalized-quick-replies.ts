@@ -5,16 +5,7 @@ import { toast } from '@/hooks/use-toast';
 export const usePersonalizedQuickReplies = () => {
   const queryClient = useQueryClient();
 
-  // Preview quick reply with variables
-  const previewMutation = useMutation({
-    mutationFn: ({ quickReplyId, conversationId }: { quickReplyId: string; conversationId: string }) =>
-      quickRepliesApi.previewQuickReply(quickReplyId, conversationId),
-    onError: (error: any) => {
-      console.error('Preview error:', error);
-    },
-  });
-
-  // Send quick reply
+  // Send quick reply (if you still want direct sending option)
   const sendMutation = useMutation({
     mutationFn: ({ conversationId, quickReplyId }: { conversationId: string; quickReplyId: string }) =>
       quickRepliesApi.sendQuickReply(conversationId, quickReplyId),
@@ -24,7 +15,7 @@ export const usePersonalizedQuickReplies = () => {
       
       toast({
         title: "Quick reply sent",
-        description: "Your personalized message has been sent successfully",
+        description: "Your message has been sent successfully",
       });
     },
     onError: (error: any) => {
@@ -37,7 +28,6 @@ export const usePersonalizedQuickReplies = () => {
   });
 
   return {
-    preview: previewMutation,
     send: sendMutation,
   };
 };
