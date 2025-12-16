@@ -123,6 +123,36 @@ export const quickRepliesApi = {
     return await api.get('/quick-replies/topics/all');
   },
 
+  previewQuickReply: async (id: string, conversationId: string): Promise<{
+  success: boolean;
+  preview: {
+    original: string;
+    personalized: string;
+    variables: string[];
+    availableVariables: Array<{
+      name: string;
+      description: string;
+      value: string;
+    }>;
+  };
+  quickReply: QuickReply & { personalizedMessage: string };
+}> => {
+  return await api.post(`/quick-replies/${id}/preview`, { conversationId });
+},
+
+// Send quick reply to conversation
+sendQuickReply: async (conversationId: string, quickReplyId: string): Promise<{
+  success: boolean;
+  messages: any[];
+  whatsappMessageIds: string[];
+  preview: {
+    original: string;
+    personalized: string;
+  };
+}> => {
+  return await api.post(`/conversations/${conversationId}/quick-replies/${quickReplyId}`);
+},
+
   
 };
 export const useQuickReplies = (filters: QuickReplyFilters = {}) => {

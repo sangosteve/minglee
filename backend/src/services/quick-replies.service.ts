@@ -289,4 +289,29 @@ export class QuickRepliesService {
     
     return duplicatedReply;
   }
+
+  static async getPersonalizedQuickReply(
+  userId: string,
+  quickReplyId: string,
+  conversation: any,
+  contact: any,
+  user: any
+) {
+  const quickReply = await this.getQuickReplyById(userId, quickReplyId);
+  
+  if (!quickReply) {
+    return null;
+  }
+
+  const { VariableService } = await import('./variable.service');
+  const variables = VariableService.getAvailableVariables(conversation, contact, user);
+  const personalizedMessage = VariableService.replaceVariables(quickReply.message, variables);
+  
+  return {
+    ...quickReply,
+    originalMessage: quickReply.message,
+    personalizedMessage,
+    variablesUsed: VariableService.extractVariables(quickReply.message),
+  };
+}
 }

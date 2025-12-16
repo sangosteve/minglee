@@ -3,7 +3,8 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { conversations, contacts, messages, users } from '../db/schema';
 import { eq, and, or, like, desc, asc, sql,isNull } from 'drizzle-orm';
-
+import { QuickRepliesService } from '../services/quick-replies.service';
+import { VariableService } from '../services/variable.service';
 const router = Router();
 // GET /api/conversations/unread/count - Get unread count
 
@@ -606,9 +607,6 @@ router.patch('/:id/read', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-
-
-
 // PATCH /api/conversations/:id/assign - Assign conversation to user
 router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -686,6 +684,220 @@ router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
       success: false,
       error: 'Failed to assign conversation',
       details: error.message
+    });
+  }
+});
+
+// POST /api/conversations/:conversationId/quick-replies/:quickReplyId
+
+router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { conversationId, quickReplyId } = req.params;
+    const userId = req.user!.userId;
+
+    const db = getDb();
+
+    // 1️⃣ Fetch conversation with contact and user
+    const [conversationData] = await db.select({
+      conversation: conversations,
+      contact: contacts,
+      user: users,
+    })
+      .from(conversations)
+      .leftJoin(contacts, eq(conversations.contactId, contacts.id))
+      .leftJoin(users, eq(conversations.userId, users.id))
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!conversationData) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+
+    const { conversation, contact, user } = conversationData;
+
+    // Validate required data
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found for this conversation' });
+    }
+
+    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
+      return res.status(400).json({ success: false, error: 'WhatsApp not configured for this user' });
+    }
+
+    if (!contact.phone) {
+      return res.status(400).json({ success: false, error: 'Contact does not have a phone number' });
+    }
+
+    // 2️⃣ Fetch the quick reply
+    const quickReply = await QuickRepliesService.getQuickReplyById(userId, quickReplyId);
+    if (!quickReply) {
+      return res.status(404).json({ success: false, error: 'Quick reply not found' });
+    }
+
+    // 3️⃣ Prepare personalized message text
+    console.log('🔍 Debug: Quick reply template:', quickReply.message);
+    
+    const variables = VariableService.getAvailableVariables(conversation, contact, user);
+    console.log('🔍 Debug: Available variables keys:', Object.keys(variables));
+    
+    const personalizedMessage = VariableService.replaceVariables(quickReply.message, variables);
+    console.log('🔍 Debug: Personalized message:', personalizedMessage);
+
+    // 4️⃣ Prepare media attachments if any
+    const mediaAttachments = quickReply.mediaAttachments || [];
+
+    const axios = require('axios');
+    const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
+    const baseUrl = `https://graph.facebook.com/${apiVersion}`;
+
+    let whatsappResponse: any[] = [];
+    let whatsappMessageIds: string[] = [];
+
+    // 5️⃣ Send text message first (if exists)
+    if (personalizedMessage?.trim()) {
+      const response = await axios.post(
+        `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: contact.phone,
+          type: 'text',
+          text: { body: personalizedMessage.trim() },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${user.whatsappAccessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      whatsappResponse.push(response.data);
+      const textMessageId = response.data?.messages?.[0]?.id;
+      if (textMessageId) whatsappMessageIds.push(textMessageId);
+    }
+
+    // 6️⃣ Send media attachments
+    for (const media of mediaAttachments) {
+      // Determine type
+      const type = media.mimeType?.startsWith('image') ? 'image' :
+                   media.mimeType?.startsWith('video') ? 'video' :
+                   media.mimeType?.startsWith('audio') ? 'audio' :
+                   'document';
+
+      const response = await axios.post(
+        `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: contact.phone,
+          type,
+          [type]: { link: media.url },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${user.whatsappAccessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      whatsappResponse.push(response.data);
+      const mediaMessageId = response.data?.messages?.[0]?.id;
+      if (mediaMessageId) whatsappMessageIds.push(mediaMessageId);
+    }
+
+    // 7️⃣ Save messages to DB
+    const newMessages = [];
+
+    // Save text message
+    if (personalizedMessage?.trim()) {
+      const [newMessage] = await db.insert(messages).values({
+        conversationId,
+        contactId: contact.id,
+        whatsappMessageId: whatsappMessageIds[0],
+        direction: 'outgoing',
+        messageType: 'text',
+        body: personalizedMessage.trim(),
+        status: whatsappMessageIds[0] ? 'sent' : 'failed',
+        metadata: {
+          whatsappResponse: whatsappResponse[0],
+          timestamp: new Date().toISOString(),
+          originalTemplate: quickReply.message,
+          personalized: true,
+          variables: VariableService.extractVariables(quickReply.message),
+        },
+        timestamp: new Date(),
+      }).returning();
+
+      newMessages.push(newMessage);
+    }
+
+    // Save media messages
+    for (let i = 0; i < mediaAttachments.length; i++) {
+      const media = mediaAttachments[i];
+      const messageId = whatsappMessageIds[i + 1];
+      const [newMediaMessage] = await db.insert(messages).values({
+        conversationId,
+        contactId: contact.id,
+        whatsappMessageId: messageId,
+        direction: 'outgoing',
+        messageType: media.mimeType?.startsWith('image') ? 'image' :
+                     media.mimeType?.startsWith('video') ? 'video' :
+                     media.mimeType?.startsWith('audio') ? 'audio' :
+                     'document',
+        body: media.url,
+        status: messageId ? 'sent' : 'failed',
+        metadata: {
+          whatsappResponse: whatsappResponse[i + 1],
+          timestamp: new Date().toISOString(),
+          quickReplyId: quickReply.id,
+        },
+        timestamp: new Date(),
+      }).returning();
+
+      newMessages.push(newMediaMessage);
+    }
+
+    // 8️⃣ Update conversation last message
+    await db.update(conversations)
+      .set({
+        lastMessage: personalizedMessage || `[${mediaAttachments.length} attachment(s)]`,
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(conversations.id, conversationId));
+
+    // 9️⃣ Log quick reply usage
+    console.log(`📨 Quick reply sent successfully:`, {
+      conversationId,
+      quickReplyId: quickReply.id,
+      contactName: contact.name,
+      template: quickReply.message,
+      personalized: personalizedMessage,
+    });
+
+    res.json({
+      success: true,
+      messages: newMessages,
+      whatsappMessageIds,
+      whatsappResponse,
+      preview: {
+        original: quickReply.message,
+        personalized: personalizedMessage,
+      },
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error sending quick reply:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send quick reply',
+      details: error.message,
     });
   }
 });

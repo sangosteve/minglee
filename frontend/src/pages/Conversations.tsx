@@ -64,6 +64,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useQuery } from "@tanstack/react-query";
 import { useQuickReplies } from "@/hooks/use-quick-replies";
 import QuickRepliesDropdown from "@/components/chat/QuickRepliesDropdown";
+import { usePersonalizedQuickReplies } from '@/hooks/use-personalized-quick-replies';
+
+
+
 
 
 // Helper functions
@@ -104,7 +108,7 @@ const getFileIconColor = (filename: string) => {
   if (filename.endsWith('.xlsx') || filename.endsWith('.xls')) return { bg: "bg-green-500/20", text: "text-green-500" };
   if (filename.endsWith('.pptx') || filename.endsWith('.ppt')) return { bg: "bg-orange-500/20", text: "text-orange-500" };
   if (filename.endsWith('.csv')) return { bg: "bg-emerald-500/20", text: "text-emerald-500" };
-  if (filename.endsWith('.zip') || filename.endsWith('.rar') || filename.endsWith('.tar') || filename.endsWith('.gz')) 
+  if (filename.endsWith('.zip') || filename.endsWith('.rar') || filename.endsWith('.tar') || filename.endsWith('.gz'))
     return { bg: "bg-amber-500/20", text: "text-amber-500" };
   return { bg: "bg-primary/20", text: "text-primary" };
 };
@@ -122,10 +126,10 @@ const hasMediaContent = (message: Message): boolean => {
   return !!(
     metadata.mediaAttachmentId ||
     metadata.cloudinaryUrl ||
-    metadata.image || 
-    metadata.video || 
-    metadata.audio || 
-    metadata.document || 
+    metadata.image ||
+    metadata.video ||
+    metadata.audio ||
+    metadata.document ||
     metadata.location ||
     message.messageType !== 'text'
   );
@@ -133,7 +137,7 @@ const hasMediaContent = (message: Message): boolean => {
 
 const getMediaType = (message: Message): string => {
   const metadata = message.metadata || {};
-  
+
   if (message.messageType === 'image' || metadata.image || metadata.mediaType === 'image') return 'image';
   if (message.messageType === 'video' || metadata.video || metadata.mediaType === 'video') return 'video';
   if (message.messageType === 'audio' || metadata.audio || metadata.mediaType === 'audio') return 'audio';
@@ -141,26 +145,26 @@ const getMediaType = (message: Message): string => {
   if (message.messageType === 'sticker' || metadata.sticker) return 'sticker';
   if (message.messageType === 'location' || metadata.location) return 'location';
   if (message.messageType === 'contacts' || metadata.contacts) return 'contacts';
-  
+
   return 'text';
 };
 
 const getMediaUrl = (message: Message): string | undefined => {
   const metadata = message.metadata || {};
-  return metadata.cloudinaryUrl || 
-         metadata.secureUrl || 
-         metadata.url || 
-         metadata.image?.url || 
-         metadata.video?.url;
+  return metadata.cloudinaryUrl ||
+    metadata.secureUrl ||
+    metadata.url ||
+    metadata.image?.url ||
+    metadata.video?.url;
 };
 
 const getFilename = (message: Message): string => {
   const metadata = message.metadata || {};
-  return metadata.originalFilename || 
-         metadata.filename || 
-         metadata.document?.filename || 
-         message.body || 
-         'file';
+  return metadata.originalFilename ||
+    metadata.filename ||
+    metadata.document?.filename ||
+    message.body ||
+    'file';
 };
 
 const getMessageStatusIcon = (status: string) => {
@@ -221,6 +225,7 @@ const Conversations = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const {  send: sendQuickReply } = usePersonalizedQuickReplies();
   const [sidebarFilters, setSidebarFilters] = useState<ConversationFilters>({
     inboxType: 'all',
     lifecycle: '',
@@ -230,16 +235,16 @@ const Conversations = () => {
     viewType: 'chats',
   });
   const [debouncedSearch, setDebouncedSearch] = useState("");
-const {
-  data: quickRepliesData,
-  isLoading: quickRepliesLoading,
-} = useQuickReplies({
-  page: 1,
-  limit: 100,
-  isActive: true,
-});
+  const {
+    data: quickRepliesData,
+    isLoading: quickRepliesLoading,
+  } = useQuickReplies({
+    page: 1,
+    limit: 100,
+    isActive: true,
+  });
 
-const quickReplies = quickRepliesData?.quickReplies ?? [];
+  const quickReplies = quickRepliesData?.quickReplies ?? [];
 
 
   const { user } = useAuthStore();
@@ -254,9 +259,9 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
 
   // Fetch ALL conversations once
   const { data: allConversationsData, isLoading: conversationsLoading } = useQuery({
-    queryKey: ['conversations', { 
-      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined, 
-      search: debouncedSearch 
+    queryKey: ['conversations', {
+      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
+      search: debouncedSearch
     }],
     queryFn: () => conversationsApi.getAllConversations({
       status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
@@ -319,7 +324,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
   // Calculate counts for sidebar
   const getInboxCounts = useMemo(() => {
     const currentUserId = user?.id ? String(user.id) : null;
-    
+
     const mineCount = allConversations.filter(conv => {
       if (!currentUserId || !conv.assignedToUserId) return false;
       return String(conv.assignedToUserId) === currentUserId;
@@ -399,7 +404,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
     try {
       if (attachments.length > 0) {
         const formData = new FormData();
-        
+
         if (!contact?.phone) {
           toast({
             title: "Cannot send message",
@@ -408,10 +413,10 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
           });
           return;
         }
-        
+
         formData.append('phoneNumber', contact.phone);
         formData.append('caption', caption || '');
-        
+
         if (attachments[0]) {
           formData.append('file', attachments[0].file);
         }
@@ -424,7 +429,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
           message: messageInput.trim(),
         });
       }
-      
+
       setMessageInput("");
     } catch (error) {
       toast({
@@ -452,7 +457,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
   const handleDownloadMedia = (message: Message) => {
     const mediaUrl = getMediaUrl(message);
     const filename = getFilename(message);
-    
+
     if (!mediaUrl) {
       toast({
         title: "Download failed",
@@ -468,7 +473,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
+
     toast({
       title: "Download started",
       description: `Downloading ${filename}`,
@@ -503,7 +508,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       processFiles(e.dataTransfer.files);
     }
@@ -526,7 +531,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
   if (isLoading) {
     return (
       <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
-        <ConversationSidebar 
+        <ConversationSidebar
           onFilterChange={handleSidebarFilterChange}
           currentUserId={user?.id}
           inboxCounts={getInboxCounts}
@@ -572,7 +577,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
   return (
     <TooltipProvider>
       <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
-        <ConversationSidebar 
+        <ConversationSidebar
           onFilterChange={handleSidebarFilterChange}
           currentUserId={user?.id}
           inboxCounts={getInboxCounts}
@@ -591,8 +596,8 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
               />
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button 
-                    variant="ghost" 
+                  <Button
+                    variant="ghost"
                     size="icon"
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1 h-auto"
                   >
@@ -650,7 +655,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                 const isSelected = conv.id === selectedConversationId;
                 const contact = conv.contact;
                 const contactStatus = getContactStatus(contact?.status);
-                
+
                 return (
                   <Button
                     key={conv.id}
@@ -699,7 +704,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
           </ScrollArea>
         </div>
 
-        <div 
+        <div
           ref={dropZoneRef}
           className="flex-1 flex flex-col relative"
           onDragEnter={handleDragEnter}
@@ -752,7 +757,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <AssignmentDropdown 
+                  <AssignmentDropdown
                     conversationId={selectedConversation.id}
                     currentAssignment={selectedConversation.assignedToUserId}
                     onAssignmentChange={() => {
@@ -822,7 +827,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                       const mediaType = getMediaType(message);
                       const mediaUrl = getMediaUrl(message);
                       const filename = getFilename(message);
-                      
+
                       return (
                         <div
                           key={message.id}
@@ -844,8 +849,8 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                               <div className="relative">
                                 {mediaType === "image" && mediaUrl && (
                                   <div className="relative">
-                                    <img 
-                                      src={mediaUrl} 
+                                    <img
+                                      src={mediaUrl}
                                       alt={message.body || "Image"}
                                       className="w-full h-auto object-cover cursor-pointer"
                                       onClick={() => handleViewMedia(message)}
@@ -938,8 +943,8 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                                       <div className="flex-1">
                                         <div className="flex items-center gap-1 mb-1">
                                           {[...Array(20)].map((_, i) => (
-                                            <div 
-                                              key={i} 
+                                            <div
+                                              key={i}
                                               className={cn(
                                                 "w-1 rounded-full",
                                                 isOutgoing ? "bg-primary-foreground/40" : "bg-primary/40"
@@ -1049,8 +1054,8 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                                         <TooltipTrigger asChild>
                                           <Button className={cn(
                                             "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors",
-                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30" 
-                                                      : "bg-primary/10 text-primary hover:bg-primary/20"
+                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
+                                              : "bg-primary/10 text-primary hover:bg-primary/20"
                                           )}>
                                             View on Map
                                           </Button>
@@ -1075,7 +1080,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                                 )}
                               </div>
                             )}
-                            
+
                             {message.body && !hasMedia && (
                               <p className="text-sm whitespace-pre-wrap">{message.body}</p>
                             )}
@@ -1109,8 +1114,8 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                       <span className="text-sm font-medium text-foreground">
                         {attachments.length} file{attachments.length > 1 ? "s" : ""} attached
                       </span>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         className="text-xs text-destructive hover:text-destructive/80 transition-colors"
                         onClick={handleClearAllAttachments}
@@ -1118,7 +1123,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                         Clear all
                       </Button>
                     </div>
-                    
+
                     <div className="flex flex-wrap gap-2 mb-3">
                       {attachments.map((attachment, index) => (
                         <div key={index} className="relative group">
@@ -1137,11 +1142,11 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                               <p>Remove attachment</p>
                             </TooltipContent>
                           </Tooltip>
-                          
+
                           {attachment.type === "image" && (
-                            <img 
-                              src={attachment.previewUrl} 
-                              alt="Preview" 
+                            <img
+                              src={attachment.previewUrl}
+                              alt="Preview"
                               className="w-16 h-16 object-cover rounded-lg"
                             />
                           )}
@@ -1186,7 +1191,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
 
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3">
-<QuickRepliesDropdown
+                 <QuickRepliesDropdown
   quickReplies={quickReplies}
   isLoading={quickRepliesLoading}
   onSelect={(message) => {
@@ -1194,6 +1199,9 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
       prev ? `${prev} ${message}` : message
     );
   }}
+  conversationId={selectedConversationId || undefined}
+  contact={contact}
+  sendQuickReply={sendQuickReply}
 />
                   <DropdownMenu>
                     <Tooltip>
@@ -1209,35 +1217,35 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                       </TooltipContent>
                     </Tooltip>
                     <DropdownMenuContent align="start" className="w-48 bg-card border-border z-50" sideOffset={8}>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => triggerFileInput("image/*")}
                         className="cursor-pointer hover:bg-secondary"
                       >
                         <PhotoIcon className="w-4 h-4 mr-2" />
                         Photos
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => triggerFileInput("video/*")}
                         className="cursor-pointer hover:bg-secondary"
                       >
                         <FilmIcon className="w-4 h-4 mr-2" />
                         Videos
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => triggerFileInput("audio/*")}
                         className="cursor-pointer hover:bg-secondary"
                       >
                         <MusicalNoteIcon className="w-4 h-4 mr-2" />
                         Audio
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => triggerFileInput(".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv")}
                         className="cursor-pointer hover:bg-secondary"
                       >
                         <DocumentIcon className="w-4 h-4 mr-2" />
                         Documents
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => triggerFileInput(".zip,.rar,.7z,.tar,.gz")}
                         className="cursor-pointer hover:bg-secondary"
                       >
@@ -1273,11 +1281,11 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                     </Tooltip>
                     {showEmojiPicker && (
                       <>
-                        <div 
+                        <div
                           className="fixed inset-0 z-40"
                           onClick={() => setShowEmojiPicker(false)}
                         />
-                        <EmojiPicker 
+                        <EmojiPicker
                           onEmojiSelect={handleEmojiSelect}
                           onClose={() => setShowEmojiPicker(false)}
                         />
@@ -1286,7 +1294,7 @@ const quickReplies = quickRepliesData?.quickReplies ?? [];
                   </div>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button 
+                      <Button
                         onClick={handleSendMessage}
                         disabled={(!messageInput.trim() && attachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
                         className="p-3"
