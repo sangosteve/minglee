@@ -31,9 +31,12 @@ import {
   PlusIcon,
   XMarkIcon,
   ArrowPathIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
 import { useCreateContact } from '@/lib/api/contacts';
 import { toast } from '@/hooks/use-toast';
+import { useTags } from '@/components/tags/TagsProvider';
+import { cn } from '@/lib/utils';
 
 interface AddContactSheetProps {
   open: boolean;
@@ -41,13 +44,17 @@ interface AddContactSheetProps {
   onSuccess?: () => void;
 }
 
+interface Tag {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 const countryCodes = [
   { code: '+263', flag: '🇿🇼', country: 'ZW' },
   { code: '+27', flag: '🇿🇦', country: 'ZA' },
   { code: '+1', flag: '🇺🇸', country: 'US' },
 ];
-
-const availableTags = ['VIP', 'Premium', 'Active', 'New', 'Lead', 'Customer'];
 
 const statusOptions = [
   { value: 'active', label: 'Active' },
@@ -64,6 +71,7 @@ export const AddContactSheet = ({
   onOpenChange,
   onSuccess,
 }: AddContactSheetProps) => {
+  const { data: availableTags = [] } = useTags();
   const [formData, setFormData] = useState({
     name: '',
     countryCode: '+263',
@@ -75,7 +83,7 @@ export const AddContactSheet = ({
     status: 'active',
   });
 
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
 
   const createContactMutation = useCreateContact();
@@ -88,11 +96,14 @@ export const AddContactSheet = ({
     e.preventDefault();
     try {
       const phone = `${formData.countryCode}${normalizePhone(formData.phone)}`;
+      
+      // Send tag IDs to backend
+      const tagIds = selectedTagIds.filter(id => id); // Filter out any empty IDs
 
       await createContactMutation.mutateAsync({
         ...formData,
         phone,
-        tags: selectedTags,
+        tags: tagIds, // Send array of tag IDs
       });
 
       toast({
@@ -100,6 +111,7 @@ export const AddContactSheet = ({
         description: 'Contact created successfully.',
       });
 
+      // Reset form
       setFormData({
         name: '',
         countryCode: '+263',
@@ -110,7 +122,7 @@ export const AddContactSheet = ({
         country: '',
         status: 'active',
       });
-      setSelectedTags([]);
+      setSelectedTagIds([]);
       setTagPopoverOpen(false);
 
       onOpenChange(false);
@@ -124,13 +136,19 @@ export const AddContactSheet = ({
     }
   };
 
-  const handleAddTag = (tag: string) => {
-    if (!selectedTags.includes(tag)) setSelectedTags([...selectedTags, tag]);
+  const handleAddTag = (tagId: string) => {
+    if (!selectedTagIds.includes(tagId)) {
+      setSelectedTagIds([...selectedTagIds, tagId]);
+    }
     setTagPopoverOpen(false);
   };
 
-  const handleRemoveTag = (tag: string) =>
-    setSelectedTags(selectedTags.filter((t) => t !== tag));
+  const handleRemoveTag = (tagId: string) => {
+    setSelectedTagIds(selectedTagIds.filter((id) => id !== tagId));
+  };
+
+  // Get selected tag objects for display
+  const selectedTags = availableTags.filter(tag => selectedTagIds.includes(tag.id));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -152,6 +170,7 @@ export const AddContactSheet = ({
                 setFormData({ ...formData, name: e.target.value })
               }
               className="w-full px-4 py-2.5 border rounded-lg"
+              placeholder="Enter contact name"
             />
           </div>
 
@@ -189,6 +208,7 @@ export const AddContactSheet = ({
                   })
                 }
                 className="flex-1 px-4 py-2.5 border rounded-r-lg"
+                placeholder="Phone number"
               />
             </div>
           </div>
@@ -205,6 +225,7 @@ export const AddContactSheet = ({
                   setFormData({ ...formData, email: e.target.value })
                 }
                 className="w-full pl-10 pr-4 py-2.5 border rounded-lg"
+                placeholder="email@example.com"
               />
             </div>
           </div>
@@ -219,6 +240,7 @@ export const AddContactSheet = ({
                   setFormData({ ...formData, city: e.target.value })
                 }
                 className="w-full px-4 py-2.5 border rounded-lg"
+                placeholder="City"
               />
             </div>
             <div>
@@ -231,6 +253,7 @@ export const AddContactSheet = ({
                   setFormData({ ...formData, state: e.target.value })
                 }
                 className="w-full px-4 py-2.5 border rounded-lg"
+                placeholder="State/Region"
               />
             </div>
           </div>
@@ -243,6 +266,7 @@ export const AddContactSheet = ({
                 setFormData({ ...formData, country: e.target.value })
               }
               className="w-full px-4 py-2.5 border rounded-lg"
+              placeholder="Country"
             />
           </div>
 
@@ -271,14 +295,20 @@ export const AddContactSheet = ({
           {/* Tags */}
           <div>
             <label className="block text-sm font-medium mb-1.5">Tags</label>
+            
+            {/* Selected Tags Display */}
             <div className="flex flex-wrap gap-2 mb-2">
               {selectedTags.map((tag) => (
-                <Badge key={tag} variant="secondary">
-                  {tag}
+                <Badge 
+                  key={tag.id} 
+                  variant="secondary"
+                  style={tag.color ? { backgroundColor: `${tag.color}20`, color: tag.color } : undefined}
+                >
+                  {tag.name}
                   <button
                     type="button"
-                    onClick={() => handleRemoveTag(tag)}
-                    className="ml-1"
+                    onClick={() => handleRemoveTag(tag.id)}
+                    className="ml-1 hover:opacity-70"
                   >
                     <XMarkIcon className="w-3 h-3" />
                   </button>
@@ -286,11 +316,17 @@ export const AddContactSheet = ({
               ))}
             </div>
 
+            {/* Tags Popover */}
             <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <PlusIcon className="w-4 h-4 mr-1" />
-                  Add Tag
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  disabled={createContactMutation.isPending}
+                >
+                  <PlusIcon className="w-4 h-4 mr-2" />
+                  Add Tags
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="p-0 w-48" align="start">
@@ -298,13 +334,22 @@ export const AddContactSheet = ({
                   <CommandEmpty>No tags found.</CommandEmpty>
                   <CommandGroup>
                     {availableTags
-                      .filter((t) => !selectedTags.includes(t))
+                      .filter((tag) => !selectedTagIds.includes(tag.id))
                       .map((tag) => (
                         <CommandItem
-                          key={tag}
-                          onSelect={() => handleAddTag(tag)}
+                          key={tag.id}
+                          onSelect={() => handleAddTag(tag.id)}
+                          className="flex items-center justify-between"
                         >
-                          {tag}
+                          <div className="flex items-center gap-2">
+                            {tag.color && (
+                              <div 
+                                className="w-3 h-3 rounded-full" 
+                                style={{ backgroundColor: tag.color }}
+                              />
+                            )}
+                            <span>{tag.name}</span>
+                          </div>
                         </CommandItem>
                       ))}
                   </CommandGroup>

@@ -1,3 +1,4 @@
+//backend/src/routes/quick-replies.routes.ts
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { QuickRepliesService } from '../services/quick-replies.service';

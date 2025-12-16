@@ -35,7 +35,7 @@ export const tagsApi = {
   // Get all tags
   getAll: async (): Promise<Tag[]> => {
     const response = await api.get('/tags');
-    return response.tag;
+    return response.tags;
   },
 
   // Create new tag

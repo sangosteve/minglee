@@ -1,11 +1,27 @@
-// backend/src/routes/contacts.routes.ts
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
-import { contacts } from '../db/schema';
+import { contacts, tags } from '../db/schema';
 import { eq, and, or, like, inArray, desc, asc, sql } from 'drizzle-orm';
 
 const router = Router();
+
+// Helper function to get tag details
+async function getTagsWithDetails(tagIds: string[], userId: string) {
+  if (!tagIds || tagIds.length === 0) return [];
+  
+  const db = getDb();
+  const tagDetails = await db.select()
+    .from(tags)
+    .where(
+      and(
+        inArray(tags.id, tagIds),
+        eq(tags.userId, userId)
+      )
+    );
+  
+  return tagDetails;
+}
 
 // GET /api/contacts - Get all contacts for user
 router.get('/', authenticate, async (req: AuthRequest, res) => {
@@ -15,7 +31,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       limit = 20, 
       search, 
       status, 
-      tags, 
+      tags: tagIds, 
       city,
       country,
       sortBy = 'createdAt',
@@ -43,9 +59,10 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       conditions.push(eq(contacts.status, String(status)));
     }
     
-    if (tags) {
-      const tagArray = Array.isArray(tags) ? tags : [tags];
-      conditions.push(inArray(contacts.tags, tagArray));
+    // Handle tag filtering by tag IDs
+    if (tagIds) {
+      const tagArray = Array.isArray(tagIds) ? tagIds : [tagIds];
+      conditions.push(sql`${contacts.tagIds} && ARRAY[${sql.join(tagArray.map(tag => sql`${tag}::uuid`), sql`, `)}]`);
     }
     
     if (city) {
@@ -90,9 +107,23 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     
     const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
     
+    // Enhance contacts with tag details
+    const enhancedContacts = await Promise.all(
+      contactsList.map(async (contact) => {
+        let tagDetails = [];
+        if (contact.tagIds && contact.tagIds.length > 0) {
+          tagDetails = await getTagsWithDetails(contact.tagIds, userId);
+        }
+        return {
+          ...contact,
+          tags: tagDetails, // Add full tag objects
+        };
+      })
+    );
+    
     res.json({
       success: true,
-      contacts: contactsList,
+      contacts: enhancedContacts,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -134,9 +165,20 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
+    const contact = contactResult[0];
+    
+    // Get tag details
+    let tagDetails = [];
+    if (contact.tagIds && contact.tagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(contact.tagIds, userId);
+    }
+    
     res.json({
       success: true,
-      contact: contactResult[0],
+      contact: {
+        ...contact,
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -159,7 +201,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status = 'active',
-      tags = [],
+      tags: tagIds = [], // Expecting array of tag IDs (UUIDs)
       metadata = {},
       note,
       source = 'manual'
@@ -201,6 +243,25 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
+    // Validate that all tag IDs exist and belong to the user
+    let validTagIds: string[] = [];
+    if (tagIds && tagIds.length > 0) {
+      const tagArray = Array.isArray(tagIds) ? tagIds : [tagIds];
+      
+      // Check if tags exist and belong to user
+      const existingTags = await db.select()
+        .from(tags)
+        .where(
+          and(
+            inArray(tags.id, tagArray),
+            eq(tags.userId, userId)
+          )
+        );
+      
+      // Only use valid tag IDs that exist
+      validTagIds = existingTags.map(tag => tag.id);
+    }
+    
     // Create contact
     const [newContact] = await db.insert(contacts).values({
       name,
@@ -210,7 +271,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       state: state || '',
       country: country || '',
       status,
-      tags: Array.isArray(tags) ? tags : [],
+      tagIds: validTagIds, // Store array of tag UUIDs
       metadata,
       note: note || '',
       userId,
@@ -221,9 +282,18 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       updatedAt: new Date(),
     }).returning();
     
-    res.json({
+    // Get tag details for response
+    let tagDetails = [];
+    if (validTagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(validTagIds, userId);
+    }
+    
+    res.status(201).json({
       success: true,
-      contact: newContact,
+      contact: {
+        ...newContact,
+        tags: tagDetails, // Include full tag objects in response
+      },
     });
     
   } catch (error: any) {
@@ -247,7 +317,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status,
-      tags,
+      tags: tagIds, // Expecting array of tag UUIDs
       metadata,
       note,
       isActive,
@@ -287,11 +357,30 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     if (state !== undefined) updateData.state = state;
     if (country !== undefined) updateData.country = country;
     if (status !== undefined) updateData.status = status;
-    if (tags !== undefined) updateData.tags = Array.isArray(tags) ? tags : [];
-    if (metadata !== undefined) updateData.metadata = metadata;
-    if (note !== undefined) updateData.note = note;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (optIn !== undefined) updateData.optIn = optIn;
+    if (metadata !== undefined) updateData.metadata = metadata;
+    if (note !== undefined) updateData.note = note;
+    
+    // Handle tags update
+    if (tagIds !== undefined) {
+      if (Array.isArray(tagIds)) {
+        // Validate that all tag IDs exist and belong to the user
+        const existingTags = await db.select()
+          .from(tags)
+          .where(
+            and(
+              inArray(tags.id, tagIds),
+              eq(tags.userId, userId)
+            )
+          );
+        
+        const validTagIds = existingTags.map(tag => tag.id);
+        updateData.tagIds = validTagIds;
+      } else {
+        updateData.tagIds = [];
+      }
+    }
     
     // If phone is being updated, check for duplicates
     if (phone && phone !== contactResult[0].phone) {
@@ -324,9 +413,19 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       )
       .returning();
     
+    // Get tag details for response
+    let tagDetails = [];
+    const finalTagIds = updateData.tagIds !== undefined ? updateData.tagIds : contactResult[0].tagIds;
+    if (finalTagIds && finalTagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(finalTagIds, userId);
+    }
+    
     res.json({
       success: true,
-      contact: updatedContact,
+      contact: {
+        ...updatedContact,
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -384,9 +483,18 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
       )
       .returning();
     
+    // Get tag details for response
+    let tagDetails = [];
+    if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
+    }
+    
     res.json({
       success: true,
-      contact: updatedContact,
+      contact: {
+        ...updatedContact,
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -446,7 +554,7 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// GET /api/contacts/analytics - Get contact analytics
+// GET /api/contacts/analytics/overview - Get contact analytics
 router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -470,12 +578,33 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
     
     // Get contacts by tag
     const byTagResult = await db.execute(sql`
-      SELECT tag, COUNT(*) as count
-      FROM contacts, unnest(contacts.tags) as tag
+      SELECT tag_id, COUNT(*) as count
+      FROM contacts, unnest(contacts.tag_ids) as tag_id
       WHERE contacts."userId" = ${userId}
-      GROUP BY tag
+      AND tag_id IS NOT NULL
+      GROUP BY tag_id
       ORDER BY count DESC
     `);
+    
+    // Get tag names for the tag IDs
+    const tagDetails = byTagResult.rows.length > 0 ? await db.select()
+      .from(tags)
+      .where(
+        and(
+          inArray(tags.id, byTagResult.rows.map((row: any) => row.tag_id)),
+          eq(tags.userId, userId)
+        )
+      ) : [];
+    
+    const byTag = byTagResult.rows.map((row: any) => {
+      const tag = tagDetails.find(t => t.id === row.tag_id);
+      return {
+        tag: tag?.name || row.tag_id,
+        tagId: row.tag_id,
+        count: Number(row.count),
+        color: tag?.color || '#3B82F6',
+      };
+    });
     
     // Get new contacts this month
     const startOfMonth = new Date();
@@ -501,10 +630,7 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
           status: row.status,
           count: Number(row.count),
         })),
-        byTag: Array.isArray(byTagResult.rows) ? byTagResult.rows.map((row: any) => ({
-          tag: row.tag,
-          count: Number(row.count),
-        })) : [],
+        byTag,
         newThisMonth,
       },
     });
@@ -522,11 +648,11 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
 router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { tags } = req.body;
+    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs
     const userId = req.user!.userId;
     const db = getDb();
     
-    if (!tags || !Array.isArray(tags)) {
+    if (!tagIds || !Array.isArray(tagIds)) {
       return res.status(400).json({ 
         success: false,
         error: 'Tags array is required' 
@@ -551,12 +677,23 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
-    const currentTags = contactResult[0].tags || [];
-    const newTags = [...new Set([...currentTags, ...tags])];
+    // Validate that all tag IDs exist and belong to the user
+    const existingTags = await db.select()
+      .from(tags)
+      .where(
+        and(
+          inArray(tags.id, tagIds),
+          eq(tags.userId, userId)
+        )
+      );
+    
+    const validTagIds = existingTags.map(tag => tag.id);
+    const currentTagIds = contactResult[0].tagIds || [];
+    const newTagIds = [...new Set([...currentTagIds, ...validTagIds])];
     
     const [updatedContact] = await db.update(contacts)
       .set({ 
-        tags: newTags,
+        tagIds: newTagIds,
         updatedAt: new Date(),
       })
       .where(
@@ -567,9 +704,15 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       )
       .returning();
     
+    // Get tag details for response
+    const tagDetails = await getTagsWithDetails(newTagIds, userId);
+    
     res.json({
       success: true,
-      contact: updatedContact,
+      contact: {
+        ...updatedContact,
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -585,11 +728,11 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
 router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { tags } = req.body;
+    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs to remove
     const userId = req.user!.userId;
     const db = getDb();
     
-    if (!tags || !Array.isArray(tags)) {
+    if (!tagIds || !Array.isArray(tagIds)) {
       return res.status(400).json({ 
         success: false,
         error: 'Tags array is required' 
@@ -614,12 +757,12 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
-    const currentTags = contactResult[0].tags || [];
-    const newTags = currentTags.filter(tag => !tags.includes(tag));
+    const currentTagIds = contactResult[0].tagIds || [];
+    const newTagIds = currentTagIds.filter(tagId => !tagIds.includes(tagId));
     
     const [updatedContact] = await db.update(contacts)
       .set({ 
-        tags: newTags,
+        tagIds: newTagIds,
         updatedAt: new Date(),
       })
       .where(
@@ -630,9 +773,15 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       )
       .returning();
     
+    // Get tag details for response
+    const tagDetails = await getTagsWithDetails(newTagIds, userId);
+    
     res.json({
       success: true,
-      contact: updatedContact,
+      contact: {
+        ...updatedContact,
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -640,6 +789,67 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Failed to remove tags' 
+    });
+  }
+});
+
+// PATCH /api/contacts/:id/last-contacted - Update last contacted timestamp
+router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.userId;
+    const db = getDb();
+    
+    // Check if contact exists and belongs to user
+    const contactResult = await db.select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .limit(1);
+    
+    if (contactResult.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
+    
+    const [updatedContact] = await db.update(contacts)
+      .set({ 
+        lastContactedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .returning();
+    
+    // Get tag details for response
+    let tagDetails = [];
+    if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
+    }
+    
+    res.json({
+      success: true,
+      contact: {
+        ...updatedContact,
+        tags: tagDetails,
+      },
+    });
+    
+  } catch (error: any) {
+    console.error('Error updating last contacted:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to update last contacted' 
     });
   }
 });

@@ -75,67 +75,37 @@ router.get('/webhook', (req, res) => {
 router.post('/webhook', async (req, res) => {
   try {
     console.log('📩 Webhook received');
-    
-    // IMPORTANT: Always respond quickly to WhatsApp
-    // Send 200 immediately to acknowledge receipt
+
+    // WhatsApp requires a fast 200 response
     res.status(200).send('EVENT_RECEIVED');
-    
-    // Now process the body asynchronously
-    const chunks: Buffer[] = [];
-    
-    req.on('data', (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-    
-    req.on('end', async () => {
-      try {
-        const rawBody = Buffer.concat(chunks);
-        
-        if (rawBody.length === 0) {
-          console.log('📩 Empty webhook body (delivery/read receipt)');
-          return;
-        }
-        
-        const bodyText = rawBody.toString();
-        console.log('📩 Webhook raw body:', bodyText.substring(0, 500));
-        
-        let event;
-        try {
-          event = JSON.parse(bodyText);
-        } catch (parseError) {
-          console.error('❌ Failed to parse webhook JSON:', parseError);
-          return;
-        }
-        
-        console.log('📩 Webhook parsed:', JSON.stringify(event, null, 2));
-        
-        const signature = req.headers['x-hub-signature-256'] as string;
-        
-        // Verify signature if we have an app secret
-        if (process.env.WHATSAPP_APP_SECRET) {
-          if (!WhatsAppService.validateWebhookSignature(event, signature)) {
-            console.error('❌ Invalid webhook signature');
-            return;
-          }
-        } else {
-          console.log('⚠️ Webhook signature validation skipped: missing app secret');
-        }
-        
-        // Process webhook asynchronously
-        await processWebhookEvent(event);
-        
-      } catch (error: any) {
-        console.error('❌ Error processing webhook body:', error);
+
+    const event = req.body;
+
+    if (!event || Object.keys(event).length === 0) {
+      console.log('📭 Empty webhook payload');
+      return;
+    }
+
+    console.log('📩 Webhook payload:', JSON.stringify(event, null, 2));
+
+    const signature = req.headers['x-hub-signature-256'] as string;
+
+    if (process.env.WHATSAPP_APP_SECRET) {
+      const valid = WhatsAppService.validateWebhookSignature(
+        JSON.stringify(event),
+        signature
+      );
+
+      if (!valid) {
+        console.error('❌ Invalid webhook signature');
+        return;
       }
-    });
-    
-    req.on('error', (error) => {
-      console.error('❌ Webhook request error:', error);
-    });
-    
-  } catch (error: any) {
-    console.error('❌ Webhook endpoint error:', error);
-    // Don't send error response here - we already sent 200
+    }
+
+    await processWebhookEvent(event);
+
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error);
   }
 });
 
@@ -150,13 +120,53 @@ async function processWebhookEvent(event: WhatsAppWebhookEvent) {
       console.log('⚠️ Empty webhook event, skipping');
       return;
     }
-    
+
     console.log('🔄 Processing webhook event...');
-    
+
     for (const entry of event.entry) {
-      // ... rest of your processing code
+      if (!entry.changes) continue;
+
+      for (const change of entry.changes) {
+        const value = change.value;
+
+        // Check if this is a WhatsApp message event
+        if (value?.messaging_product !== 'whatsapp') continue;
+
+        // Extract metadata - CRITICAL: These are needed to route the message
+        const metadata = value.metadata;
+        if (!metadata?.display_phone_number || !metadata?.phone_number_id) {
+          console.error('❌ Missing critical metadata in webhook:', metadata);
+          continue;
+        }
+
+        // 1. Process incoming messages
+        if (value.messages && Array.isArray(value.messages)) {
+          console.log(`📨 Found ${value.messages.length} incoming message(s)`);
+          for (const message of value.messages) {
+            // Call your existing processIncomingMessage function
+            await processIncomingMessage(message, {
+              display_phone_number: metadata.display_phone_number,
+              phone_number_id: metadata.phone_number_id
+            });
+          }
+        }
+
+        // 2. Process delivery status updates
+        if (value.statuses && Array.isArray(value.statuses)) {
+          console.log(`📊 Found ${value.statuses.length} status update(s)`);
+          for (const status of value.statuses) {
+            await processMessageStatus(status);
+          }
+        }
+
+        // 3. Process contact info (if present)
+        if (value.contacts && Array.isArray(value.contacts)) {
+          console.log(`👤 Found ${value.contacts.length} contact(s) in webhook`);
+          // Contacts are already handled in processIncomingMessage
+        }
+      }
     }
-    
+
     console.log('✅ Webhook event processing completed');
   } catch (error: any) {
     console.error('❌ Error processing webhook event:', error);

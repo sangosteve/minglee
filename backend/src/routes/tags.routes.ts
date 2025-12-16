@@ -1,48 +1,107 @@
-// src/routes/tags.routes.ts - FIXED DUPLICATE CHECK
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { tags } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
-
+import { eq, desc, and, inArray, sql } from 'drizzle-orm';
 
 const router = Router();
 
 // Get all tags for current user (simplified)
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      search,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+    
     const db = getDb();
+    const offset = (Number(page) - 1) * Number(limit);
     const userId = req.user!.userId;
     
-    // Get all tags for user
-    const userTags = await db.select()
+    // Build where conditions
+    const conditions = [eq(tags.userId, userId)];
+    
+    if (search) {
+      conditions.push(
+        sql`LOWER(${tags.name}) LIKE LOWER(${'%' + search + '%'})`
+      );
+    }
+    
+    // Build query
+    const query = db.select()
       .from(tags)
-      .where(eq(tags.userId, userId))
-      .orderBy(desc(tags.createdAt));
+      .where(and(...conditions));
+    
+    // Apply sorting
+    const sortField = {
+      'name': tags.name,
+      'createdAt': tags.createdAt,
+      'updatedAt': tags.updatedAt,
+    }[sortBy as string] || tags.createdAt;
+    
+    const sortedQuery = query.orderBy(
+      sortOrder === 'desc' ? desc(sortField) : asc(sortField)
+    );
+    
+    // Get paginated results
+    const tagsList = await sortedQuery
+      .limit(Number(limit))
+      .offset(offset);
+    
+    // Get total count
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
+      .from(tags)
+      .where(and(...conditions));
+    
+    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    
+    // Get counts for each tag
+    const enhancedTags = await Promise.all(
+      tagsList.map(async (tag) => {
+        // Get contact count for this tag
+        const contactsWithTag = await db.execute(sql`
+          SELECT COUNT(*) as count
+          FROM contacts
+          WHERE ${tag.id} = ANY(contacts.tag_ids)
+          AND contacts.user_id = ${userId}
+        `);
+        
+        const contactCount = contactsWithTag.rows[0]?.count || 0;
+        
+        return {
+          ...tag,
+          count: Number(contactCount),
+          contactCount: Number(contactCount),
+          conversationCount: 0, // You can add this if needed
+        };
+      })
+    );
     
     res.json({
       success: true,
-      tags: userTags.map(tag => ({
-        ...tag,
-        count: 0, // Placeholder for now
-        conversationCount: 0,
-        contactCount: 0,
-      })),
+      tags: enhancedTags,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit)),
+      },
     });
     
   } catch (error: any) {
-    console.error('❌ Error fetching tags:', error);
+    console.error('Error fetching tags:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Failed to fetch tags',
-      details: error.message 
+      error: 'Failed to fetch tags' 
     });
   }
 });
 
 // Create new tag - FIXED VERSION
 router.post('/', authenticate, async (req: AuthRequest, res) => {
-  let transaction;
   try {
     console.log('Creating tag - Request body:', req.body);
     
@@ -60,7 +119,6 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     const tagName = name.trim();
     
     // FIRST: Check if tag with same name already exists for this user
-    // Use transaction to ensure consistency
     const existingTags = await db.select()
       .from(tags)
       .where(eq(tags.userId, userId));
@@ -139,9 +197,11 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     const existingTag = await db.select()
       .from(tags)
       .where(
-        eq(tags.id, id)
+        and(
+          eq(tags.id, id),
+          eq(tags.userId, userId)
+        )
       )
-      .where(eq(tags.userId, userId))
       .limit(1);
     
     if (existingTag.length === 0) {
@@ -174,8 +234,12 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
         color: color || existingTag[0].color,
         updatedAt: new Date(),
       })
-      .where(eq(tags.id, id))
-      .where(eq(tags.userId, userId))
+      .where(
+        and(
+          eq(tags.id, id),
+          eq(tags.userId, userId)
+        )
+      )
       .returning();
     
     res.json({
@@ -204,8 +268,12 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     // Check if tag exists and belongs to user
     const existingTag = await db.select()
       .from(tags)
-      .where(eq(tags.id, id))
-      .where(eq(tags.userId, userId))
+      .where(
+        and(
+          eq(tags.id, id),
+          eq(tags.userId, userId)
+        )
+      )
       .limit(1);
     
     if (existingTag.length === 0) {
@@ -217,8 +285,12 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     
     // Delete the tag
     await db.delete(tags)
-      .where(eq(tags.id, id))
-      .where(eq(tags.userId, userId));
+      .where(
+        and(
+          eq(tags.id, id),
+          eq(tags.userId, userId)
+        )
+      );
     
     res.json({
       success: true,

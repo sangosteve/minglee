@@ -17,6 +17,13 @@ import {
   XCircleIcon,
 } from "@heroicons/react/24/solid";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { AddContactSheet } from "@/components/contacts/AddContactSheet";
 import { EditContactSheet } from "@/components/contacts/EditContactSheet";
@@ -31,23 +38,30 @@ import {
 } from "@/lib/api/contacts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-
-// Tag colors (matching Loveable design)
-const tagColors: Record<string, string> = {
-  VIP: "bg-primary/10 text-primary border-primary/20",
-  Premium: "bg-purple-500/10 text-purple-500 border-purple-500/20",
-  Active: "bg-green-500/10 text-green-500 border-green-500/20",
-  New: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-  Lead: "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
-  Customer: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-};
+import { Badge } from "@/components/ui/badge";
 
 // Status configuration
 const statusConfig = {
-  active: { label: "Active", color: "bg-success/10 text-success", icon: CheckCircleIcon },
-  inactive: { label: "Inactive", color: "bg-muted text-muted-foreground", icon: XCircleIcon },
-  lead: { label: "Lead", color: "bg-blue-500/10 text-blue-500", icon: UserGroupIcon },
-  customer: { label: "Customer", color: "bg-purple-500/10 text-purple-500", icon: UserGroupIcon },
+  active: { 
+    label: "Active", 
+    color: "bg-success/10 text-success border-success/20",
+    icon: CheckCircleIcon 
+  },
+  inactive: { 
+    label: "Inactive", 
+    color: "bg-muted text-muted-foreground border-muted",
+    icon: XCircleIcon 
+  },
+  lead: { 
+    label: "Lead", 
+    color: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+    icon: UserGroupIcon 
+  },
+  customer: { 
+    label: "Customer", 
+    color: "bg-purple-500/10 text-purple-500 border-purple-500/20",
+    icon: UserGroupIcon 
+  },
 };
 
 const Contacts = () => {
@@ -174,6 +188,39 @@ const Contacts = () => {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
+  // Get tag display name (handle both string and object tags)
+  const getTagName = (tag: any): string => {
+    if (typeof tag === 'string') return tag;
+    if (tag && typeof tag === 'object') {
+      return tag.name || tag.id || '';
+    }
+    return '';
+  };
+
+  // Get tag color (handle both string and object tags)
+  const getTagColor = (tag: any): string | undefined => {
+    if (tag && typeof tag === 'object' && tag.color) {
+      return tag.color;
+    }
+    return undefined;
+  };
+
+  // Get tag display
+  const getTagDisplay = (tag: any) => {
+    const name = getTagName(tag);
+    const color = getTagColor(tag);
+    
+    return {
+      name,
+      color,
+      style: color ? { 
+        backgroundColor: `${color}20`, 
+        color: color,
+        borderColor: `${color}30`
+      } : undefined
+    };
+  };
+
   if (contactsError) {
     return (
       <>
@@ -269,7 +316,7 @@ const Contacts = () => {
             <Skeleton className="h-8 w-16 mt-1" />
           ) : (
             <p className="text-2xl font-bold text-foreground">
-              {pagination?.total || 0}
+              {analytics?.totalContacts || 0}
             </p>
           )}
         </div>
@@ -299,7 +346,7 @@ const Contacts = () => {
             <Skeleton className="h-8 w-16 mt-1" />
           ) : (
             <p className="text-2xl font-bold text-blue-500">
-              {analytics?.newThisMonth ? Math.round(analytics.newThisMonth / 4) : 0}
+              {analytics?.newThisWeek || 0}
             </p>
           )}
         </div>
@@ -371,8 +418,8 @@ const Contacts = () => {
                       {contact.name || "Unnamed Contact"}
                     </h3>
                     <span className={cn(
-                      "text-xs font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1",
-                      statusConfig[contact.status as keyof typeof statusConfig]?.color || "bg-muted text-muted-foreground"
+                      "text-xs font-medium px-2 py-0.5 rounded-full border inline-flex items-center gap-1",
+                      statusConfig[contact.status as keyof typeof statusConfig]?.color || "bg-muted text-muted-foreground border-border"
                     )}>
                       {(() => {
                         const Icon = statusConfig[contact.status as keyof typeof statusConfig]?.icon;
@@ -424,7 +471,7 @@ const Contacts = () => {
                 </div>
               </div>
 
-              <div className="space-y,2 mb-4">
+              <div className="space-y-2 mb-4">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <EnvelopeIcon className="w-4 h-4 flex-shrink-0" />
                   <span className="truncate">{contact.email || "No email"}</span>
@@ -447,21 +494,25 @@ const Contacts = () => {
 
               {contact.tags && contact.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-4">
-                  {contact.tags.slice(0, 3).map((tag) => (
-                    <span 
-                      key={tag} 
-                      className={cn(
-                        "px-2 py-0.5 text-xs rounded-full border",
-                        tagColors[tag] || "bg-secondary text-secondary-foreground border-border"
-                      )}
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                  {contact.tags.length > 3 && (
-                    <span className="px-2 py-0.5 text-xs rounded-full bg-secondary text-secondary-foreground">
+                  {Array.isArray(contact.tags) && contact.tags.slice(0, 3).map((tag, idx) => {
+                    const tagDisplay = getTagDisplay(tag);
+                    if (!tagDisplay.name) return null;
+                    
+                    return (
+                      <Badge
+                        key={idx}
+                        variant="secondary"
+                        style={tagDisplay.style}
+                        className="text-xs border"
+                      >
+                        {tagDisplay.name}
+                      </Badge>
+                    );
+                  })}
+                  {Array.isArray(contact.tags) && contact.tags.length > 3 && (
+                    <Badge variant="secondary" className="text-xs">
                       +{contact.tags.length - 3}
-                    </span>
+                    </Badge>
                   )}
                 </div>
               )}
@@ -493,7 +544,7 @@ const Contacts = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {contacts.map((contact, index) => (
+              {contacts.map((contact) => (
                 <tr
                   key={contact.id}
                   onClick={() => handleContactClick(contact)}
@@ -529,28 +580,32 @@ const Contacts = () => {
                   </td>
                   <td className="py-4 px-4">
                     <div className="flex flex-wrap gap-1">
-                      {contact.tags?.slice(0, 2).map((tag) => (
-                        <span 
-                          key={tag} 
-                          className={cn(
-                            "px-2 py-0.5 text-xs rounded-full border",
-                            tagColors[tag] || "bg-secondary text-secondary-foreground border-border"
-                          )}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                      {contact.tags && contact.tags.length > 2 && (
-                        <span className="px-2 py-0.5 text-xs rounded-full bg-secondary text-secondary-foreground">
+                      {Array.isArray(contact.tags) && contact.tags.slice(0, 2).map((tag, idx) => {
+                        const tagDisplay = getTagDisplay(tag);
+                        if (!tagDisplay.name) return null;
+                        
+                        return (
+                          <Badge
+                            key={idx}
+                            variant="secondary"
+                            style={tagDisplay.style}
+                            className="text-xs border"
+                          >
+                            {tagDisplay.name}
+                          </Badge>
+                        );
+                      })}
+                      {Array.isArray(contact.tags) && contact.tags.length > 2 && (
+                        <Badge variant="secondary" className="text-xs">
                           +{contact.tags.length - 2}
-                        </span>
+                        </Badge>
                       )}
                     </div>
                   </td>
                   <td className="py-4 px-4">
                     <span className={cn(
-                      "text-xs font-medium px-2 py-1 rounded-full inline-flex items-center gap-1",
-                      statusConfig[contact.status as keyof typeof statusConfig]?.color || "bg-muted text-muted-foreground"
+                      "text-xs font-medium px-2 py-1 rounded-full border inline-flex items-center gap-1",
+                      statusConfig[contact.status as keyof typeof statusConfig]?.color || "bg-muted text-muted-foreground border-border"
                     )}>
                       {(() => {
                         const Icon = statusConfig[contact.status as keyof typeof statusConfig]?.icon;
@@ -620,7 +675,10 @@ const Contacts = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFilters(prev => ({ ...prev, page: (prev.page || 1) - 1 }))}
+              onClick={() => setFilters(prev => ({ 
+                ...prev, 
+                page: Math.max((prev.page || 1) - 1, 1) 
+              }))}
               disabled={pagination.page === 1}
             >
               Previous
@@ -628,7 +686,10 @@ const Contacts = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFilters(prev => ({ ...prev, page: (prev.page || 1) + 1 }))}
+              onClick={() => setFilters(prev => ({ 
+                ...prev, 
+                page: Math.min((prev.page || 1) + 1, pagination.pages) 
+              }))}
               disabled={pagination.page === pagination.pages}
             >
               Next
@@ -639,14 +700,5 @@ const Contacts = () => {
     </>
   );
 };
-
-// DropdownMenu components
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 export default Contacts;

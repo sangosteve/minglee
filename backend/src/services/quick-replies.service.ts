@@ -1,3 +1,4 @@
+//backend/src/services/quick-replies.service.ts
 import { getDb } from '../db/client';
 import { quickReplies, mediaAttachments } from '../db/schema';
 import { eq, and, like, desc, asc, or, inArray,sql } from 'drizzle-orm';

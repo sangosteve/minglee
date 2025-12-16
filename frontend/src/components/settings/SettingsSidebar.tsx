@@ -87,8 +87,8 @@ const settingsGroups: SettingsGroup[] = [
     items: [
       { id: 'contact-fields', label: 'Contact fields', icon: IdentificationIcon, disabled: true },
       { id: 'lifecycle', label: 'Lifecycle', icon: ArrowPathIcon, disabled: true },
-      { id: 'closing-notes', label: 'Closing notes', icon: ClipboardDocumentCheckIcon, disabled: true },
-      { id: 'quick-replies', label: 'quick-replies', icon: DocumentTextIcon },
+      { id: 'closing-notes', label: 'Closing Notes', icon: ClipboardDocumentCheckIcon, disabled: true },
+      { id: 'quick-replies', label: 'Quick Replies', icon: DocumentTextIcon },
       { id: 'tags', label: 'Tags', icon: TagIcon },
       { id: 'ai-assist', label: 'AI Assist', icon: SparklesIcon, disabled: true },
       { id: 'ai-prompts', label: 'AI Prompts', icon: CommandLineIcon, disabled: true },

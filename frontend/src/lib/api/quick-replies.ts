@@ -1,5 +1,7 @@
+//frontend/src/lib/api/quick-replies.ts
+// API for managing quick replies
 import { api } from '../api';
-
+import { useQuery } from '@tanstack/react-query';
 // Types
 export interface QuickReply {
   id: string;
@@ -120,4 +122,14 @@ export const quickRepliesApi = {
   getTopics: async (): Promise<TopicsResponse> => {
     return await api.get('/quick-replies/topics/all');
   },
+
+  
+};
+export const useQuickReplies = (filters: QuickReplyFilters = {}) => {
+  return useQuery({
+    queryKey: ['quick-replies', filters],
+    queryFn: () => quickRepliesApi.getQuickReplies(filters),
+    select: (data) => data,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
 };

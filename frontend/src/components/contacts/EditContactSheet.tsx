@@ -7,11 +7,24 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from '@/components/ui/command';
 import {
   EnvelopeIcon,
   PlusIcon,
   TrashIcon,
   ArrowPathIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
   Select,
@@ -24,12 +37,19 @@ import { useUpdateContact, useDeleteContact } from '@/lib/api/contacts';
 import { toast } from '@/hooks/use-toast';
 import type { Contact } from '@/lib/api/contacts';
 import { cn } from '@/lib/utils';
+import { useTags } from '@/components/tags/TagsProvider';
 
 interface EditContactSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contact: Contact | null;
   onSuccess?: () => void;
+}
+
+interface Tag {
+  id: string;
+  name: string;
+  color?: string;
 }
 
 const countryCodes = [
@@ -42,8 +62,6 @@ const countryCodes = [
   { code: '+81', country: 'JP', flag: '🇯🇵' },
   { code: '+65', country: 'SG', flag: '🇸🇬' },
 ];
-
-const availableTags = ['VIP', 'Premium', 'Active', 'New', 'Lead', 'Customer'];
 
 // Status configuration
 const statusOptions = [
@@ -70,6 +88,7 @@ const parsePhoneNumber = (phone: string) => {
 };
 
 export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: EditContactSheetProps) => {
+  const { data: availableTags = [] } = useTags();
   const [formData, setFormData] = useState({
     name: '',
     countryCode: '+263',
@@ -80,8 +99,9 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     country: '',
     status: 'active' as string,
   });
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [showTagDropdown, setShowTagDropdown] = useState(false);
+  
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
 
   const updateContactMutation = useUpdateContact();
@@ -103,7 +123,18 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
       status: contact.status ?? 'active',
     });
 
-    setSelectedTags(contact.tags ?? []);
+    // Set tag IDs from contact tags
+    if (contact.tags && Array.isArray(contact.tags)) {
+      // If tags are objects with id, extract IDs
+      if (contact.tags.length > 0 && typeof contact.tags[0] === 'object') {
+        setSelectedTagIds(contact.tags.map(tag => tag.id));
+      } else {
+        // If tags are already IDs or names
+        setSelectedTagIds(contact.tags as string[]);
+      }
+    } else {
+      setSelectedTagIds([]);
+    }
   }, [contact?.id]);
 
   const normalizePhone = (phone: string) =>
@@ -114,14 +145,14 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     if (!contact) return;
 
     try {
-      // ✅ Build phone ONLY from dropdown + local input
+      // Build phone from dropdown + local input
       const fullPhone = `${formData.countryCode}${normalizePhone(formData.phone)}`;
 
       const updateData: Record<string, any> = {
         name: formData.name,
         phone: fullPhone,
         status: formData.status,
-        tags: selectedTags,
+        tags: selectedTagIds, // Send array of tag IDs
       };
 
       // Optional fields (only send if present)
@@ -205,18 +236,21 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     }
   };
 
-  const handleAddTag = (tag: string) => {
-    if (!selectedTags.includes(tag)) {
-      setSelectedTags([...selectedTags, tag]);
+  const handleAddTag = (tagId: string) => {
+    if (!selectedTagIds.includes(tagId)) {
+      setSelectedTagIds([...selectedTagIds, tagId]);
     }
-    setShowTagDropdown(false);
+    setTagPopoverOpen(false);
   };
 
-  const handleRemoveTag = (tag: string) => {
-    setSelectedTags(selectedTags.filter((t) => t !== tag));
+  const handleRemoveTag = (tagId: string) => {
+    setSelectedTagIds(selectedTagIds.filter((id) => id !== tagId));
   };
 
   const selectedCountry = countryCodes.find((c) => c.code === formData.countryCode);
+
+  // Get selected tag objects for display
+  const selectedTags = availableTags.filter(tag => selectedTagIds.includes(tag.id));
 
   if (!contact) return null;
 
@@ -297,11 +331,10 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
                 type="tel"
                 required
                 value={formData.phone}
-              onChange={(e) => {
-    const value = e.target.value.replace(/\D/g, ''); // digits only
-    setFormData({ ...formData, phone: value });
-  }}
-                
+                onChange={(e) => {
+                  const value = e.target.value.replace(/\D/g, ''); // digits only
+                  setFormData({ ...formData, phone: value });
+                }}
                 placeholder="Phone number"
                 className="flex-1 px-4 py-2.5 border border-border rounded-r-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                 disabled={updateContactMutation.isPending}
@@ -432,61 +465,70 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
             <label className="block text-sm font-medium text-foreground mb-1.5">
               Tags
             </label>
-            <p className="text-sm text-muted-foreground mb-2">Contact Tags</p>
 
             {/* Selected Tags */}
             {selectedTags.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {selectedTags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary/10 text-primary rounded-full text-sm"
+                  <Badge
+                    key={tag.id}
+                    variant="secondary"
+                    style={tag.color ? { backgroundColor: `${tag.color}20`, color: tag.color } : undefined}
                   >
-                    {tag}
+                    {tag.name}
                     <button
                       type="button"
-                      onClick={() => handleRemoveTag(tag)}
+                      onClick={() => handleRemoveTag(tag.id)}
                       disabled={updateContactMutation.isPending}
-                      className="hover:bg-primary/20 rounded-full p-0.5 disabled:opacity-50"
+                      className="ml-1 hover:opacity-70"
                     >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                      <XMarkIcon className="w-3 h-3" />
                     </button>
-                  </span>
+                  </Badge>
                 ))}
               </div>
             )}
 
-            {/* Add Tag Dropdown */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowTagDropdown(!showTagDropdown)}
-                disabled={updateContactMutation.isPending}
-                className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium disabled:opacity-50"
-              >
-                <PlusIcon className="w-4 h-4" />
-                Add tag
-              </button>
-
-              {showTagDropdown && (
-                <div className="absolute top-full left-0 mt-2 w-48 bg-card border border-border rounded-lg shadow-lg z-50 py-1">
-                  {availableTags
-                    .filter((tag) => !selectedTags.includes(tag))
-                    .map((tag) => (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => handleAddTag(tag)}
-                        className="w-full text-left px-4 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
-                      >
-                        {tag}
-                      </button>
-                    ))}
-                </div>
-              )}
-            </div>
+            {/* Tags Popover */}
+            <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="justify-start"
+                  disabled={updateContactMutation.isPending}
+                >
+                  <PlusIcon className="w-4 h-4 mr-2" />
+                  Add Tags
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="p-0 w-48" align="start">
+                <Command>
+                  <CommandEmpty>No tags found.</CommandEmpty>
+                  <CommandGroup>
+                    {availableTags
+                      .filter((tag) => !selectedTagIds.includes(tag.id))
+                      .map((tag) => (
+                        <CommandItem
+                          key={tag.id}
+                          onSelect={() => handleAddTag(tag.id)}
+                          className="flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-2">
+                            {tag.color && (
+                              <div 
+                                className="w-3 h-3 rounded-full" 
+                                style={{ backgroundColor: tag.color }}
+                              />
+                            )}
+                            <span>{tag.name}</span>
+                          </div>
+                        </CommandItem>
+                      ))}
+                  </CommandGroup>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
 
           {/* Actions */}

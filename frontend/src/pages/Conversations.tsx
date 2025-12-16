@@ -15,6 +15,7 @@ import {
   MagnifyingGlassIcon,
   FunnelIcon,
   PaperAirplaneIcon,
+  BoltIcon,
   PaperClipIcon,
   FaceSmileIcon,
   EllipsisVerticalIcon,
@@ -61,6 +62,9 @@ import {
 } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useQuery } from "@tanstack/react-query";
+import { useQuickReplies } from "@/hooks/use-quick-replies";
+import QuickRepliesDropdown from "@/components/chat/QuickRepliesDropdown";
+
 
 // Helper functions
 const getInitials = (name?: string | null) => {
@@ -226,6 +230,17 @@ const Conversations = () => {
     viewType: 'chats',
   });
   const [debouncedSearch, setDebouncedSearch] = useState("");
+const {
+  data: quickRepliesData,
+  isLoading: quickRepliesLoading,
+} = useQuickReplies({
+  page: 1,
+  limit: 100,
+  isActive: true,
+});
+
+const quickReplies = quickRepliesData?.quickReplies ?? [];
+
 
   const { user } = useAuthStore();
 
@@ -1171,6 +1186,15 @@ const Conversations = () => {
 
               <div className="p-4 border-t border-border">
                 <div className="flex items-center gap-3">
+<QuickRepliesDropdown
+  quickReplies={quickReplies}
+  isLoading={quickRepliesLoading}
+  onSelect={(message) => {
+    setMessageInput((prev) =>
+      prev ? `${prev} ${message}` : message
+    );
+  }}
+/>
                   <DropdownMenu>
                     <Tooltip>
                       <TooltipTrigger asChild>
