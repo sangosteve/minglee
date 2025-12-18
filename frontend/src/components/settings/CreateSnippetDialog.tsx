@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '../ui/use-toast';
 import { useCreateQuickReply } from '@/hooks/use-quick-replies';
+import { useAuthStore } from '@/stores/auth.store';
 
 interface Variable {
   id: string;
@@ -64,9 +65,11 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
   const [showVariables, setShowVariables] = useState(false);
   const [variableSearch, setVariableSearch] = useState('');
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuthStore();
 
   const filteredVariables = variables.filter(
     (v) =>
@@ -151,6 +154,67 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
+  if (!user?.id) {
+    throw new Error('User not authenticated');
+  }
+
+  if (filesToUpload.length === 0) {
+    return [];
+  }
+
+  setIsUploading(true);
+  
+  try {
+    const formData = new FormData();
+    filesToUpload.forEach((file) => {
+      formData.append('files', file);
+    });
+    formData.append('folder', `quick-replies/user_${user.id}`);
+
+    const response = await fetch(
+      `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/media/upload-multiple`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
+        },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    
+    console.log('Upload response:', data);
+    
+    if (data.success && data.data?.uploads) {
+      // ✅ Extract DATABASE IDs from the upload response
+      const mediaIds = data.data.uploads
+        .filter((upload: any) => upload.success && upload.id) // Make sure we have an ID
+        .map((upload: any) => upload.id); // Use the database ID
+
+      console.log('Uploaded media DATABASE IDs:', mediaIds);
+      
+      if (mediaIds.length === 0) {
+        throw new Error('No valid media IDs returned from server');
+      }
+      
+      return mediaIds;
+    }
+    
+    throw new Error('Upload response indicates failure');
+  } catch (error) {
+    console.error('File upload error:', error);
+    throw error;
+  } finally {
+    setIsUploading(false);
+  }
+};
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Form submission started');
@@ -165,16 +229,41 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
     }
 
     try {
-      console.log('Creating quick reply with data:', { name, message, topics, isActive });
-      
-      // First upload files if any
       let mediaAttachmentIds: string[] = [];
+      
+      // Upload files if any
       if (files.length > 0) {
-        // You'll need to implement file upload logic here
-        // This would typically involve uploading to your media API
-        // and getting back media attachment IDs
-        console.log('Files to upload:', files);
+        console.log('Uploading files:', files);
+        
+        try {
+          mediaAttachmentIds = await uploadFiles(files);
+          console.log('Uploaded media IDs:', mediaAttachmentIds);
+          
+          if (mediaAttachmentIds.length < files.length) {
+            toast({
+              title: "Upload Warning",
+              description: "Some attachments failed to upload. Creating quick reply without failed attachments.",
+              variant: "destructive",
+            });
+          }
+        } catch (uploadError: any) {
+          console.error('File upload error:', uploadError);
+          toast({
+            title: "Upload Error",
+            description: "Failed to upload attachments. Creating quick reply without attachments.",
+            variant: "destructive",
+          });
+          // Continue without attachments
+        }
       }
+
+      console.log('Creating quick reply with data:', { 
+        name, 
+        message, 
+        topics, 
+        isActive, 
+        mediaAttachmentIds 
+      });
 
       // Create the quick reply
       const result = await createQuickReply.mutateAsync({
@@ -238,6 +327,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter quick reply name"
               className="bg-background border-input text-foreground placeholder:text-muted-foreground"
+              disabled={createQuickReply.isPending || isUploading}
             />
           </div>
 
@@ -245,7 +335,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="topics" className="text-foreground">Topics</Label>
-              <Select value={topics} onValueChange={setTopics}>
+              <Select value={topics} onValueChange={setTopics} disabled={createQuickReply.isPending || isUploading}>
                 <SelectTrigger className="bg-background border-input text-foreground">
                   <SelectValue placeholder="Select topic" />
                 </SelectTrigger>
@@ -265,7 +355,11 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
 
             <div className="space-y-2">
               <Label htmlFor="status" className="text-foreground">Status</Label>
-              <Select value={isActive ? "active" : "inactive"} onValueChange={(value) => setIsActive(value === "active")}>
+              <Select 
+                value={isActive ? "active" : "inactive"} 
+                onValueChange={(value) => setIsActive(value === "active")}
+                disabled={createQuickReply.isPending || isUploading}
+              >
                 <SelectTrigger className="bg-background border-input text-foreground">
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
@@ -298,6 +392,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                   "disabled:cursor-not-allowed disabled:opacity-50 resize-none text-foreground"
                 )}
+                disabled={createQuickReply.isPending || isUploading}
               />
               
               {/* Variable Dropdown */}
@@ -343,10 +438,11 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
           <div className="space-y-2">
             <Label className="text-foreground">Attachments</Label>
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !createQuickReply.isPending && !isUploading && fileInputRef.current?.click()}
               className={cn(
                 "border-2 border-dashed border-input rounded-lg p-4 text-center cursor-pointer",
-                "hover:border-primary hover:bg-primary/5 transition-colors"
+                "hover:border-primary hover:bg-primary/5 transition-colors",
+                (createQuickReply.isPending || isUploading) && "opacity-50 cursor-not-allowed"
               )}
             >
               <PaperClipIcon className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
@@ -363,6 +459,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
               multiple
               onChange={handleFileSelect}
               className="hidden"
+              disabled={createQuickReply.isPending || isUploading}
             />
 
             {/* File List */}
@@ -388,11 +485,20 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
                       size="sm"
                       onClick={() => removeFile(index)}
                       className="h-6 w-6 p-0 hover:bg-destructive/10 hover:text-destructive"
+                      disabled={createQuickReply.isPending || isUploading}
                     >
                       <XCircleIcon className="w-4 h-4" />
                     </Button>
                   </div>
                 ))}
+              </div>
+            )}
+            
+            {/* Uploading Indicator */}
+            {isUploading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+                Uploading attachments...
               </div>
             )}
           </div>
@@ -404,16 +510,21 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
               variant="outline"
               onClick={() => setOpen(false)}
               className="border-input text-foreground hover:bg-muted"
-              disabled={createQuickReply.isPending}
+              disabled={createQuickReply.isPending || isUploading}
             >
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={!name.trim() || !message.trim() || createQuickReply.isPending}
+              disabled={!name.trim() || !message.trim() || createQuickReply.isPending || isUploading}
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
-              {createQuickReply.isPending ? "Creating..." : "Create Quick Reply"}
+              {(createQuickReply.isPending || isUploading) ? (
+                <span className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  {isUploading ? "Uploading..." : "Creating..."}
+                </span>
+              ) : "Create Quick Reply"}
             </Button>
           </div>
         </form>

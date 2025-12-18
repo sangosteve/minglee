@@ -1,3 +1,4 @@
+// frontend/src/components/chat/QuickRepliesDropdown.tsx
 import React, { useState } from 'react';
 import {
   DropdownMenu,
@@ -16,6 +17,11 @@ import {
   MagnifyingGlassIcon,
   InformationCircleIcon,
   SparklesIcon,
+  PhotoIcon,
+  FilmIcon,
+  MusicalNoteIcon,
+  DocumentIcon,
+  ArchiveBoxIcon,
 } from '@heroicons/react/24/outline';
 import type { QuickReply } from '@/lib/api/quick-replies';
 import { VariableService } from '@/lib/variable-service';
@@ -25,11 +31,11 @@ import { cn } from '@/lib/utils';
 interface QuickRepliesDropdownProps {
   quickReplies: QuickReply[];
   isLoading: boolean;
-  onInsertIntoInput: (message: string) => void;
+  onInsertIntoInput: (message: string, mediaAttachments?: any[]) => void;
   conversationId?: string;
   contact?: any;
-  user?: any; // Add user prop
-  conversation?: any; // Add conversation prop
+  user?: any;
+  conversation?: any;
 }
 
 const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
@@ -70,13 +76,18 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
       { contact, user, conversation }
     );
     
-    // Insert into input field
-    onInsertIntoInput(personalizedMessage);
+    // Prepare media attachments if any
+    const mediaAttachments = quickReply.mediaAttachments || [];
+    
+    // Insert into input field with media attachments
+    onInsertIntoInput(personalizedMessage, mediaAttachments);
     
     // Show success toast
     toast({
       title: "Quick reply inserted",
-      description: "Personalized message added to input field",
+      description: mediaAttachments.length > 0 
+        ? `Personalized message with ${mediaAttachments.length} media file(s) added as caption`
+        : "Personalized message added to input field",
     });
   };
 
@@ -87,7 +98,18 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
     preview: conversationId && contact && user 
       ? VariableService.replaceVariables(reply.message, { contact, user, conversation })
       : reply.message,
+    hasMedia: (reply.mediaAttachments && reply.mediaAttachments.length > 0) || false,
+    mediaCount: reply.mediaAttachments?.length || 0,
   }));
+
+  // Get icon for media type
+  const getMediaTypeIcon = (mimeType: string) => {
+    if (mimeType.startsWith('image/')) return PhotoIcon;
+    if (mimeType.startsWith('video/')) return FilmIcon;
+    if (mimeType.startsWith('audio/')) return MusicalNoteIcon;
+    if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return ArchiveBoxIcon;
+    return DocumentIcon;
+  };
 
   return (
     <DropdownMenu>
@@ -176,9 +198,10 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
                             Personalized
                           </Badge>
                         )}
-                        {reply.mediaAttachments && reply.mediaAttachments.length > 0 && (
+                        {reply.hasMedia && (
                           <Badge variant="outline" className="text-xs">
-                            +{reply.mediaAttachments.length} media
+                            <PhotoIcon className="w-3 h-3 mr-1" />
+                            +{reply.mediaCount} media
                           </Badge>
                         )}
                       </div>
@@ -194,6 +217,13 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
                           {reply.preview}
                         </p>
                         
+                        {/* Show where the text will go */}
+                        {reply.hasMedia && (
+                          <p className="text-xs text-muted-foreground">
+                            Text will be added as media caption
+                          </p>
+                        )}
+                        
                         {/* Show original template if personalized */}
                         {reply.hasVariables && conversationId && contact && reply.message !== reply.preview && (
                           <p className="text-xs text-muted-foreground line-clamp-1">
@@ -201,6 +231,32 @@ const QuickRepliesDropdown: React.FC<QuickRepliesDropdownProps> = ({
                           </p>
                         )}
                       </div>
+                      
+                      {/* Media preview */}
+                      {reply.hasMedia && reply.mediaAttachments && (
+                        <div className="mt-2 flex items-center gap-1 flex-wrap">
+                          {reply.mediaAttachments.slice(0, 3).map((media, index) => {
+                            const MediaIcon = getMediaTypeIcon(media.mimeType || '');
+                            const colorClass = media.mimeType?.startsWith('image/') ? 'text-blue-500' :
+                                              media.mimeType?.startsWith('video/') ? 'text-purple-500' :
+                                              media.mimeType?.startsWith('audio/') ? 'text-green-500' :
+                                              'text-amber-500';
+                            return (
+                              <div key={index} className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs">
+                                <MediaIcon className={`w-3 h-3 ${colorClass}`} />
+                                <span className="truncate max-w-[80px]">
+                                  {media.originalFilename || media.filename || `Media ${index + 1}`}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {reply.mediaCount > 3 && (
+                            <span className="text-xs text-muted-foreground">
+                              +{reply.mediaCount - 3} more
+                            </span>
+                          )}
+                        </div>
+                      )}
                       
                       {reply.topics && (
                         <div className="mt-1 flex items-center gap-1">

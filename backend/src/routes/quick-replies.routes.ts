@@ -1,327 +1,312 @@
 //backend/src/routes/quick-replies.routes.ts
 import { Router } from 'express';
-import { eq, and, or, like, desc, asc, sql,isNull } from 'drizzle-orm';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
-import { QuickRepliesService } from '../services/quick-replies.service';
-import  upload  from '../middleware/multer.middleware';
-import { CloudinaryService } from '../services/cloudinary.service';
-import { VariableService } from '../services/variable.service';
 import { getDb } from '../db/client';
-import { contacts, conversations, users } from '../db/schema';
+import { quickReplies, mediaAttachments } from '../db/schema';
+import { eq, and, or, like, desc, inArray, sql } from 'drizzle-orm';
 
 const router = Router();
 
-// GET /api/quick-replies - Get all quick replies for user
+// GET all quick replies
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20,
-      search,
+    const userId = req.user!.userId;
+    const { 
+      page = 1, 
+      limit = 20, 
+      search, 
       topics,
-      isActive,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
+      isActive = true 
     } = req.query;
     
-    const userId = req.user!.userId;
-    
-    const filters = {
-      page: Number(page),
-      limit: Number(limit),
-      search: search as string,
-      topics: topics ? (Array.isArray(topics) ? topics as string[] : [topics as string]) : undefined,
-      isActive: isActive !== undefined ? isActive === 'true' : undefined,
-      sortBy: sortBy as string,
-      sortOrder: sortOrder as 'asc' | 'desc',
-    };
-    
-    const result = await QuickRepliesService.getQuickReplies(userId, filters);
-    
+    const offset = (Number(page) - 1) * Number(limit);
+    const db = getDb();
+
+    const whereConditions: any[] = [eq(quickReplies.userId, userId)];
+
+    if (isActive !== undefined) {
+      whereConditions.push(eq(quickReplies.isActive, isActive === 'true'));
+    }
+
+    if (search) {
+      whereConditions.push(or(
+        like(quickReplies.name, `%${search}%`),
+        like(quickReplies.message, `%${search}%`),
+        like(quickReplies.topics, `%${search}%`)
+      ));
+    }
+
+    if (topics) {
+      whereConditions.push(like(quickReplies.topics, `%${topics}%`));
+    }
+
+    // Get quick replies
+    const quickRepliesList = await db.select()
+      .from(quickReplies)
+      .where(and(...whereConditions))
+      .orderBy(desc(quickReplies.updatedAt))
+      .limit(Number(limit))
+      .offset(offset);
+
+    // Get all media attachment IDs from all quick replies
+    const allMediaAttachmentIds = quickRepliesList
+      .flatMap(qr => qr.mediaAttachmentIds || [])
+      .filter(Boolean);
+
+    let mediaAttachmentsMap: Record<string, any> = {};
+
+    if (allMediaAttachmentIds.length > 0) {
+      // Get all media attachments in one query
+      const mediaAttachmentsList = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, allMediaAttachmentIds));
+
+      // Create a map for easy lookup
+      mediaAttachmentsMap = mediaAttachmentsList.reduce((acc, media) => {
+        acc[media.id] = media;
+        return acc;
+      }, {} as Record<string, any>);
+    }
+
+    // Enrich quick replies with media attachments
+    const enrichedQuickReplies = quickRepliesList.map(qr => ({
+      ...qr,
+      mediaAttachments: (qr.mediaAttachmentIds || [])
+        .map((id: string) => mediaAttachmentsMap[id])
+        .filter(Boolean)
+    }));
+
+    // Get total count
+    const totalResult = await db.select({ count: sql`count(*)` })
+      .from(quickReplies)
+      .where(and(...whereConditions));
+
+    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+
     res.json({
       success: true,
-      quickReplies: result.replies,
-      pagination: result.pagination,
+      quickReplies: enrichedQuickReplies,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit))
+      }
     });
-    
   } catch (error: any) {
-    console.error('Error fetching quick replies:', error);
+    console.error('❌ Error fetching quick replies:', error);
     res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch quick replies' 
+      success: false, 
+      error: 'Failed to fetch quick replies', 
+      details: error.message 
     });
   }
 });
 
-// GET /api/quick-replies/:id - Get single quick reply
+// GET single quick reply
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const userId = req.user!.userId;
-    
-    const quickReply = await QuickRepliesService.getQuickReplyById(userId, id);
-    
-    if (!quickReply) {
+    const db = getDb();
+
+    const quickReplyResult = await db.select()
+      .from(quickReplies)
+      .where(and(
+        eq(quickReplies.id, id),
+        eq(quickReplies.userId, userId)
+      ))
+      .limit(1);
+
+    if (!quickReplyResult.length) {
       return res.status(404).json({ 
-        success: false,
+        success: false, 
         error: 'Quick reply not found' 
       });
     }
-    
+
+    const quickReply = quickReplyResult[0];
+
+    // Get media attachments if any
+    let mediaAttachmentsList: any[] = [];
+    if (quickReply.mediaAttachmentIds && quickReply.mediaAttachmentIds.length > 0) {
+      mediaAttachmentsList = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
+    }
+
     res.json({
       success: true,
-      quickReply,
+      quickReply: {
+        ...quickReply,
+        mediaAttachments: mediaAttachmentsList
+      }
     });
-    
   } catch (error: any) {
-    console.error('Error fetching quick reply:', error);
+    console.error('❌ Error fetching quick reply:', error);
     res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch quick reply' 
+      success: false, 
+      error: 'Failed to fetch quick reply', 
+      details: error.message 
     });
   }
 });
 
-// POST /api/quick-replies - Create new quick reply
+// POST create quick reply
 router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const {
-      name,
-      message,
-      topics = 'General',
-      mediaAttachmentIds = [],
-      isActive = true,
-    } = req.body;
-    
     const userId = req.user!.userId;
-    
-    // Validate required fields
-    if (!name || !name.trim()) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Name is required' 
-      });
-    }
-    
-    if (!message || !message.trim()) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Message is required' 
-      });
-    }
-    
-    const quickReply = await QuickRepliesService.createQuickReply(userId, {
-      name: name.trim(),
-      message: message.trim(),
-      topics: topics.trim(),
-      mediaAttachmentIds,
-      isActive,
-    });
-    
-    res.status(201).json({
-      success: true,
-      quickReply,
-    });
-    
-  } catch (error: any) {
-    console.error('Error creating quick reply:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to create quick reply' 
-    });
-  }
-});
+    const { name, message, topics, mediaAttachmentIds, isActive } = req.body;
+    const db = getDb();
 
-// POST /api/quick-replies/:id/duplicate - Duplicate quick reply
-router.post('/:id/duplicate', authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user!.userId;
-    
-    const duplicatedQuickReply = await QuickRepliesService.duplicateQuickReply(userId, id);
-    
-    if (!duplicatedQuickReply) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Quick reply not found' 
-      });
-    }
-    
-    res.json({
-      success: true,
-      quickReply: duplicatedQuickReply,
-    });
-    
-  } catch (error: any) {
-    console.error('Error duplicating quick reply:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to duplicate quick reply' 
-    });
-  }
-});
-
-// POST /api/quick-replies/:id/upload - Upload attachment for quick reply
-router.post('/:id/upload', authenticate, upload.array('files', 10), async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user!.userId;
-    const files = req.files as Express.Multer.File[];
-    
-    if (!files || files.length === 0) {
+    if (!name || !message) {
       return res.status(400).json({ 
-        success: false,
-        error: 'No files provided' 
+        success: false, 
+        error: 'Name and message are required' 
       });
     }
-    
-    // Check if quick reply exists and belongs to user
-    const quickReply = await QuickRepliesService.getQuickReplyById(userId, id);
-    if (!quickReply) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Quick reply not found' 
-      });
-    }
-    
-    // Upload files to Cloudinary
-    const uploadPromises = files.map(file => 
-      CloudinaryService.uploadFile(file, { folder: 'quick-replies', userId })
-    );
-    
-    const uploadResults = await Promise.all(uploadPromises);
-    
-    // Create media attachment records
-    const mediaAttachments = [];
-    for (const result of uploadResults) {
-      if (result.success && result.data) {
-        const mediaAttachment = await CloudinaryService.saveMediaAttachment({
-          ...result.data,
-          uploadedByUserId: userId,
-          messageId: null,
+
+    // Validate media attachments belong to user
+    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
+      const validMediaAttachments = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, mediaAttachmentIds));
+
+      if (validMediaAttachments.length !== mediaAttachmentIds.length) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'One or more media attachments not found' 
         });
-        mediaAttachments.push(mediaAttachment);
       }
     }
-    
-    // Get existing media attachment IDs
-    const existingMediaAttachmentIds = quickReply.mediaAttachmentIds || [];
-    const newMediaAttachmentIds = [
-      ...existingMediaAttachmentIds,
-      ...mediaAttachments.map(ma => ma.id)
-    ];
-    
-    // Update quick reply with new media attachment IDs
-    const updatedQuickReply = await QuickRepliesService.updateQuickReply(userId, id, {
-      mediaAttachmentIds: newMediaAttachmentIds,
-    });
-    
+
+    const [quickReply] = await db.insert(quickReplies).values({
+      userId,
+      name,
+      message,
+      topics: topics || 'General',
+      mediaAttachmentIds: mediaAttachmentIds || [],
+      isActive: isActive !== undefined ? isActive : true,
+    }).returning();
+
     res.json({
       success: true,
-      quickReply: updatedQuickReply,
-      mediaAttachments,
+      quickReply: {
+        ...quickReply,
+        mediaAttachments: mediaAttachmentIds || []
+      }
     });
-    
   } catch (error: any) {
-    console.error('Error uploading attachments:', error);
+    console.error('❌ Error creating quick reply:', error);
     res.status(500).json({ 
-      success: false,
-      error: 'Failed to upload attachments' 
+      success: false, 
+      error: 'Failed to create quick reply', 
+      details: error.message 
     });
   }
 });
 
-// PUT /api/quick-replies/:id - Update quick reply
+// PUT update quick reply
 router.put('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const userId = req.user!.userId;
-    const {
-      name,
-      message,
-      topics,
-      mediaAttachmentIds,
-      isActive,
-    } = req.body;
-    
-    const updatedQuickReply = await QuickRepliesService.updateQuickReply(userId, id, {
-      name,
-      message,
-      topics,
-      mediaAttachmentIds,
-      isActive,
-    });
-    
-    if (!updatedQuickReply) {
+    const { name, message, topics, mediaAttachmentIds, isActive } = req.body;
+    const db = getDb();
+
+    // Check if quick reply exists and belongs to user
+    const existingResult = await db.select()
+      .from(quickReplies)
+      .where(and(
+        eq(quickReplies.id, id),
+        eq(quickReplies.userId, userId)
+      ))
+      .limit(1);
+
+    if (!existingResult.length) {
       return res.status(404).json({ 
-        success: false,
+        success: false, 
         error: 'Quick reply not found' 
       });
     }
-    
+
+    // Validate media attachments belong to user
+    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
+      const validMediaAttachments = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, mediaAttachmentIds));
+
+      if (validMediaAttachments.length !== mediaAttachmentIds.length) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'One or more media attachments not found' 
+        });
+      }
+    }
+
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (message !== undefined) updateData.message = message;
+    if (topics !== undefined) updateData.topics = topics;
+    if (mediaAttachmentIds !== undefined) updateData.mediaAttachmentIds = mediaAttachmentIds;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    updateData.updatedAt = new Date();
+
+    const [updatedQuickReply] = await db.update(quickReplies)
+      .set(updateData)
+      .where(and(
+        eq(quickReplies.id, id),
+        eq(quickReplies.userId, userId)
+      ))
+      .returning();
+
     res.json({
       success: true,
-      quickReply: updatedQuickReply,
+      quickReply: updatedQuickReply
     });
-    
   } catch (error: any) {
-    console.error('Error updating quick reply:', error);
+    console.error('❌ Error updating quick reply:', error);
     res.status(500).json({ 
-      success: false,
-      error: 'Failed to update quick reply' 
+      success: false, 
+      error: 'Failed to update quick reply', 
+      details: error.message 
     });
   }
 });
 
-// DELETE /api/quick-replies/:id - Delete quick reply
+// DELETE quick reply
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const userId = req.user!.userId;
-    
-    const success = await QuickRepliesService.deleteQuickReply(userId, id);
-    
-    if (!success) {
+    const db = getDb();
+
+    const [deletedQuickReply] = await db.delete(quickReplies)
+      .where(and(
+        eq(quickReplies.id, id),
+        eq(quickReplies.userId, userId)
+      ))
+      .returning();
+
+    if (!deletedQuickReply) {
       return res.status(404).json({ 
-        success: false,
+        success: false, 
         error: 'Quick reply not found' 
       });
     }
-    
+
     res.json({
       success: true,
-      message: 'Quick reply deleted successfully',
+      message: 'Quick reply deleted successfully'
     });
-    
   } catch (error: any) {
-    console.error('Error deleting quick reply:', error);
+    console.error('❌ Error deleting quick reply:', error);
     res.status(500).json({ 
-      success: false,
-      error: 'Failed to delete quick reply' 
+      success: false, 
+      error: 'Failed to delete quick reply', 
+      details: error.message 
     });
   }
 });
-
-// GET /api/quick-replies/topics - Get all topics
-router.get('/topics/all', authenticate, async (req: AuthRequest, res) => {
-  try {
-    const userId = req.user!.userId;
-    
-    const topics = await QuickRepliesService.getTopics(userId);
-    
-    res.json({
-      success: true,
-      topics,
-    });
-    
-  } catch (error: any) {
-    console.error('Error fetching topics:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch topics' 
-    });
-  }
-});
-
 
 export default router;

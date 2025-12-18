@@ -4,7 +4,7 @@ import multer from 'multer';
 import { CloudinaryService } from '../services/cloudinary.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
-import { getDb } from '../db/client';
+import { db, getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 
@@ -307,16 +307,66 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
     console.log(`📤 Processing ${files.length} file(s) for upload`);
 
-    const uploadPromises = files.map(file => 
-      CloudinaryService.uploadFile({
-        buffer: file.buffer,
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-      }, {
-        folder: folder || 'whatsapp_media',
-      })
-    );
+    const uploadPromises = files.map(async (file) => {
+      try {
+        const cloudinaryResult = await CloudinaryService.uploadFile({
+          buffer: file.buffer,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+        }, {
+          folder: folder || 'whatsapp_media',
+        });
+
+        if (!cloudinaryResult.success) {
+          return {
+            success: false,
+            originalname: file.originalname,
+            error: cloudinaryResult.error || 'Cloudinary upload failed',
+          };
+        }
+
+        // Save to mediaAttachments table and get the DATABASE ID
+        const [mediaAttachment] = await db.insert(mediaAttachments).values({
+          publicId: cloudinaryResult.publicId,
+          cloudinaryUrl: cloudinaryResult.url,
+          secureUrl: cloudinaryResult.secureUrl,
+          filename: file.originalname,
+          originalFilename: file.originalname,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+          width: cloudinaryResult.width,
+          height: cloudinaryResult.height,
+          duration: cloudinaryResult.duration,
+          format: cloudinaryResult.format,
+          assetType: cloudinaryResult.resourceType,
+          resourceType: cloudinaryResult.resourceType,
+          tags: ['uploaded'],
+          userId: req.user!.userId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).returning();
+
+        console.log(`✅ Saved media attachment to DB with ID: ${mediaAttachment.id}`);
+
+        return {
+          success: true,
+          id: mediaAttachment.id, // ✅ Return DATABASE ID, not publicId
+          publicId: cloudinaryResult.publicId,
+          secureUrl: cloudinaryResult.secureUrl,
+          originalname: file.originalname,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+        };
+      } catch (error: any) {
+        console.error(`❌ Failed to upload ${file.originalname}:`, error);
+        return {
+          success: false,
+          originalname: file.originalname,
+          error: error.message,
+        };
+      }
+    });
 
     const results = await Promise.all(uploadPromises);
 
@@ -329,13 +379,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
         total: results.length,
         successful: successful.length,
         failed: failed.length,
-        uploads: results.map((result, index) => ({
-          originalname: files[index].originalname,
-          success: result.success,
-          url: result.secureUrl,
-          publicId: result.publicId,
-          error: result.error,
-        })),
+        uploads: results,
       },
     });
 

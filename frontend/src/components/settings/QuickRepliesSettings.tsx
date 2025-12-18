@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   PlusIcon, 
   MagnifyingGlassIcon, 
@@ -7,7 +7,8 @@ import {
   ArrowsUpDownIcon,
   TrashIcon,
   DocumentDuplicateIcon,
-  PencilIcon
+  PencilIcon,
+  PaperClipIcon
 } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,7 +35,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { CreateSnippetDialog } from './CreateSnippetDialog';
-import { EditSnippetDialog } from './EditSnippetDialog'; // Import the new component
+import { EditSnippetDialog } from './EditSnippetDialog';
 import { useQuickReplies, useDeleteQuickReply, useDuplicateQuickReply } from '@/hooks/use-quick-replies';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -44,19 +45,58 @@ import type { QuickReply } from '@/lib/api/quick-replies';
 export function QuickRepliesSettings() {
   const [searchQuery, setSearchQuery] = useState('');
   const [topicFilter, setTopicFilter] = useState<string>('all');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [editingQuickReply, setEditingQuickReply] = useState<QuickReply | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
-  // Use the real data from API
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Use the real data from API - SIMPLIFIED FILTERS LIKE CONVERSATIONS
   const { data, isLoading, refetch } = useQuickReplies({
     page: 1,
-    limit: 25,
-    search: searchQuery,
-    topics: topicFilter !== 'all' ? [topicFilter] : undefined,
+    limit: 100,
+    isActive: true,
   });
+
+  // Debug: Log the data
+  useEffect(() => {
+    console.log('QuickRepliesSettings Data:', data);
+  }, [data]);
 
   const deleteQuickReply = useDeleteQuickReply();
   const duplicateQuickReply = useDuplicateQuickReply();
+
+  // Filter quick replies CLIENT-SIDE based on search and topic
+  const filteredQuickReplies = React.useMemo(() => {
+    if (!data?.quickReplies) return [];
+    
+    let filtered = data.quickReplies;
+    
+    // Apply search filter
+    if (debouncedSearch) {
+      const searchLower = debouncedSearch.toLowerCase();
+      filtered = filtered.filter(reply => 
+        reply.name.toLowerCase().includes(searchLower) ||
+        reply.message.toLowerCase().includes(searchLower) ||
+        reply.topics.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Apply topic filter
+    if (topicFilter !== 'all') {
+      filtered = filtered.filter(reply => 
+        reply.topics.toLowerCase().includes(topicFilter.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  }, [data?.quickReplies, debouncedSearch, topicFilter]);
 
   const handleDelete = async (id: string, name: string) => {
     if (window.confirm(`Are you sure you want to delete "${name}"?`)) {
@@ -98,7 +138,6 @@ export function QuickRepliesSettings() {
   };
 
   const handleSnippetCreated = () => {
-    // Refetch the data when a new snippet is created
     refetch();
   };
 
@@ -117,12 +156,55 @@ export function QuickRepliesSettings() {
     }
   };
 
-  // Show files count if there are attachments
-  const getFilesDisplay = (mediaAttachmentIds: string[]) => {
-    if (!mediaAttachmentIds || mediaAttachmentIds.length === 0) {
-      return null;
+  // Get file display with links
+  const getFilesDisplay = (reply: QuickReply) => {
+    // Check both possible locations for media attachments
+    const mediaAttachments = reply.mediaAttachments || [];
+    const mediaAttachmentIds = reply.mediaAttachmentIds || [];
+    
+    // Combine both sources
+    const allMedia = [...mediaAttachments];
+    
+    if (!allMedia.length && mediaAttachmentIds.length > 0) {
+      // If we only have IDs, show count
+      return (
+        <div className="flex items-center gap-1">
+          <PaperClipIcon className="w-3 h-3 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">
+            {mediaAttachmentIds.length} file{mediaAttachmentIds.length > 1 ? 's' : ''}
+          </span>
+        </div>
+      );
     }
-    return `${mediaAttachmentIds.length} file${mediaAttachmentIds.length > 1 ? 's' : ''}`;
+
+    // If we have media attachment objects
+    if (allMedia.length > 0) {
+      return (
+        <div className="space-y-1">
+          {allMedia.slice(0, 2).map((attachment: any, index: number) => (
+            <div key={index} className="flex items-center gap-1">
+              <PaperClipIcon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <a
+                href={attachment.secureUrl || attachment.cloudinaryUrl || attachment.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-primary hover:underline truncate max-w-[120px]"
+                title={attachment.filename || attachment.originalFilename || `Attachment ${index + 1}`}
+              >
+                {attachment.filename || attachment.originalFilename || `Attachment ${index + 1}`}
+              </a>
+            </div>
+          ))}
+          {allMedia.length > 2 && (
+            <span className="text-xs text-muted-foreground">
+              +{allMedia.length - 2} more
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return null;
   };
 
   // Loading state
@@ -147,8 +229,10 @@ export function QuickRepliesSettings() {
     );
   }
 
+  // Extract quick replies from data
   const quickReplies = data?.quickReplies || [];
-  const pagination = data?.pagination || { page: 1, limit: 25, total: 0, pages: 1 };
+  const totalCount = quickReplies.length;
+  const filteredCount = filteredQuickReplies.length;
 
   return (
     <>
@@ -185,12 +269,23 @@ export function QuickRepliesSettings() {
               </SelectTrigger>
               <SelectContent className="bg-popover border-border">
                 <SelectItem value="all">All Topics</SelectItem>
+                <SelectItem value="General">General</SelectItem>
                 <SelectItem value="Support">Support</SelectItem>
                 <SelectItem value="Sales">Sales</SelectItem>
-                <SelectItem value="General">General</SelectItem>
+                <SelectItem value="Customer Service">Customer Service</SelectItem>
+                <SelectItem value="Technical">Technical</SelectItem>
+                <SelectItem value="Billing">Billing</SelectItem>
+                <SelectItem value="Follow-up">Follow-up</SelectItem>
+                <SelectItem value="Greeting">Greeting</SelectItem>
+                <SelectItem value="FAQ">FAQ</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="icon" className="border-input">
+            <Button 
+              variant="outline" 
+              size="icon" 
+              className="border-input"
+              onClick={() => refetch()}
+            >
               <DocumentTextIcon className="w-4 h-4" />
             </Button>
           </div>
@@ -231,20 +326,22 @@ export function QuickRepliesSettings() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {quickReplies.length === 0 ? (
+              {filteredQuickReplies.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="h-32 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <DocumentTextIcon className="w-12 h-12 text-muted-foreground mb-2" />
                       <p className="text-muted-foreground">No quick replies found</p>
                       <p className="text-sm text-muted-foreground mt-1">
-                        {searchQuery ? 'Try a different search term' : 'Create your first quick reply'}
+                        {searchQuery || topicFilter !== 'all' 
+                          ? 'Try a different search term or filter' 
+                          : 'Create your first quick reply'}
                       </p>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
-                quickReplies.map((reply) => (
+                filteredQuickReplies.map((reply: QuickReply) => (
                   <TableRow key={reply.id} className="border-border hover:bg-muted/50">
                     <TableCell className="font-medium text-foreground">
                       <div className="flex flex-col">
@@ -255,11 +352,7 @@ export function QuickRepliesSettings() {
                       <div className="line-clamp-2">{reply.message}</div>
                     </TableCell>
                     <TableCell>
-                      {getFilesDisplay(reply.mediaAttachmentIds) && (
-                        <span className="text-primary text-sm">
-                          {getFilesDisplay(reply.mediaAttachmentIds)}
-                        </span>
-                      )}
+                      {getFilesDisplay(reply)}
                     </TableCell>
                     <TableCell className="text-foreground">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
@@ -293,7 +386,13 @@ export function QuickRepliesSettings() {
                             <PencilIcon className="w-4 h-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                         
+                          <DropdownMenuItem 
+                            className="cursor-pointer"
+                            onClick={() => handleDuplicate(reply.id, reply.name)}
+                          >
+                            <DocumentDuplicateIcon className="w-4 h-4 mr-2" />
+                            Duplicate
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem 
                             className="cursor-pointer text-destructive focus:text-destructive"
@@ -312,11 +411,16 @@ export function QuickRepliesSettings() {
           </Table>
         </div>
 
-        {/* Pagination */}
-        {quickReplies.length > 0 && (
+        {/* Pagination/Count Info */}
+        {filteredQuickReplies.length > 0 && (
           <div className="flex items-center justify-between gap-4 mt-4 text-sm text-muted-foreground">
             <div>
-              Showing {quickReplies.length} of {pagination.total} quick replies
+              Showing {filteredCount} of {totalCount} quick replies
+              {(searchQuery || topicFilter !== 'all') && (
+                <span className="text-primary ml-2">
+                  (filtered)
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
@@ -332,37 +436,21 @@ export function QuickRepliesSettings() {
                   </SelectContent>
                 </Select>
               </div>
-              <span>Page {pagination.page} of {pagination.pages}</span>
-              <div className="flex items-center gap-1">
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8" 
-                  disabled={pagination.page === 1}
-                >
-                  &lt;
-                </Button>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8" 
-                  disabled={pagination.page === pagination.pages}
-                >
-                  &gt;
-                </Button>
-              </div>
+              <span>Showing all (client-side filtered)</span>
             </div>
           </div>
         )}
       </div>
 
       {/* Edit Dialog */}
-      <EditSnippetDialog
-        open={editDialogOpen}
-        onOpenChange={setEditDialogOpen}
-        quickReply={editingQuickReply}
-        onSuccess={handleEditSuccess}
-      />
+      {editingQuickReply && (
+        <EditSnippetDialog
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          quickReply={editingQuickReply}
+          onSuccess={handleEditSuccess}
+        />
+      )}
     </>
   );
 }

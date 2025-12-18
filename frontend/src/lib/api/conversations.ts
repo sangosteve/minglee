@@ -176,13 +176,42 @@ export const conversationsApi = {
 
 
   // Send message
-  sendMessage: async (conversationId: string, message: string): Promise<{ success: boolean; message: Message }> => {
-    return await api.request(`/conversations/${conversationId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ message }),
-    });
-  },
+sendMessage: async (conversationId: string, data: { message: string; attachments?: any[] }) => {
+  // Create clean attachments
+  const cleanAttachments = (data.attachments || []).map((att, index) => {
+    const cleanAttachment: any = {
+      id: String(att?.id || `attachment-${index}`),
+      secureUrl: String(att?.secureUrl || att?.url || ''),
+      url: String(att?.secureUrl || att?.url || ''),
+      mimeType: String(att?.mimeType || ''),
+    };
+    
+    if (att?.originalFilename) cleanAttachment.originalFilename = String(att.originalFilename);
+    if (att?.filename) cleanAttachment.filename = String(att.filename);
+    if (att?.fileSize) cleanAttachment.fileSize = Number(att.fileSize);
+    if (att?.width) cleanAttachment.width = Number(att.width);
+    if (att?.height) cleanAttachment.height = Number(att.height);
+    if (att?.duration) cleanAttachment.duration = Number(att.duration);
+    if (att?.caption) cleanAttachment.caption = String(att.caption);
+    
+    return cleanAttachment;
+  });
 
+  console.log('📤 Sending via conversationsApi.sendMessage:', {
+    conversationId,
+    message: data.message,
+    attachmentsCount: cleanAttachments.length
+  });
+
+  // ✅ USE API CLIENT
+  return await api.request(`/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      message: data.message.trim(),
+      attachments: cleanAttachments
+    }),
+  });
+},
   // Send media message
   sendMediaMessage: async (formData: FormData): Promise<{ success: boolean; data: any }> => {
     return await api.request('/whatsapp/send-media', {
@@ -239,10 +268,78 @@ export const useSendMessage = () => {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: ({ conversationId, message }: { conversationId: string; message: string }) =>
-      conversationsApi.sendMessage(conversationId, message),
+    mutationFn: async ({
+      conversationId,
+      message,
+      attachments = []
+    }: {
+      conversationId: string;
+      message: string;
+      attachments?: any[];
+    }) => {
+      // Create a clean, serializable attachments array
+      const cleanAttachments = attachments.map((att, index) => {
+        const cleanAttachment: any = {
+          // Required fields
+          id: String(att?.id || `attachment-${index}`),
+          secureUrl: String(att?.secureUrl || att?.url || ''),
+          url: String(att?.secureUrl || att?.url || ''),
+          mimeType: String(att?.mimeType || ''),
+        };
+        
+        // Optional fields - only include if they exist and are not undefined
+        if (att?.originalFilename) cleanAttachment.originalFilename = String(att.originalFilename);
+        if (att?.filename) cleanAttachment.filename = String(att.filename);
+        if (att?.fileSize) cleanAttachment.fileSize = Number(att.fileSize);
+        if (att?.width) cleanAttachment.width = Number(att.width);
+        if (att?.height) cleanAttachment.height = Number(att.height);
+        if (att?.duration) cleanAttachment.duration = Number(att.duration);
+        if (att?.caption) cleanAttachment.caption = String(att.caption);
+        
+        return cleanAttachment;
+      });
+
+      console.log('📤 Sending message via API client:', {
+        conversationId,
+        message,
+        attachmentsCount: cleanAttachments.length,
+        firstAttachment: cleanAttachments[0] ? {
+          id: cleanAttachments[0].id,
+          hasSecureUrl: !!cleanAttachments[0].secureUrl,
+          secureUrl: cleanAttachments[0].secureUrl?.substring(0, 50) + '...',
+          mimeType: cleanAttachments[0].mimeType,
+        } : null
+      });
+
+      // Log the actual JSON being sent
+      const requestBody = {
+        message: message.trim(),
+        attachments: cleanAttachments
+      };
+      
+      console.log('📤 Request body JSON:', JSON.stringify(requestBody, null, 2));
+
+      // ✅ USE YOUR API CLIENT INSTEAD OF DIRECT FETCH
+      try {
+        const response = await api.request(`/conversations/${conversationId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify(requestBody),
+        });
+        
+        console.log('✅ API client response:', response);
+        return response;
+      } catch (error: any) {
+        console.error('❌ API client error:', error);
+        throw new Error(error.message || 'Failed to send message');
+      }
+    },
     onSuccess: (data, variables) => {
-      // Invalidate conversation and messages
+      console.log('✅ Message sent successfully:', {
+        conversationId: variables.conversationId,
+        response: data
+      });
+      
+      // Invalidate and refetch conversation messages
       queryClient.invalidateQueries({ queryKey: ['conversation', variables.conversationId] });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
       
@@ -251,16 +348,67 @@ export const useSendMessage = () => {
         description: "Your message has been sent successfully",
       });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
+      console.error('❌ Error sending message:', error);
       toast({
         title: "Failed to send message",
-        description: error.message || "Please try again",
+        description: error.message,
         variant: "destructive",
       });
     },
+    onMutate: async (variables) => {
+      console.log('🔄 Mutating - sending message:', {
+        conversationId: variables.conversationId,
+        message: variables.message,
+        attachmentsCount: variables.attachments?.length || 0
+      });
+      
+      // Optimistic update - add the message to the cache immediately
+      const previousConversation = queryClient.getQueryData(['conversation', variables.conversationId]);
+      
+      if (previousConversation) {
+        const optimisticMessage = {
+          id: `temp-${Date.now()}`,
+          conversationId: variables.conversationId,
+          contactId: (previousConversation as any)?.contact?.id,
+          direction: 'outgoing',
+          messageType: variables.attachments?.length ? 'image' : 'text',
+          body: variables.message,
+          status: 'sending',
+          timestamp: new Date().toISOString(),
+          metadata: variables.attachments?.length ? {
+            mediaAttachmentId: variables.attachments[0]?.id,
+            secureUrl: variables.attachments[0]?.secureUrl,
+            originalFilename: variables.attachments[0]?.originalFilename,
+            mimeType: variables.attachments[0]?.mimeType,
+          } : {},
+          createdAt: new Date().toISOString(),
+        };
+        
+        queryClient.setQueryData(['conversation', variables.conversationId], (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            messages: [...(old.messages || []), optimisticMessage],
+            conversation: {
+              ...old.conversation,
+              lastMessage: variables.message || (variables.attachments?.length ? `[${variables.attachments.length} media]` : ''),
+              lastMessageAt: new Date().toISOString(),
+            }
+          };
+        });
+      }
+      
+      return { previousConversation };
+    },
+    onSettled: (data, error, variables) => {
+      // If there was an error, revert the optimistic update
+      if (error) {
+        queryClient.invalidateQueries({ queryKey: ['conversation', variables.conversationId] });
+      }
+    },
   });
 };
-
 export const useSendMediaMessage = () => {
   const queryClient = useQueryClient();
   

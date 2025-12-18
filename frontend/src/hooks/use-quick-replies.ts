@@ -1,3 +1,4 @@
+//frontend/src/hooks/use-quick-replies.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { quickRepliesApi } from '@/lib/api/quick-replies';
 import type { 

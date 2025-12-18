@@ -1,54 +1,182 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
-import { conversations, contacts, messages, users } from '../db/schema';
-import { eq, and, or, like, desc, asc, sql,isNull } from 'drizzle-orm';
-import { QuickRepliesService } from '../services/quick-replies.service';
+import { conversations, contacts, messages, users, quickReplies, mediaAttachments } from '../db/schema';
+import { eq, and, or, like, desc, isNull, sql, inArray } from 'drizzle-orm';
 import { VariableService } from '../services/variable.service';
-const router = Router();
-// GET /api/conversations/unread/count - Get unread count
+import axios from 'axios';
 
+const router = Router();
+
+// ---------------------- HELPER ---------------------- //
+async function sendMessageToContact(
+  db: any,
+  conversation: any,
+  contact: any,
+  user: any,
+  body?: string,
+  mediaAttachmentsList: any[] = []
+) {
+  const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
+  const baseUrl = `https://graph.facebook.com/${apiVersion}`;
+  let whatsappResponse: any[] = [];
+  let whatsappMessageIds: string[] = [];
+  let savedMessages: any[] = [];
+
+  // WhatsApp Business API can't send text message and media in the same API call
+  // We need to handle text and media separately
+  
+  // Case 1: Text only (no media)
+  if (body?.trim() && mediaAttachmentsList.length === 0) {
+    const response = await axios.post(
+      `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: contact.phone,
+        type: 'text',
+        text: { body: body.trim() },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${user.whatsappAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    whatsappResponse.push(response.data);
+    const textMessageId = response.data?.messages?.[0]?.id;
+    
+    // Save text message
+    const [newMessage] = await db.insert(messages).values({
+      conversationId: conversation.id,
+      contactId: contact.id,
+      whatsappMessageId: textMessageId,
+      direction: 'outgoing',
+      messageType: 'text',
+      body: body.trim(),
+      status: textMessageId ? 'sent' : 'failed',
+      metadata: {
+        whatsappResponse: response.data,
+        timestamp: new Date().toISOString(),
+      },
+      timestamp: new Date(),
+    }).returning();
+    
+    savedMessages.push(newMessage);
+    if (textMessageId) whatsappMessageIds.push(textMessageId);
+  }
+  
+  // Case 2: Media with/without caption
+  for (let i = 0; i < mediaAttachmentsList.length; i++) {
+    const media = mediaAttachmentsList[i];
+    const type = media.mimeType?.startsWith('image/') ? 'image' :
+                 media.mimeType?.startsWith('video/') ? 'video' :
+                 media.mimeType?.startsWith('audio/') ? 'audio' :
+                 'document';
+    
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: contact.phone,
+      type,
+      [type]: { 
+        link: media.secureUrl || media.url,
+        // Use body as caption for the first media, or media.caption if available
+        caption: (i === 0 && body?.trim()) ? body.trim() : media.caption || undefined
+      },
+    };
+    
+    const response = await axios.post(
+      `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${user.whatsappAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    whatsappResponse.push(response.data);
+    const mediaMessageId = response.data?.messages?.[0]?.id;
+    
+    // Save media message
+    const [newMediaMessage] = await db.insert(messages).values({
+      conversationId: conversation.id,
+      contactId: contact.id,
+      whatsappMessageId: mediaMessageId,
+      direction: 'outgoing',
+      messageType: type,
+      body: (i === 0 && body?.trim()) ? body.trim() : '', // Save caption as body for the first media
+      status: mediaMessageId ? 'sent' : 'failed',
+      metadata: {
+        whatsappResponse: response.data,
+        timestamp: new Date().toISOString(),
+        mediaAttachmentId: media.id, // Save media ID for tracking
+        secureUrl: media.secureUrl || media.url,
+        originalFilename: media.originalFilename || media.filename,
+        mimeType: media.mimeType,
+        fileSize: media.fileSize,
+        width: media.width,
+        height: media.height,
+        duration: media.duration,
+        caption: (i === 0 && body?.trim()) ? body.trim() : media.caption,
+      },
+      timestamp: new Date(),
+    }).returning();
+    
+    savedMessages.push(newMediaMessage);
+    if (mediaMessageId) whatsappMessageIds.push(mediaMessageId);
+  }
+
+  // Update conversation last message
+  const lastMessageText = body?.trim() || (mediaAttachmentsList.length > 0 ? `[${mediaAttachmentsList.length} media]` : '');
+  await db.update(conversations)
+    .set({
+      lastMessage: lastMessageText,
+      lastMessageAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(conversations.id, conversation.id));
+
+  return { 
+    whatsappResponse, 
+    whatsappMessageIds,
+    savedMessages 
+  };
+}
+
+// ---------------------- ROUTES ---------------------- //
+
+// GET unread count
 router.get('/unread/count', authenticate, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const db = getDb();
 
-    const result = await db.select({
-      count: sql`sum(${conversations.unreadCount})`
-    })
+    const result = await db.select({ count: sql`sum(${conversations.unreadCount})` })
       .from(conversations)
       .where(eq(conversations.userId, userId));
 
     const count = result[0]?.count || 0;
 
-    res.json({
-      success: true,
-      count: Number(count),
-    });
-
+    res.json({ success: true, count: Number(count) });
   } catch (error: any) {
     console.error('Error getting unread count:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get unread count'
-    });
+    res.status(500).json({ success: false, error: 'Failed to get unread count' });
   }
 });
-// GET /api/conversations/assigned - Get conversations assigned to current user
+
+// GET assigned conversations
 router.get('/assigned/me', authenticate, async (req: AuthRequest, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20
-    } = req.query;
-
-    const db = getDb();
+    const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     const userId = req.user!.userId;
-    console.log("me id:", userId)
+    const db = getDb();
 
-
-    // FIXED: Use isNull for comparison instead of raw SQL string
     const assignedConversations = await db.select({
       conversation: conversations,
       contact: contacts,
@@ -62,154 +190,87 @@ router.get('/assigned/me', authenticate, async (req: AuthRequest, res) => {
       .limit(Number(limit))
       .offset(offset);
 
- 
+    const formattedConversations = assignedConversations.map(({ conversation, contact, assignedUser }) => ({
+      ...conversation,
+      contact: contact || null,
+      assignedUser: assignedUser ? { name: assignedUser.name, email: assignedUser.email } : null,
+    }));
 
-    // Format the response
-    const formattedConversations = assignedConversations.map(({ conversation, contact, assignedUser }) => {
-      return {
-        ...conversation,
-        contact: contact || null,
-        assignedUser: assignedUser ? {
-          name: assignedUser.name,
-          email: assignedUser.email
-        } : null
-      };
-    });
-
-    // Count total
     const totalResult = await db.select({ count: sql`count(*)` })
       .from(conversations)
-      .where(
-        and(
-          eq(conversations.userId, userId),
-          eq(conversations.assignedToUserId, userId)
-        )
-      );
+      .where(and(eq(conversations.userId, userId), eq(conversations.assignedToUserId, userId)));
 
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0].count) : 0;
 
     res.json({
       success: true,
       conversations: formattedConversations,
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        total,
-        pages: Math.ceil(total / Number(limit)),
-      },
+      pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
-
   } catch (error: any) {
     console.error('❌ Error fetching assigned conversations:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch assigned conversations',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch assigned conversations', details: error.message });
   }
 });
-// GET /api/conversations/unassigned - Get unassigned conversations
+
+// GET unassigned conversations
 router.get('/unassigned', authenticate, async (req: AuthRequest, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20
-    } = req.query;
-
-    const db = getDb();
+    const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     const userId = req.user!.userId;
+    const db = getDb();
 
-    // FIXED: Use isNull for unassigned conversations
-    const unassignedConversations = await db.select({
-      conversation: conversations,
-      contact: contacts,
-    })
+    const unassignedConversations = await db.select({ conversation: conversations, contact: contacts })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
-      .where(
-        and(
-          eq(conversations.userId, userId),
-          isNull(conversations.assignedToUserId)
-        )
-      )
+      .where(and(eq(conversations.userId, userId), isNull(conversations.assignedToUserId)))
       .orderBy(desc(conversations.lastMessageAt))
       .limit(Number(limit))
       .offset(offset);
 
-    // Format the response
-    const formattedConversations = unassignedConversations.map(({ conversation, contact }) => {
-      return {
-        ...conversation,
-        contact: contact || null,
-        assignedUser: null
-      };
-    });
+    const formattedConversations = unassignedConversations.map(({ conversation, contact }) => ({
+      ...conversation,
+      contact: contact || null,
+      assignedUser: null,
+    }));
 
-    // Count total
     const totalResult = await db.select({ count: sql`count(*)` })
       .from(conversations)
-      .where(
-        and(
-          eq(conversations.userId, userId),
-          isNull(conversations.assignedToUserId)
-        )
-      );
+      .where(and(eq(conversations.userId, userId), isNull(conversations.assignedToUserId)));
 
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0].count) : 0;
 
     res.json({
       success: true,
       conversations: formattedConversations,
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        total,
-        pages: Math.ceil(total / Number(limit)),
-      },
+      pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
-
   } catch (error: any) {
     console.error('❌ Error fetching unassigned conversations:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch unassigned conversations',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch unassigned conversations', details: error.message });
   }
 });
-// GET /api/conversations - Get all conversations for user
+
+// GET all conversations
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const {
-      page = 1,
-      limit = 20,
-      status,
-      search
-    } = req.query;
-
-    const db = getDb();
+    const { page = 1, limit = 20, status, search } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     const userId = req.user!.userId;
+    const db = getDb();
 
-    // Build WHERE clause
-    const whereConditions = [eq(conversations.userId, userId)];
+    const whereConditions: any[] = [eq(conversations.userId, userId)];
 
-    if (status && status !== 'all') {
-      whereConditions.push(eq(conversations.status, String(status)));
-    }
-
-    // Add search filter if provided
+    if (status && status !== 'all') whereConditions.push(eq(conversations.status, String(status)));
     if (search) {
-      const searchCondition = or(
+      whereConditions.push(or(
         like(contacts.name, `%${search}%`),
         like(contacts.phone, `%${search}%`),
         like(conversations.lastMessage, `%${search}%`)
-      );
-      whereConditions.push(searchCondition);
+      ));
     }
 
-    // Get conversations with contacts and assigned users
     const allConversations = await db.select({
       conversation: conversations,
       contact: contacts,
@@ -223,685 +284,249 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       .limit(Number(limit))
       .offset(offset);
 
-    // Format the response
-    const formattedConversations = allConversations.map(({ conversation, contact, assignedUser }) => {
-      return {
-        ...conversation,
-        contact: contact || null,
-        assignedUser: assignedUser ? {
-          name: assignedUser.name,
-          email: assignedUser.email
-        } : null
-      };
-    });
+    const formattedConversations = allConversations.map(({ conversation, contact, assignedUser }) => ({
+      ...conversation,
+      contact: contact || null,
+      assignedUser: assignedUser ? { name: assignedUser.name, email: assignedUser.email } : null,
+    }));
 
-    // Count total
     const totalResult = await db.select({ count: sql`count(*)` })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .where(and(...whereConditions));
 
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0].count) : 0;
 
     res.json({
       success: true,
       conversations: formattedConversations,
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        total,
-        pages: Math.ceil(total / Number(limit)),
-      },
+      pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
-
   } catch (error: any) {
     console.error('❌ Error fetching conversations:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch conversations',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch conversations', details: error.message });
   }
 });
 
-// GET /api/conversations/:id - Get conversation with messages
+// GET conversation by ID with messages
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 50 } = req.query;
-    const userId = req.user!.userId;
     const offset = (Number(page) - 1) * Number(limit);
-
+    const userId = req.user!.userId;
     const db = getDb();
 
-    // Get conversation with contact details
-    const conversationResult = await db.select({
-      conversation: conversations,
-      contact: contacts,
-    })
+    const conversationResult = await db.select({ conversation: conversations, contact: contacts })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
-      .where(
-        and(
-          eq(conversations.id, id),
-          eq(conversations.userId, userId)
-        )
-      )
+      .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
       .limit(1);
 
-    if (conversationResult.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found',
-      });
-    }
+    if (!conversationResult.length) return res.status(404).json({ success: false, error: 'Conversation not found' });
 
-    // Get messages
-    const messagesList = await db.select()
-      .from(messages)
+    const messagesList = await db.select().from(messages)
       .where(eq(messages.conversationId, id))
       .orderBy(desc(messages.timestamp))
       .limit(Number(limit))
       .offset(offset);
 
-    // Get total message count
-    const totalResult = await db.select({ count: sql`count(*)` })
-      .from(messages)
-      .where(eq(messages.conversationId, id));
-
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    const totalResult = await db.select({ count: sql`count(*)` }).from(messages).where(eq(messages.conversationId, id));
+    const total = totalResult.length ? Number(totalResult[0].count) : 0;
 
     res.json({
       success: true,
       conversation: conversationResult[0].conversation,
       contact: conversationResult[0].contact,
-      messages: messagesList.reverse(), // Reverse to show oldest first
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        total,
-        pages: Math.ceil(total / Number(limit)),
-      },
+      messages: messagesList.reverse(),
+      pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
-
   } catch (error: any) {
     console.error('Error fetching conversation:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch conversation'
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch conversation' });
   }
 });
 
-// POST /api/conversations/:id/messages - Send message
+// POST send message (text or media)
 router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { message } = req.body;
+    const { message, attachments = [] } = req.body;
     const userId = req.user!.userId;
-
-    if (!message?.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Message is required',
-      });
-    }
-
     const db = getDb();
 
-    // Get conversation with contact details
-    const conversationResult = await db.select({
-      conversation: conversations,
-      contact: contacts,
-      user: users,
-    })
+    console.log('📦 Received message payload:', {
+      message,
+      attachments: attachments.map((att: any) => ({
+        id: att.id,
+        hasUrl: !!(att.secureUrl || att.url),
+        secureUrl: att.secureUrl,
+        url: att.url,
+        mimeType: att.mimeType,
+        filename: att.originalFilename || att.filename,
+      }))
+    });
+
+    if (!message?.trim() && attachments.length === 0) {
+      return res.status(400).json({ success: false, error: 'Message or attachments required' });
+    }
+
+    const [conversationData] = await db.select({ conversation: conversations, contact: contacts, user: users })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .leftJoin(users, eq(conversations.userId, users.id))
-      .where(
-        and(
-          eq(conversations.id, id),
-          eq(conversations.userId, userId)
-        )
-      )
+      .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
       .limit(1);
 
-    if (conversationResult.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found',
-      });
-    }
+    if (!conversationData) return res.status(404).json({ success: false, error: 'Conversation not found' });
 
-    const { conversation, contact, user } = conversationResult[0];
+    const { conversation, contact, user } = conversationData;
 
-    if (!contact) {
-      return res.status(404).json({
-        success: false,
-        error: 'Contact not found for this conversation',
-      });
-    }
+    if (!contact.phone) return res.status(400).json({ success: false, error: 'Contact does not have a phone number' });
+    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) return res.status(400).json({ success: false, error: 'WhatsApp not configured for this user' });
 
-    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'WhatsApp not configured for this user',
-      });
-    }
+    // Format attachments properly
+    const formattedAttachments = attachments.map((att: any) => ({
+      id: att.id,
+      url: att.secureUrl || att.url,
+      secureUrl: att.secureUrl || att.url,
+      mimeType: att.mimeType,
+      originalFilename: att.originalFilename || att.filename,
+      filename: att.filename || att.originalFilename,
+      fileSize: att.fileSize,
+      width: att.width,
+      height: att.height,
+      duration: att.duration,
+      caption: att.caption,
+    }));
 
-    // Check if contact has a phone number
-    if (!contact.phone) {
-      return res.status(400).json({
-        success: false,
-        error: 'Contact does not have a phone number',
-      });
-    }
+    const result = await sendMessageToContact(db, conversation, contact, user, message, formattedAttachments);
 
-    console.log('📤 Sending WhatsApp message:', {
-      to: contact.phone,
-      message: message.trim(),
-      whatsappPhoneNumberId: user.whatsappPhoneNumberId,
-    });
-
-    let whatsappResponse;
-    let whatsappMessageId;
-
-    try {
-      // Send actual WhatsApp message
-      const axios = require('axios');
-      const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
-      const baseUrl = `https://graph.facebook.com/${apiVersion}`;
-
-      const response = await axios.post(
-        `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: contact.phone,
-          type: 'text',
-          text: {
-            body: message.trim(),
-          },
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${user.whatsappAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      whatsappResponse = response.data;
-      whatsappMessageId = response.data?.messages?.[0]?.id;
-
-
-
-    } catch (whatsappError: any) {
-      console.error('❌ WhatsApp API error:', {
-        status: whatsappError.response?.status,
-        data: whatsappError.response?.data,
-        message: whatsappError.message,
-      });
-
-      // Check for specific WhatsApp API errors
-      const errorData = whatsappError.response?.data?.error;
-
-      if (errorData?.code === 131047) {
-        return res.status(400).json({
-          success: false,
-          error: 'Cannot send message to this number. The user may have opted out.',
-          details: errorData.message,
-        });
-      }
-
-      if (errorData?.code === 132000) {
-        return res.status(400).json({
-          success: false,
-          error: 'Message template required for this recipient',
-          details: errorData.message,
-        });
-      }
-
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to send WhatsApp message',
-        details: errorData?.message || whatsappError.message,
-      });
-    }
-
-    // Save the message to database
-    const [newMessage] = await db.insert(messages).values({
-      conversationId: id,
-      contactId: conversation.contactId,
-      whatsappMessageId: whatsappMessageId,
-      direction: 'outgoing',
-      messageType: 'text',
-      body: message.trim(),
-      status: whatsappMessageId ? 'sent' : 'failed',
-      metadata: {
-        whatsappResponse: whatsappResponse,
-        timestamp: new Date().toISOString(),
-      },
-      timestamp: new Date(),
-    }).returning();
-
-    // Update conversation
-    await db.update(conversations)
-      .set({
-        lastMessage: message.trim(),
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(conversations.id, id));
-
-
-
-    res.json({
-      success: true,
-      message: newMessage,
-      whatsappMessageId: whatsappMessageId,
-      whatsappResponse: whatsappResponse,
-    });
-
+    res.json({ success: true, ...result });
   } catch (error: any) {
     console.error('❌ Error sending message:', error);
-    console.error('🔍 Error details:', error.stack);
-
-    res.status(500).json({
-      success: false,
-      error: 'Failed to send message',
-      details: error.message
-    });
+    res.status(500).json({ success: false, error: 'Failed to send message', details: error.message });
   }
 });
 
-// PATCH /api/conversations/:id/status - Update conversation status
-router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    const userId = req.user!.userId;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        error: 'Status is required',
-      });
-    }
-
-    const db = getDb();
-
-    const [updatedConversation] = await db.update(conversations)
-      .set({
-        status,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(conversations.id, id),
-          eq(conversations.userId, userId)
-        )
-      )
-      .returning();
-
-    if (!updatedConversation) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found',
-      });
-    }
-
-    res.json({
-      success: true,
-      conversation: updatedConversation,
-    });
-
-  } catch (error: any) {
-    console.error('Error updating conversation status:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update conversation status'
-    });
-  }
-});
-
-// PATCH /api/conversations/:id/read - Mark as read
-router.patch('/:id/read', authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user!.userId;
-
-    const db = getDb();
-
-    const [updatedConversation] = await db.update(conversations)
-      .set({
-        unreadCount: 0,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(conversations.id, id),
-          eq(conversations.userId, userId)
-        )
-      )
-      .returning();
-
-    if (!updatedConversation) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found',
-      });
-    }
-
-    res.json({
-      success: true,
-      conversation: updatedConversation,
-    });
-
-  } catch (error: any) {
-    console.error('Error marking conversation as read:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to mark conversation as read'
-    });
-  }
-});
-
-// PATCH /api/conversations/:id/assign - Assign conversation to user
-router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { assignedToUserId } = req.body;
-    const userId = req.user!.userId;
-
-    const db = getDb();
-
-    // First, verify the conversation exists and user has access
-    const conversationResult = await db.select()
-      .from(conversations)
-      .where(
-        and(
-          eq(conversations.id, id),
-          eq(conversations.userId, userId) // User must own the conversation to assign it
-        )
-      )
-      .limit(1);
-
-    if (conversationResult.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Conversation not found or you do not have permission',
-      });
-    }
-
-    // If assigning to a specific user, verify that user exists
-    if (assignedToUserId) {
-      const userResult = await db.select()
-        .from(users)
-        .where(eq(users.id, assignedToUserId))
-        .limit(1);
-
-      if (userResult.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'User to assign to not found',
-        });
-      }
-    }
-
-    // Update the assignment
-    const [updatedConversation] = await db.update(conversations)
-      .set({
-        assignedToUserId: assignedToUserId || null, // null to unassign
-        updatedAt: new Date(),
-      })
-      .where(eq(conversations.id, id))
-      .returning();
-
-    // Get assigned user details if assigned
-    let assignedUser = null;
-    if (assignedToUserId) {
-      const userResult = await db.select({
-        name: users.name,
-        email: users.email
-      })
-        .from(users)
-        .where(eq(users.id, assignedToUserId))
-        .limit(1);
-
-      assignedUser = userResult[0] || null;
-    }
-
-    res.json({
-      success: true,
-      conversation: updatedConversation,
-      assignedUser
-    });
-
-  } catch (error: any) {
-    console.error('❌ Error assigning conversation:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to assign conversation',
-      details: error.message
-    });
-  }
-});
-
-// POST /api/conversations/:conversationId/quick-replies/:quickReplyId
-
+// POST send quick reply
 router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async (req: AuthRequest, res) => {
   try {
     const { conversationId, quickReplyId } = req.params;
     const userId = req.user!.userId;
-
     const db = getDb();
 
-    // 1️⃣ Fetch conversation with contact and user
-    const [conversationData] = await db.select({
-      conversation: conversations,
-      contact: contacts,
-      user: users,
-    })
+    // Get conversation, contact, and user
+    const [conversationData] = await db.select({ conversation: conversations, contact: contacts, user: users })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .leftJoin(users, eq(conversations.userId, users.id))
-      .where(
-        and(
-          eq(conversations.id, conversationId),
-          eq(conversations.userId, userId)
-        )
-      )
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)))
       .limit(1);
 
-    if (!conversationData) {
-      return res.status(404).json({ success: false, error: 'Conversation not found' });
-    }
+    if (!conversationData) return res.status(404).json({ success: false, error: 'Conversation not found' });
 
     const { conversation, contact, user } = conversationData;
 
-    // Validate required data
-    if (!contact) {
-      return res.status(404).json({ success: false, error: 'Contact not found for this conversation' });
+    // Get quick reply with media attachments
+    const quickReplyResult = await db.select()
+      .from(quickReplies)
+      .where(and(
+        eq(quickReplies.id, quickReplyId),
+        eq(quickReplies.userId, userId),
+        eq(quickReplies.isActive, true)
+      ))
+      .limit(1);
+
+    if (!quickReplyResult.length) return res.status(404).json({ success: false, error: 'Quick reply not found' });
+
+    const quickReply = quickReplyResult[0];
+
+    // Get media attachments if any
+    let mediaAttachmentsList: any[] = [];
+    if (quickReply.mediaAttachmentIds && quickReply.mediaAttachmentIds.length > 0) {
+      mediaAttachmentsList = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
     }
 
-    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
-      return res.status(400).json({ success: false, error: 'WhatsApp not configured for this user' });
-    }
-
-    if (!contact.phone) {
-      return res.status(400).json({ success: false, error: 'Contact does not have a phone number' });
-    }
-
-    // 2️⃣ Fetch the quick reply
-    const quickReply = await QuickRepliesService.getQuickReplyById(userId, quickReplyId);
-    if (!quickReply) {
-      return res.status(404).json({ success: false, error: 'Quick reply not found' });
-    }
-
-    // 3️⃣ Prepare personalized message text
-    console.log('🔍 Debug: Quick reply template:', quickReply.message);
-    
+    // Personalize message
     const variables = VariableService.getAvailableVariables(conversation, contact, user);
-    console.log('🔍 Debug: Available variables keys:', Object.keys(variables));
-    
     const personalizedMessage = VariableService.replaceVariables(quickReply.message, variables);
-    console.log('🔍 Debug: Personalized message:', personalizedMessage);
 
-    // 4️⃣ Prepare media attachments if any
-    const mediaAttachments = quickReply.mediaAttachments || [];
-
-    const axios = require('axios');
-    const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
-    const baseUrl = `https://graph.facebook.com/${apiVersion}`;
-
-    let whatsappResponse: any[] = [];
-    let whatsappMessageIds: string[] = [];
-
-    // 5️⃣ Send text message first (if exists)
-    if (personalizedMessage?.trim()) {
-      const response = await axios.post(
-        `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: contact.phone,
-          type: 'text',
-          text: { body: personalizedMessage.trim() },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${user.whatsappAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      whatsappResponse.push(response.data);
-      const textMessageId = response.data?.messages?.[0]?.id;
-      if (textMessageId) whatsappMessageIds.push(textMessageId);
-    }
-
-    // 6️⃣ Send media attachments
-    for (const media of mediaAttachments) {
-      // Determine type
-      const type = media.mimeType?.startsWith('image') ? 'image' :
-                   media.mimeType?.startsWith('video') ? 'video' :
-                   media.mimeType?.startsWith('audio') ? 'audio' :
-                   'document';
-
-      const response = await axios.post(
-        `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: contact.phone,
-          type,
-          [type]: { link: media.url },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${user.whatsappAccessToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      whatsappResponse.push(response.data);
-      const mediaMessageId = response.data?.messages?.[0]?.id;
-      if (mediaMessageId) whatsappMessageIds.push(mediaMessageId);
-    }
-
-    // 7️⃣ Save messages to DB
-    const newMessages = [];
-
-    // Save text message
-    if (personalizedMessage?.trim()) {
-      const [newMessage] = await db.insert(messages).values({
-        conversationId,
-        contactId: contact.id,
-        whatsappMessageId: whatsappMessageIds[0],
-        direction: 'outgoing',
-        messageType: 'text',
-        body: personalizedMessage.trim(),
-        status: whatsappMessageIds[0] ? 'sent' : 'failed',
-        metadata: {
-          whatsappResponse: whatsappResponse[0],
-          timestamp: new Date().toISOString(),
-          originalTemplate: quickReply.message,
-          personalized: true,
-          variables: VariableService.extractVariables(quickReply.message),
-        },
-        timestamp: new Date(),
-      }).returning();
-
-      newMessages.push(newMessage);
-    }
-
-    // Save media messages
-    for (let i = 0; i < mediaAttachments.length; i++) {
-      const media = mediaAttachments[i];
-      const messageId = whatsappMessageIds[i + 1];
-      const [newMediaMessage] = await db.insert(messages).values({
-        conversationId,
-        contactId: contact.id,
-        whatsappMessageId: messageId,
-        direction: 'outgoing',
-        messageType: media.mimeType?.startsWith('image') ? 'image' :
-                     media.mimeType?.startsWith('video') ? 'video' :
-                     media.mimeType?.startsWith('audio') ? 'audio' :
-                     'document',
-        body: media.url,
-        status: messageId ? 'sent' : 'failed',
-        metadata: {
-          whatsappResponse: whatsappResponse[i + 1],
-          timestamp: new Date().toISOString(),
-          quickReplyId: quickReply.id,
-        },
-        timestamp: new Date(),
-      }).returning();
-
-      newMessages.push(newMediaMessage);
-    }
-
-    // 8️⃣ Update conversation last message
-    await db.update(conversations)
-      .set({
-        lastMessage: personalizedMessage || `[${mediaAttachments.length} attachment(s)]`,
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(conversations.id, conversationId));
-
-    // 9️⃣ Log quick reply usage
-    console.log(`📨 Quick reply sent successfully:`, {
-      conversationId,
-      quickReplyId: quickReply.id,
-      contactName: contact.name,
-      template: quickReply.message,
-      personalized: personalizedMessage,
-    });
+    const result = await sendMessageToContact(
+      db, 
+      conversation, 
+      contact, 
+      user, 
+      personalizedMessage, 
+      mediaAttachmentsList
+    );
 
     res.json({
       success: true,
-      messages: newMessages,
-      whatsappMessageIds,
-      whatsappResponse,
-      preview: {
-        original: quickReply.message,
-        personalized: personalizedMessage,
-      },
+      ...result,
+      preview: { original: quickReply.message, personalized: personalizedMessage },
     });
-
   } catch (error: any) {
-    console.error('❌ Error sending quick reply:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to send quick reply',
-      details: error.message,
-    });
+    console.error('❌ Error sending quick reply:', error);
+    res.status(500).json({ success: false, error: 'Failed to send quick reply', details: error.message });
   }
 });
 
+// ---------------------- PATCH ROUTES ---------------------- //
 
+// Mark conversation as read
+router.patch('/:id/read', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+
+    await db.update(conversations)
+      .set({ unreadCount: 0, updatedAt: new Date() })
+      .where(eq(conversations.id, id));
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('❌ Error marking conversation as read:', error);
+    res.status(500).json({ success: false, error: 'Failed to mark as read', details: error.message });
+  }
+});
+
+// Update conversation status
+router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const db = getDb();
+
+    await db.update(conversations)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(conversations.id, id));
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('❌ Error updating conversation status:', error);
+    res.status(500).json({ success: false, error: 'Failed to update status', details: error.message });
+  }
+});
+
+// Assign conversation to a user
+router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { userId: assignedToUserId } = req.body;
+    const db = getDb();
+
+    await db.update(conversations)
+      .set({ assignedToUserId, updatedAt: new Date() })
+      .where(eq(conversations.id, id));
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('❌ Error assigning conversation:', error);
+    res.status(500).json({ success: false, error: 'Failed to assign conversation', details: error.message });
+  }
+});
 
 export default router;

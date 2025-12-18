@@ -1,3 +1,4 @@
+//backend/src/services/cloudinary.service.ts
 import { v2 as cloudinary, UploadApiResponse, UploadApiErrorResponse } from 'cloudinary';
 import path from 'path';
 import stream from 'stream';

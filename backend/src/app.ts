@@ -1,4 +1,3 @@
-// backend/src/app.ts
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -26,28 +25,27 @@ app.use(cors({
 
 app.use(cookieParser());
 
-// 2. Add JSON parsing ONLY to routes that don't use FormData
-// Apply JSON parsing to specific route prefixes
-app.use([
-  "/api/contacts",
-  "/api/auth", 
-  "/api/conversations",
-  "/api/whatsapp/send", // Only the text send route
-  "/api/whatsapp/config",
-  "/api/whatsapp/conversations",
-  "/api/users",
-  "/api/tags",
-  "/api/whatsapp/health"
-], express.json({ limit: '50mb' }));
-
-
-app.use(express.json()); // This line is crucial
-// 3. URL encoded for form submissions (not multipart)
+// 2. URL encoded for form submissions
 app.use(express.urlencoded({ 
   limit: '50mb', 
   extended: true,
   parameterLimit: 50000
 }));
+
+// 3. Add JSON parsing ONLY to routes that don't use FormData
+// Apply JSON parsing to specific route prefixes
+app.use([
+  "/api/contacts",
+  "/api/auth", 
+  "/api/conversations",
+  "/api/whatsapp/send",
+  "/api/whatsapp/config",
+  "/api/whatsapp/conversations",
+  "/api/users",
+  "/api/tags",
+  "/api/whatsapp/health",
+  "/api/quick-replies" // Add quick-replies to JSON routes
+], express.json({ limit: '50mb' }));
 
 // 4. Routes
 app.use("/", testRoute);
@@ -57,9 +55,10 @@ app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
-app.use("/api/tags",tagRoutes);
+app.use("/api/tags", tagRoutes);
 app.use('/api/quick-replies', quickRepliesRoutes);
-// 5. Health check
+
+// 5. Health checks
 app.get("/health", (_req, res) => {
   res.json({ 
     status: "healthy", 
