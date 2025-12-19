@@ -305,9 +305,13 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+
 // PUT /api/contacts/:id - Update contact
-router.put('/:id', authenticate, async (req: AuthRequest, res) => {
+router.put("/:id", authenticate, async (req: AuthRequest, res) => {
   try {
+    console.log("🎯 PUT /contacts/:id - START");
+    console.log("📦 Request body:", JSON.stringify(req.body, null, 2));
+
     const { id } = req.params;
     const {
       name,
@@ -317,39 +321,36 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status,
-      tags: tagIds, // Expecting array of tag UUIDs
+      tags, // CHANGED: Remove the alias, use 'tags' directly
       metadata,
       note,
       isActive,
-      optIn
+      optIn,
     } = req.body;
-    
+
+    console.log("🔍 DEBUG - Received tags field:", tags);
+    console.log("🔍 DEBUG - Is array?", Array.isArray(tags));
+
     const userId = req.user!.userId;
     const db = getDb();
-    
-    // Check if contact exists and belongs to user
-    const contactResult = await db.select()
+
+    // Check if contact exists
+    const contactResult = await db
+      .select()
       .from(contacts)
-      .where(
-        and(
-          eq(contacts.id, id),
-          eq(contacts.userId, userId)
-        )
-      )
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
       .limit(1);
-    
+
     if (contactResult.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'Contact not found' 
-      });
+      console.log("❌ Contact not found");
+      return res.status(404).json({ success: false, error: "Contact not found" });
     }
-    
+
     const updateData: any = {
       updatedAt: new Date(),
     };
-    
-    // Only update fields that are provided
+
+    // Only update provided fields
     if (name !== undefined) updateData.name = name;
     if (phone !== undefined) updateData.phone = phone;
     if (email !== undefined) updateData.email = email;
@@ -361,65 +362,57 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     if (optIn !== undefined) updateData.optIn = optIn;
     if (metadata !== undefined) updateData.metadata = metadata;
     if (note !== undefined) updateData.note = note;
-    
-    // Handle tags update
-    if (tagIds !== undefined) {
-      if (Array.isArray(tagIds)) {
-        // Validate that all tag IDs exist and belong to the user
-        const existingTags = await db.select()
-          .from(tags)
-          .where(
-            and(
-              inArray(tags.id, tagIds),
-              eq(tags.userId, userId)
-            )
-          );
-        
-        const validTagIds = existingTags.map(tag => tag.id);
-        updateData.tagIds = validTagIds;
+
+    // CRITICAL FIX: Update tagIds based on the tags field from request
+    if (tags !== undefined) {
+      console.log("🔄 Processing tags field for tagIds update:", tags);
+      
+      if (Array.isArray(tags)) {
+        // Validate tag IDs exist for this user
+        if (tags.length > 0) {
+          const existingTags = await db.select()
+            .from(tagsTable) // Use the tags table
+            .where(
+              and(
+                inArray(tagsTable.id, tags),
+                eq(tagsTable.userId, userId)
+              )
+            );
+          
+          const validTagIds = existingTags.map(tag => tag.id);
+          console.log("✅ Valid tag IDs:", validTagIds);
+          updateData.tagIds = validTagIds;
+        } else {
+          console.log("🔄 Setting tagIds to empty array");
+          updateData.tagIds = [];
+        }
       } else {
+        console.log("⚠️ Tags is not an array, setting to empty array");
         updateData.tagIds = [];
       }
+    } else {
+      console.log("ℹ️ tags not provided in request, leaving tagIds unchanged");
     }
-    
-    // If phone is being updated, check for duplicates
-    if (phone && phone !== contactResult[0].phone) {
-      const duplicateContact = await db.select()
-        .from(contacts)
-        .where(
-          and(
-            eq(contacts.phone, phone),
-            eq(contacts.userId, userId),
-            eq(contacts.id, id) // Exclude current contact
-          )
-        )
-        .limit(1);
-      
-      if (duplicateContact.length > 0) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Another contact with this phone number already exists' 
-        });
-      }
-    }
-    
-    const [updatedContact] = await db.update(contacts)
+
+    // Debug: Show what will be updated
+    console.log("📊 Update data to apply:", JSON.stringify(updateData, null, 2));
+
+    // Update contact
+    const [updatedContact] = await db
+      .update(contacts)
       .set(updateData)
-      .where(
-        and(
-          eq(contacts.id, id),
-          eq(contacts.userId, userId)
-        )
-      )
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
       .returning();
-    
+
+    console.log("✅ PUT /contacts/:id - COMPLETE");
+    console.log("📤 Updated contact:", JSON.stringify(updatedContact, null, 2));
+
     // Get tag details for response
     let tagDetails = [];
-    const finalTagIds = updateData.tagIds !== undefined ? updateData.tagIds : contactResult[0].tagIds;
-    if (finalTagIds && finalTagIds.length > 0) {
-      tagDetails = await getTagsWithDetails(finalTagIds, userId);
+    if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
+      tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
     }
-    
+
     res.json({
       success: true,
       contact: {
@@ -427,16 +420,16 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
         tags: tagDetails,
       },
     });
-    
   } catch (error: any) {
-    console.error('Error updating contact:', error);
-    res.status(500).json({ 
+    console.error("❌ Error updating contact:", error);
+    console.error("❌ Error stack:", error.stack);
+    res.status(500).json({
       success: false,
-      error: 'Failed to update contact' 
+      error: "Failed to update contact",
+      details: error.message,
     });
   }
 });
-
 // PATCH /api/contacts/:id/status - Update contact status
 router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -852,6 +845,13 @@ router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) 
       error: 'Failed to update last contacted' 
     });
   }
+});
+
+router.get('/test-log', (req, res) => {
+  console.log('✅ TEST LOG: This should appear in terminal');
+  console.log('Request headers:', req.headers);
+  console.log('Request body:', req.body);
+  res.json({ success: true, message: 'Check your terminal for logs' });
 });
 
 export default router;

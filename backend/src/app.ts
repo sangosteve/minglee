@@ -1,3 +1,4 @@
+// backend/src/app.ts
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -32,6 +33,7 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
+
 // 3. Add JSON parsing ONLY to routes that don't use FormData
 // Apply JSON parsing to specific route prefixes
 app.use([
@@ -47,6 +49,11 @@ app.use([
   "/api/quick-replies" // Add quick-replies to JSON routes
 ], express.json({ limit: '50mb' }));
 
+app.use((req, res, next) => {
+  console.log("➡️", req.method, req.url, "BODY:", req.body);
+  next();
+});
+
 // 4. Routes
 app.use("/", testRoute);
 app.use("/api/contacts", contactsRoute);
@@ -57,6 +64,9 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tags", tagRoutes);
 app.use('/api/quick-replies', quickRepliesRoutes);
+
+
+
 
 // 5. Health checks
 app.get("/health", (_req, res) => {
