@@ -63,8 +63,15 @@ const statusOptions = [
   { value: 'customer', label: 'Customer' },
 ];
 
-const normalizePhone = (phone: string) =>
-  phone.replace(/^0+/, '').replace(/\s+/g, '');
+const normalizePhone = (phone: string, countryCode: string) => {
+  if (!phone) return '';
+  const digitsOnly = phone.replace(/\D/g, '');
+  const codeDigits = countryCode.replace('+', '');
+
+  if (digitsOnly.startsWith(`00${codeDigits}`)) return digitsOnly.slice((`00${codeDigits}`).length);
+  if (digitsOnly.startsWith(codeDigits)) return digitsOnly.slice(codeDigits.length);
+  return digitsOnly.replace(/^0+/, '');
+};
 
 export const AddContactSheet = ({
   open,
@@ -95,7 +102,8 @@ export const AddContactSheet = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const phone = `${formData.countryCode}${normalizePhone(formData.phone)}`;
+      const normalizedLocal = normalizePhone(formData.phone, formData.countryCode);
+      const phone = `${formData.countryCode}${normalizedLocal}`;
       
       // Send tag IDs to backend
       const tagIds = selectedTagIds.filter(id => id); // Filter out any empty IDs

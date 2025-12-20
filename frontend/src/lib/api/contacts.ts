@@ -59,10 +59,14 @@ export interface ContactsResponse {
 }
 
 export interface ContactAnalytics {
-  total: number;
+  // Backwards-compatible fields used by UI
+  total?: number;
+  totalContacts?: number;
   byStatus: Array<{ status: string; count: number }>;
   byTag: Array<{ tag: string; tagId: string; count: number; color?: string }>;
-  newThisMonth: number;
+  // Support both month and week nomenclature
+  newThisMonth?: number;
+  newThisWeek?: number;
 }
 
 // API Calls
@@ -150,9 +154,47 @@ export const contactsApi = {
     return await api.delete(`/contacts/${id}/tags`, { tags });
   },
 
-  // Get analytics
+  // Get analytics (prefer new analytics routes, fallback to old)
   getAnalytics: async (): Promise<{ success: boolean; analytics: ContactAnalytics }> => {
-    return await api.get('/contacts/analytics/overview');
+    const defaultAnalytics: { success: boolean; analytics: ContactAnalytics } = {
+      success: true,
+      analytics: {
+        total: 0,
+        totalContacts: 0,
+        byStatus: [],
+        byTag: [],
+        newThisMonth: 0,
+        newThisWeek: 0,
+      },
+    };
+
+    // Helper to normalize server response into the UI-friendly shape
+    function normalize(resp: any) {
+      const a = resp.analytics || {};
+      return {
+        total: a.total ?? a.totalContacts ?? 0,
+        totalContacts: a.total ?? a.totalContacts ?? 0,
+        byStatus: a.byStatus ?? [],
+        byTag: a.byTag ?? [],
+        newThisMonth: a.newThisMonth ?? a.newThisWeek ?? 0,
+        newThisWeek: a.newThisWeek ?? a.newThisMonth ?? 0,
+      } as ContactAnalytics;
+    }
+
+    try {
+      // Prefer new endpoint
+      const resp = await api.get('/analytics/contacts/overview');
+      return { success: true, analytics: normalize(resp) };
+    } catch (err) {
+      try {
+        // Fallback to old endpoint
+        const resp = await api.get('/contacts/analytics/overview');
+        return { success: true, analytics: normalize(resp) };
+      } catch (e) {
+        // Return default so UI doesn't break
+        return defaultAnalytics;
+      }
+    }
   },
 };
 

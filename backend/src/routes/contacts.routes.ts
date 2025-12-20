@@ -321,15 +321,15 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status,
-      tags, // CHANGED: Remove the alias, use 'tags' directly
+      tags: tagIds, // tag IDs from request body (array of UUIDs)
       metadata,
       note,
       isActive,
       optIn,
     } = req.body;
 
-    console.log("🔍 DEBUG - Received tags field:", tags);
-    console.log("🔍 DEBUG - Is array?", Array.isArray(tags));
+    console.log("🔍 DEBUG - Received tagIds field:", tagIds);
+    console.log("🔍 DEBUG - Is array?", Array.isArray(tagIds));
 
     const userId = req.user!.userId;
     const db = getDb();
@@ -363,19 +363,19 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
     if (metadata !== undefined) updateData.metadata = metadata;
     if (note !== undefined) updateData.note = note;
 
-    // CRITICAL FIX: Update tagIds based on the tags field from request
-    if (tags !== undefined) {
-      console.log("🔄 Processing tags field for tagIds update:", tags);
+    // Update tagIds based on the tagIds field from request
+    if (typeof tagIds !== 'undefined') {
+      console.log("🔄 Processing tagIds field for tagIds update:", tagIds);
       
-      if (Array.isArray(tags)) {
+      if (Array.isArray(tagIds)) {
         // Validate tag IDs exist for this user
-        if (tags.length > 0) {
+        if (tagIds.length > 0) {
           const existingTags = await db.select()
-            .from(tagsTable) // Use the tags table
+            .from(tags)
             .where(
               and(
-                inArray(tagsTable.id, tags),
-                eq(tagsTable.userId, userId)
+                inArray(tags.id, tagIds),
+                eq(tags.userId, userId)
               )
             );
           
@@ -387,11 +387,11 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
           updateData.tagIds = [];
         }
       } else {
-        console.log("⚠️ Tags is not an array, setting to empty array");
+        console.log("⚠️ tagIds is not an array, setting to empty array");
         updateData.tagIds = [];
       }
     } else {
-      console.log("ℹ️ tags not provided in request, leaving tagIds unchanged");
+      console.log("ℹ️ tagIds not provided in request, leaving tagIds unchanged");
     }
 
     // Debug: Show what will be updated
@@ -551,6 +551,7 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
 router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
+    console.log('contacts analytics overview called for user:', userId);
     const db = getDb();
     
     // Get total contacts
@@ -573,7 +574,7 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
     const byTagResult = await db.execute(sql`
       SELECT tag_id, COUNT(*) as count
       FROM contacts, unnest(contacts.tag_ids) as tag_id
-      WHERE contacts."userId" = ${userId}
+      WHERE contacts.user_id = ${userId}
       AND tag_id IS NOT NULL
       GROUP BY tag_id
       ORDER BY count DESC
@@ -609,7 +610,7 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
       .where(
         and(
           eq(contacts.userId, userId),
-          sql`contacts."createdAt" >= ${startOfMonth}`
+          sql`${contacts.createdAt} >= ${startOfMonth}`
         )
       );
     
@@ -629,7 +630,7 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
     });
     
   } catch (error: any) {
-    console.error('Error fetching contact analytics:', error);
+    console.error('Error fetching contact analytics:', error?.message || error, error?.stack || '');
     res.status(500).json({ 
       success: false,
       error: 'Failed to fetch contact analytics' 

@@ -15,6 +15,7 @@ import mediaRoutes from "./routes/media.routes";
 import usersRoutes from "./routes/users.routes";
 import tagRoutes from "./routes/tags.routes";
 import quickRepliesRoutes from './routes/quick-replies.routes';
+import analyticsRoutes from './routes/analytics.routes';
 
 const app = express();
 
@@ -63,8 +64,7 @@ app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tags", tagRoutes);
-app.use('/api/quick-replies', quickRepliesRoutes);
-
+app.use('/api/quick-replies', quickRepliesRoutes);app.use('/api/analytics', analyticsRoutes);
 
 
 
@@ -83,6 +83,20 @@ app.get("/api/test", (_req, res) => {
     message: "API is working",
     timestamp: new Date().toISOString()
   });
+});
+
+// Temporary debug route to test analytics service directly
+import { getContactsOverview } from './services/analytics.service';
+app.get('/internal-debug/analytics/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    console.log('DEBUG: calling getContactsOverview for', userId);
+    const result = await getContactsOverview(userId);
+    res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('DEBUG: analytics service error:', err?.message || err, err?.stack || '');
+    res.status(500).json({ success: false, error: err?.message || 'failed' });
+  }
 });
 
 export default app;

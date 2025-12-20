@@ -71,19 +71,38 @@ const statusOptions = [
 ];
 
 const parsePhoneNumber = (phone: string) => {
-  const match = countryCodes.find(c => phone.startsWith(c.code));
+  if (!phone) return { countryCode: '+263', phoneNumber: '' };
+  const clean = phone.replace(/\s+/g, '');
 
-  if (!match) {
-    return {
-      countryCode: '+263',
-      phoneNumber: phone,
-    };
+  for (const c of countryCodes) {
+    const code = c.code; // e.g. '+263'
+    const digits = code.replace('+', ''); // '263'
+
+    if (clean.startsWith(code)) {
+      return { countryCode: code, phoneNumber: clean.slice(code.length) };
+    }
+
+    if (clean.startsWith(digits)) {
+      return { countryCode: `+${digits}`, phoneNumber: clean.slice(digits.length) };
+    }
+
+    if (clean.startsWith(`00${digits}`)) {
+      return { countryCode: `+${digits}`, phoneNumber: clean.slice((`00${digits}`).length) };
+    }
   }
 
-  return {
-    countryCode: match.code,
-    phoneNumber: phone.slice(match.code.length),
-  };
+  // Fallback: strip leading zeros for national format
+  return { countryCode: '+263', phoneNumber: clean.replace(/^0+/, '') };
+};
+
+const normalizePhone = (phone: string, countryCode: string) => {
+  if (!phone) return '';
+  const digitsOnly = phone.replace(/\D/g, '');
+  const codeDigits = countryCode.replace('+', '');
+
+  if (digitsOnly.startsWith(`00${codeDigits}`)) return digitsOnly.slice((`00${codeDigits}`).length);
+  if (digitsOnly.startsWith(codeDigits)) return digitsOnly.slice(codeDigits.length);
+  return digitsOnly.replace(/^0+/, '');
 };
 
 export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: EditContactSheetProps) => {
@@ -106,7 +125,10 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
   const deleteContactMutation = useDeleteContact();
 
   useEffect(() => {
-    if (!contact) return;
+    if (!contact) {
+      setSelectedTagIds([]);
+      return;
+    }
 
     const { countryCode, phoneNumber } = parsePhoneNumber(contact.phone ?? '');
 
@@ -121,19 +143,19 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
       status: contact.status ?? 'active',
     });
 
-    // Set tag IDs from contact tags
-    if (contact.tags && Array.isArray(contact.tags)) {
-      // If tags are objects with id, extract IDs
-      if (contact.tags.length > 0 && typeof contact.tags[0] === 'object') {
+    // Prefer full tag objects if present; fallback to tagIds
+    if (contact.tags && Array.isArray(contact.tags) && contact.tags.length > 0) {
+      if (typeof contact.tags[0] === 'object') {
         setSelectedTagIds(contact.tags.map((tag: any) => tag.id));
       } else {
-        // If tags are already IDs or names
         setSelectedTagIds(contact.tags as string[]);
       }
+    } else if (contact.tagIds && Array.isArray(contact.tagIds) && contact.tagIds.length > 0) {
+      setSelectedTagIds(contact.tagIds as string[]);
     } else {
       setSelectedTagIds([]);
     }
-  }, [contact?.id]);
+  }, [contact?.id, contact?.tagIds?.length, contact?.tags?.length]);
 
   const normalizePhone = (phone: string) =>
     phone.replace(/^0+/, '').replace(/\s+/g, '');
@@ -143,8 +165,9 @@ const handleSubmit = async (e: React.FormEvent) => {
   if (!contact) return;
 
   try {
-    // Build phone from dropdown + local input
-    const fullPhone = `${formData.countryCode}${normalizePhone(formData.phone)}`;
+    // Build phone from dropdown + local input (normalize to avoid duplicate country codes)
+    const normalizedLocal = normalizePhone(formData.phone, formData.countryCode);
+    const fullPhone = `${formData.countryCode}${normalizedLocal}`;
 
     const updateData: Record<string, any> = {
       name: formData.name,

@@ -11,7 +11,7 @@ export interface AuthTokens {
 }
 
 export interface TokenPayload {
-  userId: number;
+  userId: string;
   email: string;
   isAdmin: boolean;
 }
@@ -39,7 +39,7 @@ export class AuthService {
   }
 
   // Generate refresh token
-  static generateRefreshToken(userId: number): string {
+  static generateRefreshToken(userId: string): string {
     return jwt.sign(
       { userId },
       process.env.JWT_REFRESH_SECRET!,
@@ -57,9 +57,9 @@ export class AuthService {
   }
 
   // Verify refresh token
-  static verifyRefreshToken(token: string): { userId: number } | null {
+  static verifyRefreshToken(token: string): { userId: string } | null {
     try {
-      return jwt.verify(token, process.env.JWT_REFRESH_SECRET!) as { userId: number };
+      return jwt.verify(token, process.env.JWT_REFRESH_SECRET!) as { userId: string };
     } catch {
       return null;
     }
@@ -67,7 +67,7 @@ export class AuthService {
 
   // Store refresh token
   static async storeRefreshToken(
-    userId: number, 
+    userId: string, 
     token: string, 
     userAgent?: string, 
     ipAddress?: string

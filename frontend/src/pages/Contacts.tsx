@@ -39,6 +39,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
+import { useTags } from '@/components/tags/TagsProvider';
 
 // Status configuration
 const statusConfig = {
@@ -84,6 +85,9 @@ const Contacts = () => {
     error: contactsError,
     refetch 
   } = useContacts(filters);
+
+  // Available tags (used to map tagIds to full tag objects)
+  const { data: availableTags = [] } = useTags();
 
   const { 
     data: analytics, 
@@ -188,7 +192,7 @@ const Contacts = () => {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
-  // Get tag display name (handle both string and object tags)
+  // Get tag display name (handle both string, UUID, and object tags)
   const getTagName = (tag: any): string => {
     if (typeof tag === 'string') return tag;
     if (tag && typeof tag === 'object') {
@@ -205,13 +209,29 @@ const Contacts = () => {
     return undefined;
   };
 
-  // Get tag display
-  const getTagDisplay = (tag: any) => {
+  // Get tag display (including UUID strings as fallback)
+  const getTagDisplay = (tag: any, availableTags?: any[]) => {
+    // If it's a UUID string, try to find it in available tags
+    if (typeof tag === 'string' && availableTags) {
+      const found = availableTags.find(t => t.id === tag);
+      if (found) {
+        return {
+          name: found.name,
+          color: found.color,
+          style: found.color ? { 
+            backgroundColor: `${found.color}20`, 
+            color: found.color,
+            borderColor: `${found.color}30`
+          } : undefined
+        };
+      }
+    }
+    
     const name = getTagName(tag);
     const color = getTagColor(tag);
     
     return {
-      name,
+      name: name || (typeof tag === 'string' ? tag.slice(0, 8) : ''),
       color,
       style: color ? { 
         backgroundColor: `${color}20`, 
@@ -492,10 +512,10 @@ const Contacts = () => {
                 )}
               </div>
 
-              {contact.tags && contact.tags.length > 0 && (
+              {(((Array.isArray(contact.tags) && contact.tags.length > 0) || (Array.isArray(contact.tagIds) && contact.tagIds.length > 0))) && (
                 <div className="flex flex-wrap gap-1 mb-4">
-                  {Array.isArray(contact.tags) && contact.tags.slice(0, 3).map((tag, idx) => {
-                    const tagDisplay = getTagDisplay(tag);
+                  {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : contact.tagIds).slice(0, 3).map((tag, idx) => {
+                    const tagDisplay = getTagDisplay(tag, availableTags);
                     if (!tagDisplay.name) return null;
                     
                     return (
@@ -509,13 +529,13 @@ const Contacts = () => {
                       </Badge>
                     );
                   })}
-                  {Array.isArray(contact.tags) && contact.tags.length > 3 && (
+                  {(((Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 3) ? contact.tagIds.length - 3 : 0)) > 0 && (
                     <Badge variant="secondary" className="text-xs">
-                      +{contact.tags.length - 3}
+                      +{ (Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 3 ? contact.tagIds.length - 3 : 0) }
                     </Badge>
                   )}
                 </div>
-              )}
+              )} 
 
               <div className="flex items-center justify-between pt-3 border-t border-border">
                 <span className="text-xs text-muted-foreground">
@@ -580,8 +600,8 @@ const Contacts = () => {
                   </td>
                   <td className="py-4 px-4">
                     <div className="flex flex-wrap gap-1">
-                      {Array.isArray(contact.tags) && contact.tags.slice(0, 2).map((tag, idx) => {
-                        const tagDisplay = getTagDisplay(tag);
+                      {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : (Array.isArray(contact.tagIds) ? contact.tagIds : [])).slice(0, 2).map((tag, idx) => {
+                        const tagDisplay = getTagDisplay(tag, availableTags);
                         if (!tagDisplay.name) return null;
                         
                         return (
@@ -595,9 +615,9 @@ const Contacts = () => {
                           </Badge>
                         );
                       })}
-                      {Array.isArray(contact.tags) && contact.tags.length > 2 && (
+                      {(((Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 2) ? contact.tagIds.length - 2 : 0)) > 0 && (
                         <Badge variant="secondary" className="text-xs">
-                          +{contact.tags.length - 2}
+                          +{ (Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 2 ? contact.tagIds.length - 2 : 0) }
                         </Badge>
                       )}
                     </div>

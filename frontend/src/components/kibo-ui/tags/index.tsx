@@ -115,24 +115,42 @@ export const TagsTrigger = ({
   className,
   children,
   ...props
-}: TagsTriggerProps) => (
-  <PopoverTrigger asChild>
-    <Button
-      className={cn("h-auto w-full justify-between p-2", className)}
-      // biome-ignore lint/a11y/useSemanticElements: "Required"
-      role="combobox"
-      variant="outline"
-      {...props}
-    >
-      <div className="flex flex-wrap items-center gap-1">
-        {children}
-        <span className="px-2 py-px text-muted-foreground">
-          Select a tag...
-        </span>
-      </div>
-    </Button>
-  </PopoverTrigger>
-);
+}: TagsTriggerProps) => {
+  const childArray = children ? (Array.isArray(children) ? children : [children]) : [];
+  const count = childArray.length;
+  const visible = childArray.slice(0, 3);
+
+  return (
+    <PopoverTrigger asChild>
+      <Button
+        className={cn("h-auto w-full justify-between p-2", className)}
+        // biome-ignore lint/a11y/useSemanticElements: "Required"
+        role="combobox"
+        variant="outline"
+        {...props}
+      >
+        <div className="flex items-center gap-1 w-full">
+          <div className="flex items-center gap-1 flex-1 flex-wrap">
+            {count > 0 ? (
+              <>
+                {visible.map((c, i) => (
+                  <span key={i} className="inline-flex">{c}</span>
+                ))}
+                {count > 3 && (
+                  <Badge className="text-xs">+{count - 3}</Badge>
+                )}
+              </>
+            ) : (
+              <span className="px-2 py-px text-muted-foreground">
+                Select a tag...
+              </span>
+            )}
+          </div>
+        </div>
+      </Button>
+    </PopoverTrigger>
+  );
+};
 
 export type TagsValueProps = ComponentProps<typeof Badge>;
 
