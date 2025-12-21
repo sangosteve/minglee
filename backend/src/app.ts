@@ -41,6 +41,7 @@ app.use([
   "/api/whatsapp/send",
   "/api/whatsapp/config",
   "/api/whatsapp/conversations",
+  "/api/whatsapp/webhook", 
   "/api/users",
   "/api/tags",
   "/api/whatsapp/health",

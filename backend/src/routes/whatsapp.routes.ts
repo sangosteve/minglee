@@ -81,6 +81,8 @@ router.post('/webhook', async (req, res) => {
 
     const event = req.body;
 
+    console.log(req.body)
+
     if (!event || Object.keys(event).length === 0) {
       console.log('📭 Empty webhook payload');
       return;
