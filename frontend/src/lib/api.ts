@@ -4,14 +4,16 @@ import { useAuthStore } from '@/stores/auth.store';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 class ApiClient {
+  private refreshPromise: Promise<void> | null = null;
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const { accessToken, refreshToken, clearAuth, setAuth } = useAuthStore.getState();
+    const { accessToken, clearAuth, setAuth } = useAuthStore.getState();
     
  const headers: HeadersInit = {};
-    
+  
     // Don't automatically set Content-Type for FormData
     if (!(options.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json';
@@ -26,35 +28,63 @@ class ApiClient {
       credentials: 'include',
     });
 
-    // Handle token refresh on 401
-    if (response.status === 401 && refreshToken && endpoint !== '/auth/refresh') {
+    // Handle token refresh on 401 (use httpOnly cookie; single-refresh promise)
+    if (response.status === 401 && endpoint !== '/auth/refresh') {
       try {
-        const refreshResponse = await fetch(`${API_URL}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        });
-
-        if (refreshResponse.ok) {
-          const data = await refreshResponse.json();
-          
-          if (data.success) {
-            setAuth(useAuthStore.getState().user!, {
-              accessToken: data.accessToken,
-              refreshToken: data.refreshToken,
-            });
-
-            // Retry original request with new token
-            headers['Authorization'] = `Bearer ${data.accessToken}`;
-            const retryResponse = await fetch(`${API_URL}${endpoint}`, {
-              ...options,
-              headers,
+        // If a refresh is already in progress, wait for it. Otherwise, start one.
+        if (!this.refreshPromise) {
+          this.refreshPromise = (async () => {
+            // Call refresh endpoint — it will use the httpOnly cookie
+            const refreshResponse = await fetch(`${API_URL}/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
               credentials: 'include',
             });
-            
-            return this.handleResponse<T>(retryResponse);
-          }
+
+            if (!refreshResponse.ok) throw new Error('Refresh failed');
+
+            const refreshData = await refreshResponse.json();
+            if (!refreshData.success) throw new Error('Refresh failed');
+
+            // If the refresh endpoint returns the user and access token, use them
+            if (refreshData.user && refreshData.accessToken) {
+              setAuth(refreshData.user, { accessToken: refreshData.accessToken });
+            } else if (refreshData.accessToken) {
+              // Otherwise fetch user using the new access token
+              const meResponse = await fetch(`${API_URL}/auth/me`, {
+                headers: { Authorization: `Bearer ${refreshData.accessToken}` },
+                credentials: 'include',
+              });
+
+              if (!meResponse.ok) throw new Error('Failed to fetch user after refresh');
+
+              const meData = await meResponse.json();
+              if (!meData.success || !meData.user) throw new Error('Failed to fetch user after refresh');
+
+              setAuth(meData.user, { accessToken: refreshData.accessToken });
+            } else {
+              throw new Error('Refresh failed - no access token returned');
+            }
+          })().finally(() => {
+            this.refreshPromise = null;
+          });
         }
+
+        // Wait for whichever refresh is in progress to finish
+        await this.refreshPromise;
+
+        // Retry original request with the latest access token
+        const latestAccessToken = useAuthStore.getState().accessToken;
+        if (!latestAccessToken) throw new Error('Session expired');
+
+        headers['Authorization'] = `Bearer ${latestAccessToken}`;
+        const retryResponse = await fetch(`${API_URL}${endpoint}`, {
+          ...options,
+          headers,
+          credentials: 'include',
+        });
+
+        return this.handleResponse<T>(retryResponse);
       } catch (error) {
         console.error('Token refresh failed:', error);
         clearAuth();
@@ -130,7 +160,6 @@ class ApiClient {
         success: boolean;
         user: any;
         accessToken: string;
-        refreshToken: string;
       }>('/auth/login', { email, password }),
 
     register: (data: {
@@ -143,7 +172,6 @@ class ApiClient {
         success: boolean;
         user: any;
         accessToken: string;
-        refreshToken: string;
       }>('/auth/register', data),
 
     logout: () =>
@@ -152,19 +180,18 @@ class ApiClient {
     me: () =>
       this.get<{ success: boolean; user: any }>('/auth/me'),
 
-    refresh: (refreshToken: string) =>
-      this.post<{
+    refresh: () =>
+      this.request<{
         success: boolean;
         accessToken: string;
-        refreshToken: string;
-      }>('/auth/refresh', { refreshToken }),
+        user?: any;
+      }>('/auth/refresh', { method: 'POST' }),
 
     google: (accessToken: string) =>
       this.post<{
         success: boolean;
         user: any;
         accessToken: string;
-        refreshToken: string;
       }>('/auth/google/frontend', { accessToken }),
   };
 

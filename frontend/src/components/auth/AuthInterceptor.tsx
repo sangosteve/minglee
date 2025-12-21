@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export const AuthInterceptor = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, accessToken, refreshToken, initializeAuth } = useAuthStore();
+  const { isAuthenticated, accessToken, initializeAuth } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -60,7 +60,6 @@ export const AuthInterceptor = ({ children }: { children: React.ReactNode }) => 
         if (newState.state.user && newState.state.accessToken) {
           setAuth(newState.state.user, {
             accessToken: newState.state.accessToken,
-            refreshToken: newState.state.refreshToken,
           });
         } else {
           clearAuth();

@@ -24,7 +24,7 @@ export const usersRelations = relations(users, ({many}) => ({
 }));
 
 export const mediaAttachmentsRelations = relations(mediaAttachments, ({one, many}) => ({
-	message: one(messages, {
+	message_messageId: one(messages, {
 		fields: [mediaAttachments.messageId],
 		references: [messages.id],
 		relationName: "mediaAttachments_messageId_messages_id"
@@ -33,13 +33,21 @@ export const mediaAttachmentsRelations = relations(mediaAttachments, ({one, many
 		fields: [mediaAttachments.uploadedByUserId],
 		references: [users.id]
 	}),
+	message_messageId: one(messages, {
+		fields: [mediaAttachments.messageId],
+		references: [messages.id],
+		relationName: "mediaAttachments_messageId_messages_id"
+	}),
 	messages: many(messages, {
 		relationName: "messages_mediaAttachmentId_mediaAttachments_id"
 	}),
 }));
 
 export const messagesRelations = relations(messages, ({one, many}) => ({
-	mediaAttachments: many(mediaAttachments, {
+	mediaAttachments_messageId: many(mediaAttachments, {
+		relationName: "mediaAttachments_messageId_messages_id"
+	}),
+	mediaAttachments_messageId: many(mediaAttachments, {
 		relationName: "mediaAttachments_messageId_messages_id"
 	}),
 	contact: one(contacts, {

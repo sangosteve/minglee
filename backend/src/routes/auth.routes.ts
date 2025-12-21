@@ -34,20 +34,27 @@ router.post('/register', async (req, res) => {
     const result = await AuthService.register(email, password, name, phone);
     
     console.log('Registration successful for:', email);
-    
-    // Store refresh token
+
+    // Store refresh token server-side and set it as an httpOnly cookie
     await AuthService.storeRefreshToken(
       result.user.id,
       result.tokens.refreshToken,
       req.headers['user-agent'],
       req.ip
     );
-    
+
+    res.cookie('refreshToken', result.tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Return access token and user (do not send refreshToken in body)
     res.json({
       success: true,
       user: result.user,
       accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
     });
   } catch (error: any) {
     console.error('Registration error details:', {
@@ -76,19 +83,25 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Store refresh token
+    // Store refresh token server-side and set it as an httpOnly cookie
     await AuthService.storeRefreshToken(
       result.user.id,
       result.tokens.refreshToken,
       req.headers['user-agent'],
       req.ip
     );
-    
+
+    res.cookie('refreshToken', result.tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
     res.json({
       success: true,
       user: result.user,
       accessToken: result.tokens.accessToken,
-      refreshToken: result.tokens.refreshToken,
     });
   } catch (error: any) {
     console.error('Login error:', error);
@@ -96,27 +109,28 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Refresh token
+// Refresh token (cookie-based)
 router.post('/refresh', async (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    
-    if (!refreshToken) {
+    // Prefer httpOnly cookie, fall back to request body for compatibility
+    const incomingRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    if (!incomingRefreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
-    
+
     // Validate refresh token
-    const isValid = await AuthService.validateRefreshToken(refreshToken);
+    const isValid = await AuthService.validateRefreshToken(incomingRefreshToken);
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
-    
+
     // Verify JWT
-    const payload = AuthService.verifyRefreshToken(refreshToken);
+    const payload = AuthService.verifyRefreshToken(incomingRefreshToken);
     if (!payload) {
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
-    
+
     // Get user
     const db = getDb();
     const userResult = await db.select()
@@ -136,22 +150,32 @@ router.post('/refresh', async (req, res) => {
       email: user.email,
       isAdmin: user.isAdmin || false,
     });
-    
+
     const newRefreshToken = AuthService.generateRefreshToken(user.id);
-    
-    // Revoke old token and store new one
-    await AuthService.revokeRefreshToken(refreshToken);
+
+    // Revoke old token (from cookie/body) and store new one server-side
+    await AuthService.revokeRefreshToken(incomingRefreshToken);
     await AuthService.storeRefreshToken(
       user.id,
       newRefreshToken,
       req.headers['user-agent'],
       req.ip
     );
-    
+
+    // Set httpOnly cookie with the new refresh token
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const { passwordHash, ...userWithoutPassword } = user;
+
     res.json({
       success: true,
       accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
+      user: userWithoutPassword,
     });
   } catch (error: any) {
     console.error('Refresh error:', error);
@@ -162,12 +186,20 @@ router.post('/refresh', async (req, res) => {
 // Logout
 router.post('/logout', authenticate, async (req: AuthRequest, res) => {
   try {
-    const { refreshToken } = req.body;
-    
-    if (refreshToken) {
-      await AuthService.revokeRefreshToken(refreshToken);
+    // Revoke refresh token from httpOnly cookie or request body (compat)
+    const incomingRefreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    if (incomingRefreshToken) {
+      await AuthService.revokeRefreshToken(incomingRefreshToken);
     }
-    
+
+    // Clear the cookie (client will also clear local auth state)
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    });
+
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error: any) {
     console.error('Logout error:', error);
@@ -263,21 +295,30 @@ router.get('/google/callback', async (req, res) => {
     const accessToken = AuthService.generateAccessToken(payload);
     const refreshToken = AuthService.generateRefreshToken(user.id);
     
-    // Store refresh token
+    // Store refresh token server-side
     await AuthService.storeRefreshToken(
       user.id,
       refreshToken,
       req.headers['user-agent'],
       req.ip
     );
-    
+
+    // Set httpOnly cookie
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const { passwordHash, ...userWithoutPassword } = user;
+
     // In production, redirect to frontend
     // For development, return JSON
     res.json({
       success: true,
-      user,
+      user: userWithoutPassword,
       accessToken,
-      refreshToken,
     });
     
   } catch (error: any) {
@@ -363,19 +404,26 @@ router.post('/google/frontend', async (req, res) => {
     const jwtAccessToken = AuthService.generateAccessToken(payload);
     const refreshToken = AuthService.generateRefreshToken(user.id);
     
-    // Store refresh token
+    // Store refresh token server-side and set cookie
     await AuthService.storeRefreshToken(
       user.id,
       refreshToken,
       req.headers['user-agent'],
       req.ip
     );
-    
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    // Return accessToken and user (no refresh token in body)
     res.json({
       success: true,
       user,
       accessToken: jwtAccessToken,
-      refreshToken,
     });
     
   } catch (error: any) {

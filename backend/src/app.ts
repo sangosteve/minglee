@@ -1,3 +1,4 @@
+// backend/src/app.ts
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -14,6 +15,7 @@ import mediaRoutes from "./routes/media.routes";
 import usersRoutes from "./routes/users.routes";
 import tagRoutes from "./routes/tags.routes";
 import quickRepliesRoutes from './routes/quick-replies.routes';
+import analyticsRoutes from './routes/analytics.routes';
 
 const app = express();
 
@@ -32,6 +34,7 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
+
 // 3. Add JSON parsing ONLY to routes that don't use FormData
 // Apply JSON parsing to specific route prefixes
 app.use([
@@ -48,6 +51,11 @@ app.use([
   "/api/quick-replies" // Add quick-replies to JSON routes
 ], express.json({ limit: '50mb' }));
 
+app.use((req, res, next) => {
+  console.log("➡️", req.method, req.url, "BODY:", req.body);
+  next();
+});
+
 // 4. Routes
 app.use("/", testRoute);
 app.use("/api/contacts", contactsRoute);
@@ -57,7 +65,9 @@ app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tags", tagRoutes);
-app.use('/api/quick-replies', quickRepliesRoutes);
+app.use('/api/quick-replies', quickRepliesRoutes);app.use('/api/analytics', analyticsRoutes);
+
+
 
 // 5. Health checks
 app.get("/health", (_req, res) => {
@@ -74,6 +84,20 @@ app.get("/api/test", (_req, res) => {
     message: "API is working",
     timestamp: new Date().toISOString()
   });
+});
+
+// Temporary debug route to test analytics service directly
+import { getContactsOverview } from './services/analytics.service';
+app.get('/internal-debug/analytics/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    console.log('DEBUG: calling getContactsOverview for', userId);
+    const result = await getContactsOverview(userId);
+    res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('DEBUG: analytics service error:', err?.message || err, err?.stack || '');
+    res.status(500).json({ success: false, error: err?.message || 'failed' });
+  }
 });
 
 export default app;

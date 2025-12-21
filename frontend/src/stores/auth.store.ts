@@ -19,7 +19,6 @@ export interface User {
 interface AuthState {
   user: User | null;
   accessToken: string | null;
-  refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   isInitialized: boolean;
@@ -29,7 +28,7 @@ interface AuthState {
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
-  setAuth: (user: User, tokens: { accessToken: string; refreshToken: string }) => void;
+  setAuth: (user: User, tokens: { accessToken: string }) => void;
   clearAuth: () => void;
   setLoading: (loading: boolean) => void;
   googleLogin: (accessToken: string) => Promise<void>;
@@ -52,7 +51,6 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       accessToken: null,
-      refreshToken: null,
       isAuthenticated: false,
       isLoading: false,
       isInitialized: false,
@@ -65,7 +63,6 @@ export const useAuthStore = create<AuthState>()(
         set({
           user,
           accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
           isAuthenticated: true,
         });
       },
@@ -74,44 +71,45 @@ export const useAuthStore = create<AuthState>()(
         set({
           user: null,
           accessToken: null,
-          refreshToken: null,
           isAuthenticated: false,
         });
       },
 
       initializeAuth: async () => {
-        const { accessToken, refreshToken, user } = get();
-        
-        // If no tokens stored, mark as initialized
-        if (!accessToken || !refreshToken || !user) {
-          set({ isInitialized: true });
+        const { accessToken, user } = get();
+
+        // If there's no access token or user, try a silent refresh (server cookie)
+        if (!accessToken || !user) {
+          set({ isLoading: true });
+          try {
+            await get().refreshToken();
+          } catch (refreshError) {
+            // Refresh failed, clear auth
+            get().clearAuth();
+          } finally {
+            set({ isInitialized: true, isLoading: false });
+          }
+
           return;
         }
-        
+
+        // If we already have an access token and user, validate it
         set({ isLoading: true });
-        
         try {
-          // Validate token with backend
           const response = await fetch(`${API_URL}/auth/me`, {
             headers: {
               'Authorization': `Bearer ${accessToken}`,
             },
           });
-          
+
           if (response.ok) {
-            // Token is valid
-            set({ 
-              isAuthenticated: true,
-              isInitialized: true,
-            });
+            set({ isAuthenticated: true, isInitialized: true });
           } else {
-            // Token invalid, try to refresh
             try {
               await get().refreshToken();
-              set({ isInitialized: true });
             } catch (refreshError) {
-              // Refresh failed, clear auth
               get().clearAuth();
+            } finally {
               set({ isInitialized: true });
             }
           }
@@ -133,6 +131,7 @@ export const useAuthStore = create<AuthState>()(
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({ email, password }),
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -146,9 +145,9 @@ export const useAuthStore = create<AuthState>()(
             throw new Error(data.error || 'Login failed');
           }
 
+          // Server sets refresh token in an httpOnly cookie; store only access token & user
           get().setAuth(data.user, {
             accessToken: data.accessToken,
-            refreshToken: data.refreshToken,
           });
         } catch (error: any) {
           console.error('Login error:', error);
@@ -167,6 +166,7 @@ export const useAuthStore = create<AuthState>()(
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(data),
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -180,10 +180,8 @@ export const useAuthStore = create<AuthState>()(
             throw new Error(result.error || 'Registration failed');
           }
 
-          get().setAuth(result.user, {
-            accessToken: result.accessToken,
-            refreshToken: result.refreshToken,
-          });
+          // Server sets refresh token in httpOnly cookie; store only access token & user
+          get().setAuth(result.user, { accessToken: result.accessToken });
         } catch (error: any) {
           console.error('Registration error:', error);
           throw error;
@@ -201,6 +199,7 @@ export const useAuthStore = create<AuthState>()(
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({ accessToken }),
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -216,7 +215,6 @@ export const useAuthStore = create<AuthState>()(
 
           get().setAuth(data.user, {
             accessToken: data.accessToken,
-            refreshToken: data.refreshToken,
           });
         } catch (error: any) {
           console.error('Google login error:', error);
@@ -227,19 +225,16 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        const { refreshToken } = get();
-        
         try {
-          if (refreshToken) {
-            await fetch(`${API_URL}/auth/logout`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${get().accessToken}`,
-              },
-              body: JSON.stringify({ refreshToken }),
-            });
-          }
+          // Server will revoke refresh token from httpOnly cookie
+          await fetch(`${API_URL}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${get().accessToken}`,
+            },
+            credentials: 'include',
+          });
         } catch (error) {
           console.error('Logout error:', error);
         } finally {
@@ -248,19 +243,12 @@ export const useAuthStore = create<AuthState>()(
       },
 
       refreshToken: async () => {
-        const { refreshToken } = get();
-        
-        if (!refreshToken) {
-          throw new Error('No refresh token available');
-        }
-
         try {
+          // Call refresh endpoint; server reads httpOnly cookie and returns a new access token and possibly user
           const response = await fetch(`${API_URL}/auth/refresh`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ refreshToken }),
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -268,15 +256,31 @@ export const useAuthStore = create<AuthState>()(
           }
 
           const data = await response.json();
-          
+
           if (!data.success) {
             throw new Error('Token refresh failed');
           }
 
-          set({
-            accessToken: data.accessToken,
-            refreshToken: data.refreshToken,
-          });
+          // Update access token (server keeps refresh token in httpOnly cookie)
+          set({ accessToken: data.accessToken, isAuthenticated: true });
+
+          // If response included user, set it; otherwise fetch /auth/me
+          if (data.user) {
+            set({ user: data.user });
+          } else {
+            // Fetch user
+            const meResp = await fetch(`${API_URL}/auth/me`, {
+              headers: { Authorization: `Bearer ${data.accessToken}` },
+              credentials: 'include',
+            });
+
+            if (meResp.ok) {
+              const meData = await meResp.json();
+              if (meData.success && meData.user) {
+                set({ user: meData.user });
+              }
+            }
+          }
 
           return data.accessToken;
         } catch (error) {
@@ -291,7 +295,6 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
       }),
       version: 1,
     }

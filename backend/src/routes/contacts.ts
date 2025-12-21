@@ -2,8 +2,9 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
-import { contacts } from '../db/schema';
+import { contacts, tags, conversations } from '../db/schema';
 import { eq, and, or, like, inArray, desc, asc, sql } from 'drizzle-orm';
+import { getContactsOverview } from '../services/analytics.service';
 
 const router = Router();
 
@@ -44,8 +45,8 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     }
     
     if (tags) {
-      const tagArray = Array.isArray(tags) ? tags : [tags];
-      conditions.push(inArray(contacts.tags, tagArray));
+      // Tag filtering disabled for now - use POST /contacts/:id/tags instead
+      console.log('⚠️ Tag filtering not yet implemented for list endpoint');
     }
     
     if (city) {
@@ -83,16 +84,35 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       .limit(Number(limit))
       .offset(offset);
     
+    // Fetch conversation counts for contacts on this page (single query)
+    const contactIds = contactsList.map(c => c.id).filter(Boolean);
+    let convoCounts: Record<string, number> = {};
+    if (contactIds.length > 0) {
+      const convoRaw = await db.select({ contactId: conversations.contactId, count: sql`count(*)` })
+        .from(conversations)
+        .where(inArray(conversations.contactId, contactIds))
+        .groupBy(conversations.contactId);
+      for (const r of convoRaw) {
+        convoCounts[String(r.contactId)] = Number((r as any).count || 0);
+      }
+    }
+
+    // Attach conversationCount to each contact
+    const contactsWithCounts = contactsList.map(c => ({
+      ...c,
+      conversationCount: convoCounts[c.id] || 0,
+    }));
+    
     // Get total count
     const totalResult = await db.select({ count: sql`count(*)` })
       .from(contacts)
       .where(and(...conditions));
     
     const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
-    
+
     res.json({
       success: true,
-      contacts: contactsList,
+      contacts: contactsWithCounts,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -141,10 +161,10 @@ router.get('/analytics', authenticate, async (req: AuthRequest, res) => {
       .orderBy(contacts.city)
       .limit(10);
     
-    // Get tag counts
+    // Get tag counts (using tag_ids array)
     const tagCounts = await db.execute(sql`
       SELECT tag, COUNT(*) as count
-      FROM contacts, unnest(tags) as tag
+      FROM contacts, unnest(tag_ids) as tag
       WHERE user_id = ${userId}
       GROUP BY tag
       ORDER BY count DESC
@@ -188,6 +208,29 @@ router.get('/analytics', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
+// NEW: GET /api/contacts/analytics/overview - Provide summary analytics used by frontend
+import { getContactsOverview } from '../services/analytics.service';
+router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    // Delegate to shared service to avoid raw SQL pitfalls
+    const analytics = await getContactsOverview(userId);
+
+    res.json({
+      success: true,
+      analytics,
+    });
+
+  } catch (error: any) {
+    console.error('Error fetching contact analytics overview (legacy route):', error.message || error, error.stack || '');
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch contact analytics'
+    });
+  }
+});
+
 // GET /api/contacts/:id - Get single contact
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -213,9 +256,25 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
+    // Add full tag objects to response
+    let tagDetails = [];
+    if (contactResult[0].tagIds && contactResult[0].tagIds.length > 0) {
+      tagDetails = await db.select()
+        .from(tags)
+        .where(
+          and(
+            inArray(tags.id, contactResult[0].tagIds),
+            eq(tags.userId, userId)
+          )
+        );
+    }
+
     res.json({
       success: true,
-      contact: contactResult[0],
+      contact: {
+        ...contactResult[0],
+        tags: tagDetails,
+      },
     });
     
   } catch (error: any) {
@@ -339,7 +398,32 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     if (updates.phone) {
       updates.phone = updates.phone.replace(/\D/g, '');
     }
-    
+
+    // If tags provided in updates, validate they exist for this user and normalize
+    if (typeof updates.tags !== 'undefined') {
+      console.log('🔄 Processing tags update:', updates.tags);
+      if (Array.isArray(updates.tags)) {
+        if (updates.tags.length > 0) {
+          const existingTags = await db.select()
+            .from(tags)
+            .where(
+              and(
+                inArray(tags.id, updates.tags),
+                eq(tags.userId, userId)
+              )
+            );
+          const validTagIds = existingTags.map(t => t.id);
+          console.log('✅ Valid tag IDs for update:', validTagIds);
+          updates.tagIds = validTagIds;
+        } else {
+          updates.tagIds = [];
+        }
+      } else {
+        // If tags is not an array, ignore the field
+        updates.tagIds = [];
+      }
+    }
+
     // Update contact
     const [updatedContact] = await db.update(contacts)
       .set({
@@ -364,6 +448,143 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Failed to update contact' 
+    });
+  }
+});
+
+// POST /api/contacts/:id/tags - Add tags to contact
+router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs
+    const userId = req.user!.userId;
+    const db = getDb();
+    
+    if (!tagIds || !Array.isArray(tagIds)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Tags array is required' 
+      });
+    }
+    
+    // Check if contact exists and belongs to user
+    const contactResult = await db.select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .limit(1);
+    
+    if (contactResult.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
+    
+    // Validate that all tag IDs exist and belong to the user
+    const existingTags = await db.select()
+      .from(tags)
+      .where(
+        and(
+          inArray(tags.id, tagIds),
+          eq(tags.userId, userId)
+        )
+      );
+    
+    const validTagIds = existingTags.map(tag => tag.id);
+    const currentTagIds = contactResult[0].tagIds || [];
+    const newTagIds = [...new Set([...currentTagIds, ...validTagIds])];
+    
+    const [updatedContact] = await db.update(contacts)
+      .set({ 
+        tagIds: newTagIds,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .returning();
+    
+    res.json({
+      success: true,
+      contact: updatedContact,
+    });
+    
+  } catch (error: any) {
+    console.error('Error adding tags to contact:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to add tags' 
+    });
+  }
+});
+
+// DELETE /api/contacts/:id/tags - Remove tags from contact
+router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs to remove
+    const userId = req.user!.userId;
+    const db = getDb();
+    
+    if (!tagIds || !Array.isArray(tagIds)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Tags array is required' 
+      });
+    }
+    
+    // Check if contact exists and belongs to user
+    const contactResult = await db.select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .limit(1);
+    
+    if (contactResult.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
+    
+    const currentTagIds = contactResult[0].tagIds || [];
+    const newTagIds = currentTagIds.filter(tagId => !tagIds.includes(tagId));
+    
+    const [updatedContact] = await db.update(contacts)
+      .set({ 
+        tagIds: newTagIds,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.userId, userId)
+        )
+      )
+      .returning();
+    
+    res.json({
+      success: true,
+      contact: updatedContact,
+    });
+    
+  } catch (error: any) {
+    console.error('Error removing tags from contact:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to remove tags' 
     });
   }
 });
