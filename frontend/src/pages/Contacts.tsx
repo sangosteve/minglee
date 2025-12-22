@@ -40,7 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { useTags } from '@/components/tags/TagsProvider';
-
+import { ContactFilter } from "@/components/contacts/ContactFilter";
 // Status configuration
 const statusConfig = {
   active: { 
@@ -275,9 +275,11 @@ const Contacts = () => {
               className="w-full pl-9 pr-4 py-2 text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
             />
           </div>
-          <Button variant="outline" size="icon">
-            <FunnelIcon className="w-4 h-4" />
-          </Button>
+         <ContactFilter
+            filters={filters}
+            onFilterChange={setFilters}
+            availableTags={availableTags}
+          />
         </div>
         <div className="flex items-center gap-3">
           <div className="flex bg-secondary rounded-lg p-1">
