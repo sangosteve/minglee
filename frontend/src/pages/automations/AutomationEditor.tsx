@@ -43,7 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { nodeTypes } from "@/components/automations/nodes";
-import MessagePanel from "@/components/automations/panels/MessagePanel"; // Add this import
+import TextMessagePanel from "@/components/automations/panels/TextMessagePanel"; // Add this import
 import { 
   useAutomation, 
   useUpdateAutomation,
@@ -285,7 +285,7 @@ const triggerAutomation = async () => {
     };
 
     const nodeDataMap: Record<string, any> = {
-      messageNode: { message: "" },
+      textMessageNode: { message: "" },
       quickRepliesNode: { body: "", buttons: [] },
       listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
       conditionNode: { rules: [] },
@@ -313,7 +313,7 @@ const triggerAutomation = async () => {
     });
 
     const labels = {
-      messageNode: `Send Message ${nodeId}`,
+      textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
@@ -352,7 +352,7 @@ const triggerAutomation = async () => {
     const y = viewportCenter.y + Math.random() * 200 - 100;
     
     const labels = {
-      messageNode: `Send Message ${nodeId}`,
+      textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
@@ -482,7 +482,7 @@ const saveWorkflow = async () => {
         });
         
         // Ensure message nodes have their message saved
-        if (node.type === 'messageNode') {
+        if (node.type === 'textMessageNode') {
           // Make sure message is included
           if (node.data.message !== undefined) {
             cleanData.message = node.data.message;
@@ -543,7 +543,7 @@ const saveWorkflow = async () => {
     
     // Debug: Log the cleaned data
     console.log("Saving workflow with nodes:", JSON.stringify(cleanNodes, null, 2));
-    console.log("Checking message nodes:", cleanNodes.filter(n => n.type === 'messageNode'));
+    console.log("Checking message nodes:", cleanNodes.filter(n => n.type === 'textMessageNode'));
     
     const result = await updateAutomationMutation.mutateAsync({ 
       id: id!, 
@@ -723,7 +723,7 @@ const saveWorkflow = async () => {
                     {expandedSections.messages && (
                       <div className="py-1 pl-4 space-y-1">
                         <button
-                          onClick={() => addNode("messageNode")}
+                          onClick={() => addNode("textMessageNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
                         >
                           <PaperAirplaneIcon className="h-4 w-4 text-blue-500" />
@@ -833,9 +833,9 @@ const saveWorkflow = async () => {
   onConnectEnd={onConnectEnd}
   nodeTypes={{
     ...nodeTypes,
-    messageNode: (props) => {
+    textMessageNode: (props) => {
       // Import MessageNode component
-      const MessageNodeComponent = nodeTypes.messageNode;
+      const MessageNodeComponent = nodeTypes.textMessageNode;
       return (
         <MessageNodeComponent
           {...props}
@@ -889,7 +889,7 @@ const saveWorkflow = async () => {
                     {/* Messages */}
                     <div className="py-1">
                       <button
-                        onClick={() => handleCreateNode("messageNode")}
+                        onClick={() => handleCreateNode("textMessageNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <PaperAirplaneIcon className="h-4 w-4 text-blue-500" />
@@ -946,8 +946,8 @@ const saveWorkflow = async () => {
           </div>
 
           {/* Right Panel for Node Configuration */}
-          {selectedNode && selectedNode.type === 'messageNode' ? (
-            <MessagePanel
+          {selectedNode && selectedNode.type === 'textMessageNode' ? (
+            <TextMessagePanel
               node={selectedNode}
               onClose={closePanel}
               onUpdate={updateNode}

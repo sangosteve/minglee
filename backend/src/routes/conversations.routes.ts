@@ -313,7 +313,6 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 50 } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
     const userId = req.user!.userId;
     const db = getDb();
 
@@ -325,20 +324,26 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 
     if (!conversationResult.length) return res.status(404).json({ success: false, error: 'Conversation not found' });
 
-    const messagesList = await db.select().from(messages)
-      .where(eq(messages.conversationId, id))
-      .orderBy(desc(messages.timestamp))
-      .limit(Number(limit))
-      .offset(offset);
-
+    // Get total count first
     const totalResult = await db.select({ count: sql`count(*)` }).from(messages).where(eq(messages.conversationId, id));
     const total = totalResult.length ? Number(totalResult[0].count) : 0;
+
+    // Calculate offset for DESCENDING order (newest first)
+    // For chat: we want page 1 to show the LATEST messages
+    const offset = (Number(page) - 1) * Number(limit);
+    
+    // Get messages in DESCENDING order (newest first) with pagination
+    const messagesList = await db.select().from(messages)
+      .where(eq(messages.conversationId, id))
+      .orderBy(desc(messages.timestamp)) // DESCENDING order (newest first)
+      .limit(Number(limit))
+      .offset(offset);
 
     res.json({
       success: true,
       conversation: conversationResult[0].conversation,
       contact: conversationResult[0].contact,
-      messages: messagesList.reverse(),
+      messages: messagesList, // Newest messages first
       pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
   } catch (error: any) {

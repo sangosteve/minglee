@@ -193,7 +193,7 @@ function AutomationBuilderInner() {
     };
 
     const nodeDataMap: Record<string, any> = {
-      messageNode: { message: "" },
+      textMessageNode: { message: "" },
       quickRepliesNode: { body: "", buttons: [] },
       listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
       conditionNode: { rules: [] },
@@ -221,7 +221,7 @@ function AutomationBuilderInner() {
     });
 
     const labels = {
-      messageNode: `Send Message ${nodeId}`,
+      textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
@@ -254,7 +254,7 @@ function AutomationBuilderInner() {
 
     const { x, y } = reactFlowInstance.project({ x: 100, y: 100 });
     const labels = {
-      messageNode: `Send Message ${nodeId}`,
+      textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
@@ -479,7 +479,7 @@ function AutomationBuilderInner() {
                     {expandedSections.messages && (
                       <div className="py-1 pl-4 space-y-1">
                         <button
-                          onClick={() => addNode("messageNode")}
+                          onClick={() => addNode("textMessageNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
                         >
                           <PaperAirplaneIcon className="h-4 w-4 text-blue-500" />
@@ -624,7 +624,7 @@ function AutomationBuilderInner() {
                     {/* Messages */}
                     <div className="py-1">
                       <button
-                        onClick={() => handleCreateNode("messageNode")}
+                        onClick={() => handleCreateNode("textMessageNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <PaperAirplaneIcon className="h-4 w-4 text-blue-500" />

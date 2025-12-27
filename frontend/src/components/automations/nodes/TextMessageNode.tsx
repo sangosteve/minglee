@@ -1,4 +1,3 @@
-// frontend/src/components/automations/nodes/MessageNode.tsx
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { DocumentTextIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui/button';
@@ -12,15 +11,14 @@ import {
 import { cn } from '@/lib/utils';
 import { containsVariables } from '@/lib/system-variables';
 
-interface MessageNodeData {
-  label?: string;
+interface TextMessageNodeData {
   message?: string;
   onDelete?: (id: string) => void;
   onUpdate?: (id: string, data: any) => void;
   onSelect?: (id: string) => void;
 }
 
-const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
+const TextMessageNode = ({ data, id, selected }: NodeProps<TextMessageNodeData>) => {
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
     console.log("[Automation] Copy block:", id);
@@ -51,6 +49,8 @@ const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
     return message.substring(0, maxLength) + '...';
   };
 
+  const message = data.message || '';
+
   return (
     <div 
       className={cn(
@@ -64,11 +64,11 @@ const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
           <DocumentTextIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm text-foreground truncate">
-            {data.label || "Message"}
+          <div className="font-semibold text-sm text-foreground">
+            Send Text Message
           </div>
           <div className="text-xs text-muted-foreground">
-            {data.message ? `${data.message.length} chars` : "Empty"}
+            {message ? `${message.length} chars` : "Empty message"}
           </div>
         </div>
         
@@ -104,10 +104,10 @@ const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
       
       <div className="px-4 py-3">
         <div className="text-sm text-muted-foreground break-words whitespace-pre-wrap line-clamp-3 mb-2">
-          {getTruncatedMessage(data.message || "")}
+          {getTruncatedMessage(message)}
         </div>
         
-        {data.message && containsVariables(data.message) && (
+        {message && containsVariables(message) && (
           <div className="flex items-center gap-1 mb-2">
             <div className="flex items-center gap-1">
               <span className="text-xs text-blue-600 font-medium dark:text-blue-400">
@@ -117,13 +117,13 @@ const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
           </div>
         )}
         
-        {data.message && (
+        {message && (
           <div className="flex justify-between items-center pt-2 border-t border-border/50">
             <span className="text-xs text-muted-foreground">
-              {data.message.length} character{data.message.length !== 1 ? 's' : ''}
+              {message.length} character{message.length !== 1 ? 's' : ''}
             </span>
             <span className="text-xs text-blue-600 font-medium dark:text-blue-400">
-              Message
+              Text Message
             </span>
           </div>
         )}
@@ -144,4 +144,4 @@ const MessageNode = ({ data, id, selected }: NodeProps<MessageNodeData>) => {
   );
 };
 
-export default MessageNode;
+export default TextMessageNode;

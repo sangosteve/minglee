@@ -322,6 +322,17 @@ const Conversations = () => {
   const messages = conversationData?.messages || [];
   const contact = conversationData?.contact;
 
+
+  //Sort Messages:
+  const sortedMessages = useMemo(() => {
+  if (!messages) return [];
+  return [...messages].sort((a, b) => {
+    const timeA = new Date(a.timestamp).getTime();
+    const timeB = new Date(b.timestamp).getTime();
+    return timeA - timeB; // Ascending order (oldest first)
+  });
+}, [messages]);
+
   // Calculate counts for sidebar
   const getInboxCounts = useMemo(() => {
     const currentUserId = user?.id ? String(user.id) : null;
@@ -901,7 +912,7 @@ const Conversations = () => {
                   </div>
                 ) : (
                   <>
-                    {messages.map((message) => {
+                    {sortedMessages.map((message) => {
                       const isOutgoing = message.direction === "outgoing";
                       const hasMedia = hasMediaContent(message);
                       const mediaType = getMediaType(message);

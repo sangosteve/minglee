@@ -837,7 +837,7 @@ async function processIncomingMessage(
     }
     
     // 4. Handle different message types
-    const timestamp = new Date(parseInt(message.timestamp) * 1000);
+    const timestamp = new Date();
     let savedMessage;
     
     const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
@@ -1386,7 +1386,9 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
         messageType: whatsappMediaType,
         body: caption || fileName,
         status: 'sent',
-        timestamp: new Date(),
+         timestamp: whatsappResult.messages?.[0]?.timestamp 
+    ? new Date(Number(whatsappResult.messages?.[0]?.timestamp) * 1000)
+    : new Date(),
         // Don't set mediaAttachmentId yet - we'll update it after
         metadata: {
           cloudinaryUrl: cloudinaryResult.secureUrl,

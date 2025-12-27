@@ -145,17 +145,17 @@ async executeWorkflow(
     }
     
     // Find all message nodes
-    const messageNodes = flowData.nodes.filter((node: any) => node.type === 'messageNode');
+    const textMessageNodes = flowData.nodes.filter((node: any) => node.type === 'textMessageNode');
     
-    console.log(`[Automation] Found ${messageNodes.length} message nodes`);
+    console.log(`[Automation] Found ${textMessageNodes.length} message nodes`);
     
-    if (messageNodes.length === 0) {
+    if (textMessageNodes.length === 0) {
       console.log('[Automation] No message nodes found in workflow');
       return { success: false, error: 'No message nodes in workflow' };
     }
     
     // Process each message node
-    for (const node of messageNodes) {
+    for (const node of textMessageNodes) {
       const nodeData = node.data || {};
       let message = nodeData.message || '';
       
@@ -318,7 +318,7 @@ async executeWorkflow(
         case 'startNode':
           await this.executeStartNode(node, context);
           break;
-        case 'messageNode':
+        case 'textMessageNode':
           await this.executeMessageNode(node, contact, context);
           break;
         // TODO: Add other node types here as you implement them

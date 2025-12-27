@@ -1,4 +1,4 @@
-// frontend/src/components/automations/panels/MessagePanel.tsx
+// frontend/src/components/automations/panels/TextMessagePanel.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -6,7 +6,6 @@ import { X, Variable, Eye, EyeOff, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +22,7 @@ import {
   extractVariables 
 } from "@/lib/system-variables"
 
-interface MessagePanelProps {
+interface TextMessagePanelProps {
   node: Node
   onClose: () => void
   onUpdate: (nodeId: string, data: any) => void
@@ -34,9 +33,8 @@ const getVariableDisplay = (variableKey: string): string => {
   return `{{${variableKey}}}`
 }
 
-export default function MessagePanel({ node, onClose, onUpdate }: MessagePanelProps) {
+export default function TextMessagePanel({ node, onClose, onUpdate }: TextMessagePanelProps) {
   const [message, setMessage] = useState(node.data?.message || "")
-  const [label, setLabel] = useState(node.data?.label || "Message")
   const [showPreview, setShowPreview] = useState(false)
   const [usedVariables, setUsedVariables] = useState<string[]>([])
 
@@ -50,11 +48,10 @@ export default function MessagePanel({ node, onClose, onUpdate }: MessagePanelPr
   useEffect(() => {
     onUpdate(node.id, {
       message,
-      label,
       usedVariables,
       hasVariables: usedVariables.length > 0
     })
-  }, [message, label, usedVariables, node.id, onUpdate])
+  }, [message, usedVariables, node.id, onUpdate])
 
   const insertVariable = (variableKey: string) => {
     // Use {{variable}} syntax
@@ -99,7 +96,7 @@ export default function MessagePanel({ node, onClose, onUpdate }: MessagePanelPr
           <div className="w-6 h-6 bg-blue-100 rounded flex items-center justify-center dark:bg-blue-900/20">
             <Variable className="h-4 w-4 text-blue-600 dark:text-blue-400" />
           </div>
-          <h2 className="font-semibold text-foreground">MESSAGE</h2>
+          <h2 className="font-semibold text-foreground">TEXT MESSAGE</h2>
           {usedVariables.length > 0 && (
             <Badge variant="secondary" className="ml-2">
               {usedVariables.length} variable{usedVariables.length > 1 ? 's' : ''}
@@ -128,19 +125,6 @@ export default function MessagePanel({ node, onClose, onUpdate }: MessagePanelPr
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Node Label */}
-        <div>
-          <label className="text-sm font-medium text-foreground mb-2 block">
-            Node Label
-          </label>
-          <Input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Enter a name for this message node..."
-            className="bg-background"
-          />
-        </div>
-
         {/* Message Editor */}
         <div>
           <label className="text-sm font-medium text-foreground mb-2 block">
@@ -160,6 +144,7 @@ export default function MessagePanel({ node, onClose, onUpdate }: MessagePanelPr
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               className="min-h-[120px] resize-none bg-background"
+              autoFocus
             />
           )}
         </div>
