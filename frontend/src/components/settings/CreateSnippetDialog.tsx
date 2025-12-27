@@ -3,7 +3,11 @@ import {
   PaperClipIcon,
   DocumentIcon,
   XCircleIcon,
-  PlusIcon
+  PlusIcon,
+  PhotoIcon,
+  FilmIcon,
+  MusicalNoteIcon,
+  ArchiveBoxIcon
 } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -42,16 +46,17 @@ interface Variable {
 }
 
 const variables: Variable[] = [
-  { id: 'id', label: 'ID', value: 'contact.id' },
-  { id: 'name', label: 'Name', value: 'contact.name' },
-  { id: 'firstname', label: 'First Name', value: 'contact.firstname' },
-  { id: 'lastname', label: 'Last Name', value: 'contact.lastname' },
-  { id: 'email', label: 'Email', value: 'contact.email' },
+  { id: 'name', label: 'Contact Name', value: 'contact.name' },
   { id: 'phone', label: 'Phone Number', value: 'contact.phone' },
+  { id: 'email', label: 'Email', value: 'contact.email' },
+  { id: 'user_name', label: 'Your Name', value: 'user.name' },
+  { id: 'user_email', label: 'Your Email', value: 'user.email' },
+  { id: 'date', label: 'Current Date', value: 'date' },
+  { id: 'time', label: 'Current Time', value: 'time' },
 ];
 
 interface CreateSnippetDialogProps {
-  onSuccess?: (snippet: { name: string; message: string; files: File[] }) => void;
+  onSuccess?: () => void;
   trigger?: React.ReactNode;
 }
 
@@ -69,7 +74,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { user } = useAuthStore();
+  const { user, accessToken } = useAuthStore();
 
   const filteredVariables = variables.filter(
     (v) =>
@@ -86,6 +91,14 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const getFileIcon = (file: File) => {
+    if (file.type.startsWith('image/')) return PhotoIcon;
+    if (file.type.startsWith('video/')) return FilmIcon;
+    if (file.type.startsWith('audio/')) return MusicalNoteIcon;
+    if (file.type.includes('zip') || file.type.includes('rar') || file.type.includes('7z')) return ArchiveBoxIcon;
+    return DocumentIcon;
+  };
+
   const handleMessageChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     const cursorPos = e.target.selectionStart;
@@ -99,7 +112,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
     if (lastDollarIndex !== -1) {
       const textAfterDollar = textBeforeCursor.substring(lastDollarIndex + 1);
       // Show popover if $ is at the end or followed by alphanumeric characters only
-      if (textAfterDollar === '' || /^[a-zA-Z0-9.]*$/.test(textAfterDollar)) {
+      if (textAfterDollar === '' || /^[a-zA-Z0-9._]*$/.test(textAfterDollar)) {
         setVariableSearch(textAfterDollar);
         setShowVariables(true);
         return;
@@ -148,6 +161,10 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
       const newFiles = Array.from(e.target.files);
       setFiles((prev) => [...prev, ...newFiles]);
     }
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const removeFile = (index: number) => {
@@ -155,7 +172,7 @@ export function CreateSnippetDialog({ onSuccess, trigger }: CreateSnippetDialogP
   };
 
 const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
-  if (!user?.id) {
+  if (!user?.id || !accessToken) {
     throw new Error('User not authenticated');
   }
 
@@ -170,54 +187,95 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
     filesToUpload.forEach((file) => {
       formData.append('files', file);
     });
-    formData.append('folder', `quick-replies/user_${user.id}`);
+    formData.append('folder', `quick_replies/user_${user.id}`);
 
-    const response = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/media/upload-multiple`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${useAuthStore.getState().accessToken}`,
-        },
-        body: formData,
-      }
-    );
+    // Get the base URL - might already include /api
+    let baseApiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+    
+    // Check if baseApiUrl already ends with /api
+    let uploadUrl;
+    if (baseApiUrl.endsWith('/api')) {
+      // If base URL already has /api, don't add another one
+      uploadUrl = `${baseApiUrl}/media/upload-multiple`;
+    } else {
+      // Otherwise, add /api
+      uploadUrl = `${baseApiUrl}/api/media/upload-multiple`;
+    }
+    
+    console.log('📤 Base API URL:', baseApiUrl);
+    console.log('📤 Upload URL:', uploadUrl);
+    console.log('👤 User ID:', user.id);
+    console.log('📁 Files:', filesToUpload.map(f => f.name));
 
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        // Note: Do NOT set Content-Type for FormData!
+      },
+      body: formData,
+    });
+
+    console.log('📤 Upload response status:', response.status, response.statusText);
+    console.log('📤 Upload response URL:', response.url);
+    
     if (!response.ok) {
-      throw new Error(`Upload failed: ${response.statusText}`);
+      let errorText = 'No error details';
+      try {
+        errorText = await response.text();
+        console.error('❌ Upload error response:', errorText);
+      } catch (e) {
+        console.error('❌ Could not read error response:', e);
+      }
+      
+      if (response.status === 404) {
+        throw new Error(`API endpoint not found (404). URL: ${uploadUrl}. Check server logs.`);
+      }
+      throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
     
-    console.log('Upload response:', data);
+    console.log('📦 Upload response data:', data);
     
     if (data.success && data.data?.uploads) {
-      // ✅ Extract DATABASE IDs from the upload response
+      // Extract DATABASE IDs from successful uploads
       const mediaIds = data.data.uploads
-        .filter((upload: any) => upload.success && upload.id) // Make sure we have an ID
-        .map((upload: any) => upload.id); // Use the database ID
+        .filter((upload: any) => upload.success && upload.id)
+        .map((upload: any) => upload.id);
 
-      console.log('Uploaded media DATABASE IDs:', mediaIds);
+      console.log('✅ Uploaded media IDs:', mediaIds);
       
       if (mediaIds.length === 0) {
-        throw new Error('No valid media IDs returned from server');
+        throw new Error('Files uploaded but no media IDs returned');
       }
       
       return mediaIds;
+    } else {
+      console.error('❌ Upload response indicates failure:', data);
+      throw new Error(data.error || 'Upload failed');
     }
-    
-    throw new Error('Upload response indicates failure');
   } catch (error) {
-    console.error('File upload error:', error);
+    console.error('❌ File upload error:', error);
     throw error;
   } finally {
     setIsUploading(false);
   }
 };
 
+  const resetForm = () => {
+    setName('');
+    setMessage('');
+    setTopics('General');
+    setIsActive(true);
+    setFiles([]);
+    setShowVariables(false);
+    setVariableSearch('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Form submission started');
+    console.log('🚀 Form submission started');
     
     if (!name.trim() || !message.trim()) {
       toast({
@@ -233,34 +291,39 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
       
       // Upload files if any
       if (files.length > 0) {
-        console.log('Uploading files:', files);
+        console.log('📤 Uploading files:', files.map(f => ({
+          name: f.name,
+          size: f.size,
+          type: f.type
+        })));
         
         try {
           mediaAttachmentIds = await uploadFiles(files);
-          console.log('Uploaded media IDs:', mediaAttachmentIds);
+          console.log('✅ Uploaded media IDs:', mediaAttachmentIds);
           
           if (mediaAttachmentIds.length < files.length) {
             toast({
               title: "Upload Warning",
-              description: "Some attachments failed to upload. Creating quick reply without failed attachments.",
-              variant: "destructive",
+              description: `Only ${mediaAttachmentIds.length} of ${files.length} files uploaded successfully`,
+              variant: "default",
             });
           }
         } catch (uploadError: any) {
-          console.error('File upload error:', uploadError);
+          console.error('❌ File upload error:', uploadError);
           toast({
             title: "Upload Error",
-            description: "Failed to upload attachments. Creating quick reply without attachments.",
+            description: uploadError.message || "Failed to upload attachments",
             variant: "destructive",
           });
-          // Continue without attachments
+          // Don't proceed if upload fails
+          return;
         }
       }
 
-      console.log('Creating quick reply with data:', { 
-        name, 
-        message, 
-        topics, 
+      console.log('📝 Creating quick reply with data:', { 
+        name: name.trim(), 
+        message: message.trim(), 
+        topics: topics.trim(), 
         isActive, 
         mediaAttachmentIds 
       });
@@ -274,26 +337,22 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
         isActive,
       });
 
-      console.log('Quick reply created successfully:', result);
+      console.log('🎉 Quick reply created successfully:', result);
 
       toast({
-        title: "Quick Reply Created",
-        description: `"${name}" has been created successfully`,
+        title: "Success",
+        description: `Quick reply "${name}" created successfully`,
       });
 
-      // Call onSuccess callback
-      onSuccess?.({ name, message, files });
-      
-      // Reset form
-      setName('');
-      setMessage('');
-      setTopics('General');
-      setIsActive(true);
-      setFiles([]);
+      // Reset form and close dialog
+      resetForm();
       setOpen(false);
       
+      // Call onSuccess callback if provided
+      onSuccess?.();
+      
     } catch (error: any) {
-      console.error('Error in handleSubmit:', error);
+      console.error('❌ Error in handleSubmit:', error);
       toast({
         title: "Error",
         description: error.message || "Failed to create quick reply",
@@ -308,11 +367,11 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
         {trigger || (
           <Button className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground">
             <PlusIcon className="w-4 h-4" />
-            Add Snippet
+            Add Quick Reply
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px] bg-card border-border">
+      <DialogContent className="sm:max-w-[500px] bg-card border-border max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-foreground">Create Quick Reply</DialogTitle>
         </DialogHeader>
@@ -320,7 +379,7 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           {/* Name Field */}
           <div className="space-y-2">
-            <Label htmlFor="name" className="text-foreground">Name</Label>
+            <Label htmlFor="name" className="text-foreground">Name *</Label>
             <Input
               id="name"
               value={name}
@@ -328,6 +387,7 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
               placeholder="Enter quick reply name"
               className="bg-background border-input text-foreground placeholder:text-muted-foreground"
               disabled={createQuickReply.isPending || isUploading}
+              required
             />
           </div>
 
@@ -373,10 +433,15 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
 
           {/* Message Field with Variable Support */}
           <div className="space-y-2 relative">
-            <Label htmlFor="message" className="text-foreground">Message</Label>
-            <p className="text-xs text-muted-foreground">
-              Type <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-foreground">$</span> to insert variables
-            </p>
+            <Label htmlFor="message" className="text-foreground">Message *</Label>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs text-muted-foreground">
+                Type <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-foreground">$</span> to insert variables
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Files: {files.length} selected
+              </span>
+            </div>
             <div className="relative">
               <textarea
                 ref={textareaRef}
@@ -384,8 +449,8 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
                 value={message}
                 onChange={handleMessageChange}
                 onKeyDown={handleKeyDown}
-                placeholder="Enter your message..."
-                rows={5}
+                placeholder="Enter your message... Type $ for variables"
+                rows={4}
                 className={cn(
                   "flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
                   "ring-offset-background placeholder:text-muted-foreground",
@@ -393,14 +458,15 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
                   "disabled:cursor-not-allowed disabled:opacity-50 resize-none text-foreground"
                 )}
                 disabled={createQuickReply.isPending || isUploading}
+                required
               />
               
               {/* Variable Dropdown */}
               {showVariables && (
                 <div className="absolute z-50 mt-1 w-64 rounded-md border border-border bg-popover shadow-lg animate-fade-in">
                   <div className="p-3 border-b border-border">
-                    <p className="text-sm font-medium text-foreground">Select Variable</p>
-                    <p className="text-xs text-muted-foreground">Type to search for variable</p>
+                    <p className="text-sm font-medium text-foreground">Insert Variable</p>
+                    <p className="text-xs text-muted-foreground">Select a variable to insert</p>
                   </div>
                   <Command className="bg-transparent">
                     <CommandInput 
@@ -411,7 +477,7 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
                     />
                     <CommandList>
                       <CommandEmpty className="py-3 text-center text-sm text-muted-foreground">
-                        No variables found.
+                        No variables found for "{variableSearch}"
                       </CommandEmpty>
                       <CommandGroup>
                         {filteredVariables.map((variable) => (
@@ -422,7 +488,7 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
                           >
                             <div className="flex flex-col">
                               <span className="font-medium text-foreground">{variable.label}</span>
-                              <span className="text-xs text-muted-foreground">{variable.value}</span>
+                              <span className="text-xs text-muted-foreground font-mono">{`{{${variable.value}}}`}</span>
                             </div>
                           </CommandItem>
                         ))}
@@ -436,7 +502,10 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
 
           {/* File Upload Field */}
           <div className="space-y-2">
-            <Label className="text-foreground">Attachments</Label>
+            <Label className="text-foreground">Attachments (Optional)</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Add images, videos, documents, or audio files
+            </p>
             <div
               onClick={() => !createQuickReply.isPending && !isUploading && fileInputRef.current?.click()}
               className={cn(
@@ -445,12 +514,15 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
                 (createQuickReply.isPending || isUploading) && "opacity-50 cursor-not-allowed"
               )}
             >
-              <PaperClipIcon className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+              <PaperClipIcon className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground">
-                Click to upload files
+                Click to upload files or drag and drop
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                PDF, Images, Documents
+                Supports images, videos, audio, PDF, documents
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Maximum 10 files, 50MB each
               </p>
             </div>
             <input
@@ -460,37 +532,46 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
               onChange={handleFileSelect}
               className="hidden"
               disabled={createQuickReply.isPending || isUploading}
+              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip,.rar"
             />
 
             {/* File List */}
             {files.length > 0 && (
               <div className="space-y-2 mt-3">
-                {files.map((file, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between p-2 bg-muted rounded-lg"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <DocumentIcon className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm text-foreground truncate">{file.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatFileSize(file.size)}
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeFile(index)}
-                      className="h-6 w-6 p-0 hover:bg-destructive/10 hover:text-destructive"
-                      disabled={createQuickReply.isPending || isUploading}
+                <p className="text-sm font-medium text-foreground">
+                  Selected Files ({files.length})
+                </p>
+                {files.map((file, index) => {
+                  const FileIcon = getFileIcon(file);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between p-2 bg-muted/50 rounded-lg"
                     >
-                      <XCircleIcon className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex-shrink-0">
+                          <FileIcon className="w-5 h-5 text-muted-foreground" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm text-foreground truncate">{file.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatFileSize(file.size)} • {file.type.split('/')[0] || 'file'}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeFile(index)}
+                        className="h-7 w-7 p-0 hover:bg-destructive/10 hover:text-destructive"
+                        disabled={createQuickReply.isPending || isUploading}
+                      >
+                        <XCircleIcon className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             )}
             
@@ -498,17 +579,20 @@ const uploadFiles = async (filesToUpload: File[]): Promise<string[]> => {
             {isUploading && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
-                Uploading attachments...
+                Uploading {files.length} file{files.length > 1 ? 's' : ''}...
               </div>
             )}
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-4">
+          <div className="flex justify-end gap-3 pt-4 border-t border-border">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setOpen(false)}
+              onClick={() => {
+                resetForm();
+                setOpen(false);
+              }}
               className="border-input text-foreground hover:bg-muted"
               disabled={createQuickReply.isPending || isUploading}
             >

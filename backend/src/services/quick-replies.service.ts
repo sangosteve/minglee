@@ -1,180 +1,192 @@
-//backend/src/services/quick-replies.service.ts
+// backend/src/services/quick-reply-media.service.ts
 import { getDb } from '../db/client';
-import { quickReplies, mediaAttachments } from '../db/schema';
-import { eq, and, or, like, desc, inArray } from 'drizzle-orm';
+import { mediaAttachments } from '../db/schema';
+import { CloudinaryService } from './cloudinary.service';
+import { eq, and, inArray } from 'drizzle-orm';
 
-export class QuickRepliesService {
-  static async getQuickReplies(userId: string, filters?: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    topics?: string;
-    isActive?: boolean;
-  }) {
-    const { page = 1, limit = 20, search, topics, isActive } = filters || {};
-    const offset = (page - 1) * limit;
+export interface MediaUploadData {
+  buffer?: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+  url?: string;
+  secureUrl?: string;
+  publicId?: string;
+}
+
+export class QuickReplyMediaService {
+  /**
+   * Create media attachment for quick reply
+   */
+  static async createMediaAttachment(
+    userId: string,
+    mediaData: MediaUploadData,
+    quickReplyId?: string
+  ) {
     const db = getDb();
 
-    const whereConditions: any[] = [eq(quickReplies.userId, userId)];
+    let cloudinaryResult;
+    
+    // If we have a buffer, upload to Cloudinary
+    if (mediaData.buffer) {
+      cloudinaryResult = await CloudinaryService.uploadFile(
+        {
+          buffer: mediaData.buffer,
+          originalname: mediaData.originalname,
+          mimetype: mediaData.mimetype,
+          size: mediaData.size,
+        },
+        {
+          folder: `quick_replies/user_${userId}`,
+          tags: ['quick_reply', `user_${userId}`, quickReplyId ? `quick_reply_${quickReplyId}` : ''],
+          context: {
+            quick_reply_id: quickReplyId || 'unknown',
+            original_filename: mediaData.originalname,
+            uploaded_by_user: userId,
+          },
+        }
+      );
 
-    if (isActive !== undefined) {
-      whereConditions.push(eq(quickReplies.isActive, isActive));
-    }
-
-    if (search) {
-      whereConditions.push(or(
-        like(quickReplies.name, `%${search}%`),
-        like(quickReplies.message, `%${search}%`),
-        like(quickReplies.topics, `%${search}%`)
-      ));
-    }
-
-    if (topics) {
-      whereConditions.push(like(quickReplies.topics, `%${topics}%`));
-    }
-
-    // Get quick replies
-    const quickRepliesList = await db.select()
-      .from(quickReplies)
-      .where(and(...whereConditions))
-      .orderBy(desc(quickReplies.updatedAt))
-      .limit(limit)
-      .offset(offset);
-
-    // Get all media attachment IDs from all quick replies
-    const allMediaAttachmentIds = quickRepliesList
-      .flatMap(qr => qr.mediaAttachmentIds || [])
-      .filter(Boolean);
-
-    let mediaAttachmentsMap: Record<string, any> = {};
-
-    if (allMediaAttachmentIds.length > 0) {
-      // Get all media attachments in one query
-      const mediaAttachmentsList = await db.select()
-        .from(mediaAttachments)
-        .where(inArray(mediaAttachments.id, allMediaAttachmentIds));
-
-      // Create a map for easy lookup
-      mediaAttachmentsMap = mediaAttachmentsList.reduce((acc, media) => {
-        acc[media.id] = media;
-        return acc;
-      }, {} as Record<string, any>);
-    }
-
-    // Enrich quick replies with media attachments
-    const enrichedQuickReplies = quickRepliesList.map(qr => ({
-      ...qr,
-      mediaAttachments: (qr.mediaAttachmentIds || [])
-        .map(id => mediaAttachmentsMap[id])
-        .filter(Boolean)
-    }));
-
-    // Get total count
-    const totalResult = await db.select({ count: sql`count(*)` })
-      .from(quickReplies)
-      .where(and(...whereConditions));
-
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
-
-    return {
-      quickReplies: enrichedQuickReplies,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
+      if (!cloudinaryResult.success) {
+        throw new Error(`Cloudinary upload failed: ${cloudinaryResult.error}`);
       }
-    };
-  }
-
-  static async getQuickReplyById(userId: string, quickReplyId: string) {
-    const db = getDb();
-
-    const quickReplyResult = await db.select()
-      .from(quickReplies)
-      .where(and(
-        eq(quickReplies.id, quickReplyId),
-        eq(quickReplies.userId, userId)
-      ))
-      .limit(1);
-
-    if (!quickReplyResult.length) return null;
-
-    const quickReply = quickReplyResult[0];
-
-    // Get media attachments if any
-    let mediaAttachmentsList: any[] = [];
-    if (quickReply.mediaAttachmentIds && quickReply.mediaAttachmentIds.length > 0) {
-      mediaAttachmentsList = await db.select()
-        .from(mediaAttachments)
-        .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
     }
 
-    return {
-      ...quickReply,
-      mediaAttachments: mediaAttachmentsList
-    };
-  }
-
-  static async createQuickReply(userId: string, data: {
-    name: string;
-    message: string;
-    topics?: string;
-    mediaAttachmentIds?: string[];
-    isActive?: boolean;
-  }) {
-    const db = getDb();
-
-    const [quickReply] = await db.insert(quickReplies).values({
-      userId,
-      name: data.name,
-      message: data.message,
-      topics: data.topics || 'General',
-      mediaAttachmentIds: data.mediaAttachmentIds || [],
-      isActive: data.isActive !== undefined ? data.isActive : true,
+    // Create media attachment record
+    const [mediaAttachment] = await db.insert(mediaAttachments).values({
+      // messageId can be null for quick replies
+      messageId: null,
+      uploadedByUserId: userId,
+      publicId: cloudinaryResult?.publicId || mediaData.publicId || `qr_${Date.now()}`,
+      secureUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url,
+      thumbnailUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url,
+      originalFilename: mediaData.originalname,
+      mimeType: mediaData.mimetype,
+      fileSize: mediaData.size,
+      width: cloudinaryResult?.width || undefined,
+      height: cloudinaryResult?.height || undefined,
+      duration: cloudinaryResult?.duration || undefined,
+      format: cloudinaryResult?.format || mediaData.originalname.split('.').pop(),
+      resourceType: CloudinaryService.getResourceTypeFromMimeType(mediaData.mimetype),
+      tags: ['quick_reply', 'media'],
+      caption: mediaData.originalname,
+      status: 'active',
+      uploadedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
     }).returning();
 
-    return quickReply;
+    return mediaAttachment;
   }
 
-  static async updateQuickReply(userId: string, quickReplyId: string, data: {
-    name?: string;
-    message?: string;
-    topics?: string;
-    mediaAttachmentIds?: string[];
-    isActive?: boolean;
-  }) {
+  /**
+   * Get media attachments by IDs
+   */
+  static async getMediaAttachmentsByIds(attachmentIds: string[], userId: string) {
     const db = getDb();
 
-    const updateData: any = {};
-    if (data.name !== undefined) updateData.name = data.name;
-    if (data.message !== undefined) updateData.message = data.message;
-    if (data.topics !== undefined) updateData.topics = data.topics;
-    if (data.mediaAttachmentIds !== undefined) updateData.mediaAttachmentIds = data.mediaAttachmentIds;
-    if (data.isActive !== undefined) updateData.isActive = data.isActive;
-    updateData.updatedAt = new Date();
+    if (!attachmentIds || attachmentIds.length === 0) {
+      return [];
+    }
 
-    const [updatedQuickReply] = await db.update(quickReplies)
-      .set(updateData)
-      .where(and(
-        eq(quickReplies.id, quickReplyId),
-        eq(quickReplies.userId, userId)
-      ))
-      .returning();
+    const attachments = await db.select()
+      .from(mediaAttachments)
+      .where(
+        and(
+          inArray(mediaAttachments.id, attachmentIds),
+          eq(mediaAttachments.uploadedByUserId, userId)
+        )
+      );
 
-    return updatedQuickReply;
+    return attachments;
   }
 
-  static async deleteQuickReply(userId: string, quickReplyId: string) {
+  /**
+   * Get all quick reply media for a user
+   */
+  static async getUserQuickReplyMedia(userId: string) {
     const db = getDb();
 
-    const [deletedQuickReply] = await db.delete(quickReplies)
-      .where(and(
-        eq(quickReplies.id, quickReplyId),
-        eq(quickReplies.userId, userId)
-      ))
-      .returning();
+    const attachments = await db.select()
+      .from(mediaAttachments)
+      .where(
+        and(
+          eq(mediaAttachments.uploadedByUserId, userId),
+          eq(mediaAttachments.messageId, null) // Quick reply media have null messageId
+        )
+      )
+      .orderBy(mediaAttachments.createdAt);
 
-    return deletedQuickReply;
+    return attachments;
+  }
+
+  /**
+   * Delete media attachment
+   */
+  static async deleteMediaAttachment(attachmentId: string, userId: string) {
+    const db = getDb();
+
+    // Check ownership
+    const [attachment] = await db.select()
+      .from(mediaAttachments)
+      .where(
+        and(
+          eq(mediaAttachments.id, attachmentId),
+          eq(mediaAttachments.uploadedByUserId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!attachment) {
+      throw new Error('Media attachment not found or access denied');
+    }
+
+    // Delete from Cloudinary if we have a publicId
+    if (attachment.publicId && !attachment.publicId.startsWith('qr_')) {
+      await CloudinaryService.deleteFile(
+        attachment.publicId,
+        attachment.resourceType as any
+      );
+    }
+
+    // Delete from database
+    await db.delete(mediaAttachments)
+      .where(eq(mediaAttachments.id, attachmentId));
+
+    return { success: true };
+  }
+
+  /**
+   * Update media attachment with quick reply ID reference
+   */
+  static async linkMediaToQuickReply(attachmentId: string, quickReplyId: string, userId: string) {
+    const db = getDb();
+
+    // Verify ownership
+    const [attachment] = await db.select()
+      .from(mediaAttachments)
+      .where(
+        and(
+          eq(mediaAttachments.id, attachmentId),
+          eq(mediaAttachments.uploadedByUserId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!attachment) {
+      throw new Error('Media attachment not found or access denied');
+    }
+
+    // Update tags to include quick reply ID
+    const updatedTags = [...(attachment.tags || []), `quick_reply_${quickReplyId}`];
+    
+    await db.update(mediaAttachments)
+      .set({
+        tags: updatedTags,
+        updatedAt: new Date(),
+      })
+      .where(eq(mediaAttachments.id, attachmentId));
+
+    return { success: true };
   }
 }

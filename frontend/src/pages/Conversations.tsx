@@ -416,120 +416,129 @@ const Conversations = () => {
   };
 
 
-  const handleSendMessage = async () => {
-    if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0)) return;
+const handleSendMessage = async () => {
+  if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0)) return;
 
-    try {
-      let finalMessage = messageInput.trim();
-      let captionForMedia = caption.trim();
+  try {
+    let finalMessage = messageInput.trim();
+    let captionForMedia = caption.trim();
 
-      // Check if message contains variables that need personalization
-      if (messageInput.includes('{{') && contact && user) {
-        // Personalize variables on client-side before sending
-        const personalizedMessage = VariableService.replaceVariables(
-          messageInput,
-          { contact, user, conversation: selectedConversation }
-        );
+    // Check if message contains variables that need personalization
+    if (messageInput.includes('{{') && contact && user) {
+      // Personalize variables on client-side before sending
+      const personalizedMessage = VariableService.replaceVariables(
+        messageInput,
+        { contact, user, conversation: selectedConversation }
+      );
 
-        finalMessage = personalizedMessage.trim();
+      finalMessage = personalizedMessage.trim();
 
-        // Update input field to show what's being sent
-        if (messageInput !== finalMessage) {
-          setMessageInput(finalMessage);
-        }
+      // Update input field to show what's being sent
+      if (messageInput !== finalMessage) {
+        setMessageInput(finalMessage);
+      }
+    }
+
+    // Also personalize caption if it has variables
+    if (caption.includes('{{') && contact && user) {
+      const personalizedCaption = VariableService.replaceVariables(
+        caption,
+        { contact, user, conversation: selectedConversation }
+      );
+
+      captionForMedia = personalizedCaption.trim();
+
+      if (caption !== captionForMedia) {
+        setCaption(captionForMedia);
+      }
+    }
+
+    // Priority: Quick reply media attachments > local attachments
+    if (quickReplyMediaAttachments.length > 0) {
+      // CRITICAL FIX: For quick reply media, we need to send both the media AND the caption properly
+      // The caption should contain the message text
+      
+      // Format quick reply media attachments for backend
+      const formattedAttachments = quickReplyMediaAttachments.map((media, index) => ({
+        id: media.id,
+        secureUrl: media.secureUrl || media.url, // IMPORTANT: Send the URL
+        url: media.secureUrl || media.url, // Fallback
+        mimeType: media.mimeType,
+        originalFilename: media.originalFilename || media.filename,
+        filename: media.filename || media.originalFilename,
+        fileSize: media.fileSize,
+        width: media.width,
+        height: media.height,
+        duration: media.duration,
+        caption: captionForMedia, // Use the caption as caption for ALL media (or could be first only)
+        // For WhatsApp, typically only the first media gets a caption
+        // But we'll send it for all and let backend handle
+      }));
+
+      console.log('📤 Sending quick reply with media:', {
+        conversationId: selectedConversationId,
+        message: captionForMedia || 'Media caption',
+        attachments: formattedAttachments.map(att => ({
+          id: att.id,
+          url: att.url ? 'Present' : 'Missing',
+          caption: att.caption,
+        }))
+      });
+
+      // Send quick reply with pre-uploaded media
+      await sendMessage.mutateAsync({
+        conversationId: selectedConversationId,
+        message: captionForMedia, // This is important for backend to know it's a media message
+        attachments: formattedAttachments,
+      });
+
+      // Clear quick reply media and caption
+      setQuickReplyMediaAttachments([]);
+      setCaption(""); // Clear caption after sending
+      setMessageInput(""); // Also clear main input if any
+      
+    } else if (attachments.length > 0) {
+      // Send local media files (existing logic)
+      const formData = new FormData();
+
+      if (!contact?.phone) {
+        toast({
+          title: "Cannot send message",
+          description: "Contact phone number is missing",
+          variant: "destructive",
+        });
+        return;
       }
 
-      // Also personalize caption if it has variables
-      if (caption.includes('{{') && contact && user) {
-        const personalizedCaption = VariableService.replaceVariables(
-          caption,
-          { contact, user, conversation: selectedConversation }
-        );
+      formData.append('phoneNumber', contact.phone);
+      formData.append('caption', captionForMedia || '');
 
-        captionForMedia = personalizedCaption.trim();
-
-        if (caption !== captionForMedia) {
-          setCaption(captionForMedia);
-        }
+      if (attachments[0]) {
+        formData.append('file', attachments[0].file);
       }
 
-      // Priority: Quick reply media attachments > local attachments
-      if (quickReplyMediaAttachments.length > 0) {
-        // Format quick reply media attachments for backend
-        const formattedAttachments = quickReplyMediaAttachments.map((media, index) => ({
-          id: media.id,
-          secureUrl: media.secureUrl || media.url, // IMPORTANT: Send the URL
-          url: media.secureUrl || media.url, // Fallback
-          mimeType: media.mimeType,
-          originalFilename: media.originalFilename || media.filename,
-          filename: media.filename || media.originalFilename,
-          fileSize: media.fileSize,
-          width: media.width,
-          height: media.height,
-          duration: media.duration,
-          caption: index === 0 ? captionForMedia : undefined // Only caption for first media
-        }));
-
-        console.log('Sending quick reply with media:', {
-          conversationId: selectedConversationId,
-          message: captionForMedia,
-          attachments: formattedAttachments
-        });
-
-        // Send quick reply with pre-uploaded media
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversationId,
-          message: captionForMedia, // Use caption as message (will be caption for media)
-          attachments: formattedAttachments, // Send properly formatted attachments
-        });
-
-        // Clear quick reply media
-        setQuickReplyMediaAttachments([]);
-        setCaption(""); // Clear caption after sending
-      } else if (attachments.length > 0) {
-        // Send local media files
-        const formData = new FormData();
-
-        if (!contact?.phone) {
-          toast({
-            title: "Cannot send message",
-            description: "Contact phone number is missing",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        formData.append('phoneNumber', contact.phone);
-
-        // For local uploads, caption goes in the FormData
-        formData.append('caption', captionForMedia || '');
-
-        if (attachments[0]) {
-          formData.append('file', attachments[0].file);
-        }
-
-        await sendMediaMessage.mutateAsync(formData);
-        handleClearAllAttachments();
-      } else {
-        // Plain text message (no media)
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversationId,
-          message: finalMessage,
-          attachments: [], // Empty array for text-only
-        });
-      }
-
-      setMessageInput("");
-      setCaption("");
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast({
-        title: "Failed to send message",
-        description: "Please try again",
-        variant: "destructive",
+      await sendMediaMessage.mutateAsync(formData);
+      handleClearAllAttachments();
+    } else {
+      // Plain text message (no media)
+      await sendMessage.mutateAsync({
+        conversationId: selectedConversationId,
+        message: finalMessage,
+        attachments: [], // Empty array for text-only
       });
     }
-  };
+
+    setMessageInput("");
+    setCaption("");
+  } catch (error) {
+    console.error('Error sending message:', error);
+    toast({
+      title: "Failed to send message",
+      description: "Please try again",
+      variant: "destructive",
+    });
+  }
+};
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

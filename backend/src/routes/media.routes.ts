@@ -293,10 +293,24 @@ router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
 /**
  * Upload multiple files
  */
+/**
+ * Upload multiple files
+ */
 router.post('/upload-multiple', authenticate, upload.array('files', 10), async (req: AuthRequest, res) => {
   try {
     const files = req.files as Express.Multer.File[];
-    const { folder } = req.body;
+    
+    // DEBUG: Log everything about the request
+    console.log('🔍 /upload-multiple REQUEST DEBUG:');
+    console.log('📋 Headers:', req.headers);
+    console.log('📋 Content-Type:', req.headers['content-type']);
+    console.log('📋 Files received:', files?.length || 0);
+    console.log('📋 Body fields:', Object.keys(req.body || {}));
+    console.log('📋 Body values:', req.body);
+    
+    // Extract folder from FormData - it comes as a field in req.body
+    const folder = req.body.folder;
+    console.log('📁 Folder from request:', folder);
 
     if (!files || files.length === 0) {
       return res.status(400).json({ 
@@ -307,18 +321,28 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
     console.log(`📤 Processing ${files.length} file(s) for upload`);
 
+    const db = getDb(); // Use getDb() instead of db
+    
     const uploadPromises = files.map(async (file) => {
       try {
+        console.log(`📄 Processing file: ${file.originalname} (${file.size} bytes)`);
+        
         const cloudinaryResult = await CloudinaryService.uploadFile({
           buffer: file.buffer,
           originalname: file.originalname,
           mimetype: file.mimetype,
           size: file.size,
         }, {
-          folder: folder || 'whatsapp_media',
+          folder: folder || 'quick_replies', // Default folder
+          tags: ['quick_reply', `user_${req.user!.userId}`],
+          context: {
+            uploaded_by_user: req.user!.userId,
+            original_filename: file.originalname,
+          },
         });
 
         if (!cloudinaryResult.success) {
+          console.error(`❌ Cloudinary upload failed for ${file.originalname}:`, cloudinaryResult.error);
           return {
             success: false,
             originalname: file.originalname,
@@ -326,12 +350,17 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
           };
         }
 
-        // Save to mediaAttachments table and get the DATABASE ID
+        console.log(`✅ Cloudinary upload successful for ${file.originalname}:`, cloudinaryResult.publicId);
+
+        // Save to mediaAttachments table
         const [mediaAttachment] = await db.insert(mediaAttachments).values({
+          // Note: According to your schema, mediaAttachments doesn't have userId field!
+          // It has uploadedByUserId instead
+          uploadedByUserId: req.user!.userId,
+          messageId: null, // Quick reply media have null messageId
           publicId: cloudinaryResult.publicId,
-          cloudinaryUrl: cloudinaryResult.url,
           secureUrl: cloudinaryResult.secureUrl,
-          filename: file.originalname,
+          thumbnailUrl: cloudinaryResult.secureUrl, // Use same as secureUrl for thumbnail
           originalFilename: file.originalname,
           mimeType: file.mimetype,
           fileSize: file.size,
@@ -339,10 +368,11 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
           height: cloudinaryResult.height,
           duration: cloudinaryResult.duration,
           format: cloudinaryResult.format,
-          assetType: cloudinaryResult.resourceType,
           resourceType: cloudinaryResult.resourceType,
-          tags: ['uploaded'],
-          userId: req.user!.userId,
+          tags: ['quick_reply', 'uploaded'],
+          caption: file.originalname,
+          status: 'active',
+          uploadedAt: new Date(),
           createdAt: new Date(),
           updatedAt: new Date(),
         }).returning();
@@ -351,7 +381,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
         return {
           success: true,
-          id: mediaAttachment.id, // ✅ Return DATABASE ID, not publicId
+          id: mediaAttachment.id,
           publicId: cloudinaryResult.publicId,
           secureUrl: cloudinaryResult.secureUrl,
           originalname: file.originalname,
@@ -360,6 +390,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
         };
       } catch (error: any) {
         console.error(`❌ Failed to upload ${file.originalname}:`, error);
+        console.error('Stack:', error.stack);
         return {
           success: false,
           originalname: file.originalname,
@@ -373,6 +404,8 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
     const successful = results.filter(r => r.success);
     const failed = results.filter(r => !r.success);
 
+    console.log(`📊 Upload results: ${successful.length} successful, ${failed.length} failed`);
+
     res.json({
       success: true,
       data: {
@@ -385,6 +418,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
   } catch (error: any) {
     console.error('❌ Multiple upload error:', error);
+    console.error('Stack:', error.stack);
     res.status(500).json({ 
       success: false,
       error: error.message 

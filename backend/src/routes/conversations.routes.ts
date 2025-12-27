@@ -5,149 +5,9 @@ import { getDb } from '../db/client';
 import { conversations, contacts, messages, users, quickReplies, mediaAttachments } from '../db/schema';
 import { eq, and, or, like, desc, isNull, sql, inArray } from 'drizzle-orm';
 import { VariableService } from '../services/variable.service';
-import axios from 'axios';
+import { messageService } from '../services/message/message.service';
 
 const router = Router();
-
-// ---------------------- HELPER ---------------------- //
-async function sendMessageToContact(
-  db: any,
-  conversation: any,
-  contact: any,
-  user: any,
-  body?: string,
-  mediaAttachmentsList: any[] = []
-) {
-  const apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
-  const baseUrl = `https://graph.facebook.com/${apiVersion}`;
-  let whatsappResponse: any[] = [];
-  let whatsappMessageIds: string[] = [];
-  let savedMessages: any[] = [];
-
-  // WhatsApp Business API can't send text message and media in the same API call
-  // We need to handle text and media separately
-  
-  // Case 1: Text only (no media)
-  if (body?.trim() && mediaAttachmentsList.length === 0) {
-    const response = await axios.post(
-      `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: contact.phone,
-        type: 'text',
-        text: { body: body.trim() },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${user.whatsappAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    
-    whatsappResponse.push(response.data);
-    const textMessageId = response.data?.messages?.[0]?.id;
-    
-    // Save text message
-    const [newMessage] = await db.insert(messages).values({
-      conversationId: conversation.id,
-      contactId: contact.id,
-      whatsappMessageId: textMessageId,
-      direction: 'outgoing',
-      messageType: 'text',
-      body: body.trim(),
-      status: textMessageId ? 'sent' : 'failed',
-      metadata: {
-        whatsappResponse: response.data,
-        timestamp: new Date().toISOString(),
-      },
-      timestamp: new Date(),
-    }).returning();
-    
-    savedMessages.push(newMessage);
-    if (textMessageId) whatsappMessageIds.push(textMessageId);
-  }
-  
-  // Case 2: Media with/without caption
-  for (let i = 0; i < mediaAttachmentsList.length; i++) {
-    const media = mediaAttachmentsList[i];
-    const type = media.mimeType?.startsWith('image/') ? 'image' :
-                 media.mimeType?.startsWith('video/') ? 'video' :
-                 media.mimeType?.startsWith('audio/') ? 'audio' :
-                 'document';
-    
-    const payload: any = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: contact.phone,
-      type,
-      [type]: { 
-        link: media.secureUrl || media.url,
-        // Use body as caption for the first media, or media.caption if available
-        caption: (i === 0 && body?.trim()) ? body.trim() : media.caption || undefined
-      },
-    };
-    
-    const response = await axios.post(
-      `${baseUrl}/${user.whatsappPhoneNumberId}/messages`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${user.whatsappAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    
-    whatsappResponse.push(response.data);
-    const mediaMessageId = response.data?.messages?.[0]?.id;
-    
-    // Save media message
-    const [newMediaMessage] = await db.insert(messages).values({
-      conversationId: conversation.id,
-      contactId: contact.id,
-      whatsappMessageId: mediaMessageId,
-      direction: 'outgoing',
-      messageType: type,
-      body: (i === 0 && body?.trim()) ? body.trim() : '', // Save caption as body for the first media
-      status: mediaMessageId ? 'sent' : 'failed',
-      metadata: {
-        whatsappResponse: response.data,
-        timestamp: new Date().toISOString(),
-        mediaAttachmentId: media.id, // Save media ID for tracking
-        secureUrl: media.secureUrl || media.url,
-        originalFilename: media.originalFilename || media.filename,
-        mimeType: media.mimeType,
-        fileSize: media.fileSize,
-        width: media.width,
-        height: media.height,
-        duration: media.duration,
-        caption: (i === 0 && body?.trim()) ? body.trim() : media.caption,
-      },
-      timestamp: new Date(),
-    }).returning();
-    
-    savedMessages.push(newMediaMessage);
-    if (mediaMessageId) whatsappMessageIds.push(mediaMessageId);
-  }
-
-  // Update conversation last message
-  const lastMessageText = body?.trim() || (mediaAttachmentsList.length > 0 ? `[${mediaAttachmentsList.length} media]` : '');
-  await db.update(conversations)
-    .set({
-      lastMessage: lastMessageText,
-      lastMessageAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(conversations.id, conversation.id));
-
-  return { 
-    whatsappResponse, 
-    whatsappMessageIds,
-    savedMessages 
-  };
-}
 
 // ---------------------- ROUTES ---------------------- //
 
@@ -330,13 +190,12 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     const total = totalResult.length ? Number(totalResult[0].count) : 0;
 
     // Calculate offset for DESCENDING order (newest first)
-    // For chat: we want page 1 to show the LATEST messages
     const offset = (Number(page) - 1) * Number(limit);
     
     // Get messages in DESCENDING order (newest first) with pagination
     const messagesList = await db.select().from(messages)
       .where(eq(messages.conversationId, id))
-      .orderBy(desc(messages.timestamp)) // DESCENDING order (newest first)
+      .orderBy(desc(messages.timestamp))
       .limit(Number(limit))
       .offset(offset);
 
@@ -344,7 +203,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       success: true,
       conversation: conversationResult[0].conversation,
       contact: conversationResult[0].contact,
-      messages: messagesList, // Newest messages first
+      messages: messagesList,
       pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
   } catch (error: any) {
@@ -377,6 +236,7 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ success: false, error: 'Message or attachments required' });
     }
 
+    // Get conversation, contact, and user
     const [conversationData] = await db.select({ conversation: conversations, contact: contacts, user: users })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
@@ -389,11 +249,24 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
     const { conversation, contact, user } = conversationData;
 
     if (!contact.phone) return res.status(400).json({ success: false, error: 'Contact does not have a phone number' });
-    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) return res.status(400).json({ success: false, error: 'WhatsApp not configured for this user' });
+    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
+      return res.status(400).json({ success: false, error: 'WhatsApp not configured for this user' });
+    }
 
-    // Format attachments properly
+    // Personalize message with variables
+    let personalizedMessage = message;
+    if (message && message.includes('{{') && contact && user) {
+      const variables = VariableService.getAvailableVariables(conversation, contact, user);
+      personalizedMessage = VariableService.replaceVariables(message, variables);
+      
+      if (message !== personalizedMessage) {
+        console.log('✅ Personalized message:', personalizedMessage);
+      }
+    }
+
+    // Format attachments - FIXED: Ensure we extract IDs correctly
     const formattedAttachments = attachments.map((att: any) => ({
-      id: att.id,
+      id: att.id, // This should be the media attachment ID from mediaAttachments table
       url: att.secureUrl || att.url,
       secureUrl: att.secureUrl || att.url,
       mimeType: att.mimeType,
@@ -406,12 +279,35 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
       caption: att.caption,
     }));
 
-    const result = await sendMessageToContact(db, conversation, contact, user, message, formattedAttachments);
+    // Use unified MessageService to send message
+    const result = await messageService.sendMessage({
+      conversationId: conversation.id,
+      contactId: contact.id,
+      userId: user.id,
+      body: personalizedMessage,
+      attachments: formattedAttachments,
+      direction: 'outgoing',
+      metadata: {
+        originalMessage: message,
+        personalized: personalizedMessage !== message,
+      },
+    });
 
-    res.json({ success: true, ...result });
+    res.json({ 
+      success: true, 
+      message: 'Message sent successfully',
+      data: {
+        ...result,
+        mediaAttachmentId: result.mediaAttachmentId, // This will be the ID from mediaAttachments table
+      }
+    });
   } catch (error: any) {
     console.error('❌ Error sending message:', error);
-    res.status(500).json({ success: false, error: 'Failed to send message', details: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to send message', 
+      details: error.message 
+    });
   }
 });
 
@@ -454,32 +350,109 @@ router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async 
       mediaAttachmentsList = await db.select()
         .from(mediaAttachments)
         .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
+      
+      console.log('📦 Quick reply media attachments found:', {
+        count: mediaAttachmentsList.length,
+        attachments: mediaAttachmentsList.map(att => ({
+          id: att.id,
+          secureUrl: att.secureUrl,
+          thumbnailUrl: att.thumbnailUrl,
+          mimeType: att.mimeType,
+          originalFilename: att.originalFilename,
+        }))
+      });
     }
 
     // Personalize message
     const variables = VariableService.getAvailableVariables(conversation, contact, user);
     const personalizedMessage = VariableService.replaceVariables(quickReply.message, variables);
 
-    const result = await sendMessageToContact(
-      db, 
-      conversation, 
-      contact, 
-      user, 
-      personalizedMessage, 
-      mediaAttachmentsList
-    );
+    // Format attachments for MessageService
+    const formattedAttachments = mediaAttachmentsList.map((media: any) => ({
+      id: media.id,
+      url: media.secureUrl || media.thumbnailUrl,
+      secureUrl: media.secureUrl || media.thumbnailUrl,
+      mimeType: media.mimeType,
+      originalFilename: media.originalFilename,
+      filename: media.originalFilename,
+      fileSize: media.fileSize,
+      width: media.width,
+      height: media.height,
+      duration: media.duration,
+      caption: personalizedMessage, // Use the personalized message as caption
+    }));
+
+    console.log('📤 Sending quick reply:', {
+      conversationId: conversation.id,
+      contactId: contact.id,
+      hasAttachments: formattedAttachments.length > 0,
+      attachmentCount: formattedAttachments.length,
+      message: personalizedMessage,
+    });
+
+    // Use unified MessageService to send message
+    let result;
+    if (formattedAttachments.length > 0) {
+      // Send with media attachments
+      result = await messageService.sendMessage({
+        conversationId: conversation.id,
+        contactId: contact.id,
+        userId: user.id,
+        body: personalizedMessage,
+        attachments: formattedAttachments,
+        direction: 'outgoing',
+        metadata: {
+          quickReplyId: quickReply.id,
+          quickReplyName: quickReply.name,
+          originalMessage: quickReply.message,
+          personalized: personalizedMessage !== quickReply.message,
+           isQuickReply: quickReplyId ? true : false,
+        },
+      });
+    } else {
+      // Send as text-only message
+      result = await messageService.sendMessage({
+        conversationId: conversation.id,
+        contactId: contact.id,
+        userId: user.id,
+        body: personalizedMessage,
+        attachments: [],
+        direction: 'outgoing',
+        metadata: {
+          quickReplyId: quickReply.id,
+          quickReplyName: quickReply.name,
+          originalMessage: quickReply.message,
+          personalized: personalizedMessage !== quickReply.message,
+          isQuickReply: true,
+        },
+      });
+    }
 
     res.json({
       success: true,
-      ...result,
-      preview: { original: quickReply.message, personalized: personalizedMessage },
+      message: formattedAttachments.length > 0 
+        ? 'Quick reply with media sent successfully' 
+        : 'Quick reply sent successfully',
+      data: {
+    ...result,
+    mediaAttachmentId: result.mediaAttachmentId, // Include media attachment ID
+  },
+      preview: { 
+        original: quickReply.message, 
+        personalized: personalizedMessage,
+        hasMedia: formattedAttachments.length > 0,
+        mediaCount: formattedAttachments.length,
+      },
     });
   } catch (error: any) {
     console.error('❌ Error sending quick reply:', error);
-    res.status(500).json({ success: false, error: 'Failed to send quick reply', details: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to send quick reply', 
+      details: error.message,
+    });
   }
 });
-
 // ---------------------- PATCH ROUTES ---------------------- //
 
 // Mark conversation as read

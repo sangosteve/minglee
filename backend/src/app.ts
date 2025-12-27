@@ -50,7 +50,8 @@ app.use([
   "/api/users",
   "/api/tags",
   "/api/whatsapp/health",
-  "/api/quick-replies" // Add quick-replies to JSON routes
+  "/api/quick-replies",
+  "/api/analytics"
 ], express.json({ limit: '50mb' }));
 
 app.use((req, res, next) => {
