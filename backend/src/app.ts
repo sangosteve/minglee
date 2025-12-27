@@ -16,6 +16,7 @@ import usersRoutes from "./routes/users.routes";
 import tagRoutes from "./routes/tags.routes";
 import quickRepliesRoutes from './routes/quick-replies.routes';
 import analyticsRoutes from './routes/analytics.routes';
+import automationRoutes from './routes/automation.routes';
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use([
   "/api/whatsapp/send",
   "/api/whatsapp/config",
   "/api/whatsapp/conversations",
+  "/api/automations",
   "/api/whatsapp/webhook", 
   "/api/users",
   "/api/tags",
@@ -65,7 +67,9 @@ app.use("/api/conversations", conversationsRoute);
 app.use("/api/media", mediaRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tags", tagRoutes);
-app.use('/api/quick-replies', quickRepliesRoutes);app.use('/api/analytics', analyticsRoutes);
+app.use('/api/quick-replies', quickRepliesRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/automations', automationRoutes);
 
 
 

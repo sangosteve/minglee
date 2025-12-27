@@ -263,3 +263,86 @@ export const apiKeys = pgTable("api_keys", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Automation Status Enum
+export const automationStatusEnum = pgEnum("automation_status", [
+  "draft",
+  "active",
+  "paused",
+  "archived"
+]);
+
+// Trigger Type Enum
+export const automationTriggerEnum = pgEnum("automation_trigger", [
+  "manual",
+  "message_received",
+  "keyword",
+  "tag_added",
+  "campaign_reply",
+  "time_delay",
+  "contact_created",
+  "contact_updated",
+  "webhook"
+]);
+
+// Automations table
+export const automations = pgTable("automations", {
+  id: uuid("id").primaryKey().default(generateUuid()),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  
+  // Relationships
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  
+  // Trigger configuration
+  triggerType: automationTriggerEnum("trigger_type").default("manual"),
+  triggerConfig: jsonb("trigger_config").default({}),
+  
+  // Flow data (React Flow nodes and edges)
+  flowData: jsonb("flow_data").default({ nodes: [], edges: [] }),
+  
+  // Status and stats
+  status: automationStatusEnum("status").default("draft"),
+  totalRuns: integer("total_runs").default(0),
+  successfulRuns: integer("successful_runs").default(0),
+  failedRuns: integer("failed_runs").default(0),
+  
+  // Timestamps
+  lastRunAt: timestamp("last_run_at"),
+  nextRunAt: timestamp("next_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_automations_user_id").on(table.userId),
+  index("idx_automations_status").on(table.status),
+  index("idx_automations_trigger_type").on(table.triggerType),
+]);
+
+// Automation runs (execution history)
+export const automationRuns = pgTable("automation_runs", {
+  id: uuid("id").primaryKey().default(generateUuid()),
+  
+  // Relationships
+  automationId: uuid("automation_id").references(() => automations.id, { onDelete: "cascade" }).notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade"}),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null"}),
+  
+  // Execution data
+  triggerData: jsonb("trigger_data").default({}),
+  executionData: jsonb("execution_data").default({}),
+  nodeExecutions: jsonb("node_executions").default([]),
+  error: text("error"),
+  
+  // Status
+  status: varchar("status", { length: 50 }).default("pending"),
+  
+  // Timestamps
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_automation_runs_automation_id").on(table.automationId),
+  index("idx_automation_runs_contact_id").on(table.contactId),
+  index("idx_automation_runs_status").on(table.status),
+  index("idx_automation_runs_created_at").on(table.createdAt),
+]);

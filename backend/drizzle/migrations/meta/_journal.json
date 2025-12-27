@@ -57,6 +57,13 @@
       "when": 1766156342192,
       "tag": "0007_short_surge",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1766390947566,
+      "tag": "0008_elite_falcon",
+      "breakpoints": true
     }
   ]
 }

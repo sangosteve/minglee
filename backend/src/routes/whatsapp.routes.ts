@@ -4,10 +4,11 @@ import multer from 'multer';
 import { WhatsAppService, WhatsAppWebhookEvent } from '../services/whatsapp.service';
 import { CloudinaryService, MediaFile } from '../services/cloudinary.service';
 import { WhatsAppMediaService } from '../services/whatsapp-media.service';
+import { automationExecutionService } from '../services/automation-execution.service';
 import { ContactsService } from '../services/contacts.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
-import { users, contacts, conversations, messages, mediaAttachments } from '../db/schema';
+import { users, contacts, conversations, messages, mediaAttachments,automations } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import Busboy from 'busboy';
 
@@ -38,6 +39,117 @@ const upload = multer({
   },
 });
 
+
+/**
+ * Check and trigger automations for incoming messages
+ */
+async function checkAndTriggerAutomations(
+  contactId: string, 
+  userId: string, 
+  messageText: string,
+  metadata: any  // Now includes conversation_id
+) {
+  try {
+    console.log(`🤖 Checking automations for contact ${contactId}, message: "${messageText}"`);
+    console.log(`📊 Metadata:`, metadata);
+    
+    const db = getDb();
+    
+    // 1. Find all active automations with "message_received" trigger
+    const activeAutomations = await db
+      .select()
+      .from(automations)
+      .where(and(
+        eq(automations.userId, userId),
+        eq(automations.status, 'active'),
+        eq(automations.triggerType, 'message_received')
+      ));
+
+    console.log(`🔍 Found ${activeAutomations.length} active message_received automations`);
+
+    for (const automation of activeAutomations) {
+      const triggerConfig = automation.triggerConfig || {};
+      
+      // 2. Check trigger conditions
+      const shouldTrigger = evaluateTriggerConditions(messageText, triggerConfig);
+      
+      if (shouldTrigger) {
+        console.log(`🚀 Triggering automation: ${automation.name} (${automation.id})`);
+        console.log(`💬 Using conversation: ${metadata.conversation_id}`);
+        
+        // 3. Execute the automation (in background, don't await)
+        automationExecutionService.executeWorkflow(
+          automation.id,
+          contactId,
+          userId,
+          {
+            trigger_type: 'message_received',
+            message_text: messageText,
+            received_at: new Date().toISOString(),
+            metadata: metadata,
+            conversation_id: metadata.conversation_id,  // Pass to execution
+            saved_message_id: metadata.saved_message_id,
+          }
+        ).then(result => {
+          if (result.success) {
+            console.log(`✅ Automation ${automation.name} executed successfully: ${result.executionId}`);
+          } else {
+            console.error(`❌ Automation ${automation.name} failed:`, result.error);
+          }
+        }).catch(error => {
+          console.error(`❌ Automation execution error for ${automation.name}:`, error);
+        });
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Error checking automations:', error);
+  }
+}
+
+/**
+ * Helper function to evaluate trigger conditions
+ */
+function evaluateTriggerConditions(messageText: string, triggerConfig: any): boolean {
+  // Default: trigger on all messages if no config
+  if (!triggerConfig || Object.keys(triggerConfig).length === 0) {
+    return true;
+  }
+
+  const messageLower = messageText.toLowerCase();
+  
+  // Check for keyword triggers
+  if (triggerConfig.keywords && Array.isArray(triggerConfig.keywords)) {
+    for (const keyword of triggerConfig.keywords) {
+      if (messageLower.includes(keyword.toLowerCase())) {
+        console.log(`✅ Keyword match: "${keyword}" in message`);
+        return true;
+      }
+    }
+  }
+  
+  // Check for exact match
+  if (triggerConfig.exactMatch && messageText === triggerConfig.exactMatch) {
+    console.log(`✅ Exact match: "${triggerConfig.exactMatch}"`);
+    return true;
+  }
+  
+  // Check for regex pattern
+  if (triggerConfig.regexPattern) {
+    try {
+      const regex = new RegExp(triggerConfig.regexPattern, 'i');
+      if (regex.test(messageText)) {
+        console.log(`✅ Regex match: "${triggerConfig.regexPattern}"`);
+        return true;
+      }
+    } catch (error) {
+      console.error('Invalid regex pattern:', triggerConfig.regexPattern);
+    }
+  }
+  
+  // If specific config exists but no match, return false
+  return false;
+}
 // ==================== WEBHOOK ENDPOINTS ====================
 
 /**
@@ -840,6 +952,29 @@ async function processIncomingMessage(
       }
     } catch (error) {
       console.error('Error marking message as read:', error);
+    }
+
+    if (message.text?.body && savedMessage && contact && user) {
+      console.log(`📨 Checking automations for incoming message: "${message.text.body.substring(0, 50)}..."`);
+      
+      // Trigger automations in the background (don't await)
+     checkAndTriggerAutomations(
+    contact.id,
+    user.id,
+    message.text.body,
+    {
+      whatsapp_message_id: message.id,
+      sender: message.from,
+      timestamp: message.timestamp,
+      message_type: message.type,
+      phone_number_id: metadata.phone_number_id,
+      business_phone_number: metadata.display_phone_number,
+      conversation_id: conversation.id,  // ← PASS CONVERSATION ID!
+      saved_message_id: savedMessage.id, // ← PASS MESSAGE ID TOO!
+    }
+  ).catch(error => {
+    console.error('❌ Background automation trigger failed:', error);
+  });
     }
     
     console.log(`✅ Message processing complete for ${senderName}`);

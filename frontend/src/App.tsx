@@ -13,7 +13,7 @@ import Contacts from "./pages/Contacts";
 import Analytics from "./pages/Analytics";
 import Broadcasts from "./pages/Broadcasts";
 import Campaigns from "./pages/Campaigns";
-import Automations from "./pages/Automations";
+import Automations from "./pages/automations/Automations";
 import Teams from "./pages/Teams";
 import Tags from "./pages/Tags";
 import NotFound from "./pages/NotFound";
@@ -25,6 +25,9 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthInterceptor } from "./components/auth/AuthInterceptor";
 import { TagsProvider } from "./components/tags/TagsProvider";
 import Settings from "./pages/Settings";
+// Add these imports to your existing imports:
+import AutomationBuilder from "./pages/automations/AutomationBuilder";
+import AutomationEditor from "./pages/automations/AutomationEditor";
 
 const queryClient = new QueryClient();
 
@@ -150,6 +153,19 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
       
+      {/* NEW AUTOMATION ROUTES */}
+      <Route path="/automations/new" element={
+        <ProtectedRoute>
+          <AutomationBuilder />
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/automations/:id/edit" element={
+        <ProtectedRoute>
+          <AutomationEditor />
+        </ProtectedRoute>
+      } />
+      
       <Route path="/teams" element={
         <ProtectedRoute>
           <MainLayout title="Teams" subtitle="Manage team members and roles">
@@ -166,16 +182,13 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
 
-        <Route path="/settings" element={
+      <Route path="/settings" element={
         <ProtectedRoute>
           <MainLayout title="Settings" subtitle="Organize with tags and labels">
             <Settings />
           </MainLayout>
         </ProtectedRoute>
       } />
-
-
-      
 
       {/* Catch-all route */}
       <Route path="*" element={<NotFound />} />

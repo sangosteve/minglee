@@ -1,3 +1,5 @@
+
+//frontend/src/lib/variable-service.ts
 export class VariableService {
   /**
    * Replace variables in a template string with actual values
