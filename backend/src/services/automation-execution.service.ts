@@ -24,207 +24,297 @@ export class AutomationExecutionService {
   /**
    * Execute an automation workflow for a specific contact
    */
-  async executeWorkflow(
-    automationId: string,
-    contactId: string,
-    userId: string,
-    triggerData: any = {}
-  ): Promise<{ success: boolean; executionId?: string; error?: string }> {
-    const db = getDb();
-    const executionId = `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+async executeWorkflow(
+  automationId: string,
+  contactId: string,
+  userId: string,
+  triggerData: any = {}
+): Promise<{ success: boolean; executionId?: string; error?: string }> {
+  const db = getDb();
+  const executionId = `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Initialize nodeExecutions array at the beginning of the function
+  const nodeExecutions: any[] = [];
+  
+  try {
+    console.log(`[Automation] 🚀 Starting execution ${executionId}`);
+    console.log(`[Automation] Automation: ${automationId}, Contact: ${contactId}, User: ${userId}`);
     
-    try {
-      console.log(`[Automation] 🚀 Starting execution ${executionId}`);
-      console.log(`[Automation] Automation: ${automationId}, Contact: ${contactId}, User: ${userId}`);
+    // 1. Get automation with flow data
+    const [automation] = await db.select({
+      id: automations.id,
+      name: automations.name,
+      flowData: automations.flowData,
+      userId: automations.userId
+    })
+    .from(automations)
+    .where(eq(automations.id, automationId))
+    .limit(1);
+    
+    if (!automation) {
+      console.error(`[Automation] ❌ Automation not found: ${automationId}`);
+      return { success: false, error: 'Automation not found' };
+    }
+    
+    // Verify ownership
+    if (automation.userId !== userId) {
+      console.error(`[Automation] ❌ Unauthorized access to automation`);
+      return { success: false, error: 'Unauthorized' };
+    }
+    
+    // 2. Get user
+    const [user] = await db.select({
+      id: users.id,
+      email: users.email,
+      whatsappPhoneNumberId: users.whatsappPhoneNumberId,
+      whatsappAccessToken: users.whatsappAccessToken,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+    
+    if (!user) {
+      console.error(`[Automation] ❌ User not found: ${userId}`);
+      return { success: false, error: 'User not found' };
+    }
+    
+    // 3. Get contact
+    const [contact] = await db.select({ 
+      id: contacts.id,
+      phone: contacts.phone,
+      name: contacts.name,
+      email: contacts.email,
+      tagIds: contacts.tagIds
+    })
+    .from(contacts)
+    .where(eq(contacts.id, contactId))
+    .limit(1);
+    
+    if (!contact) {
+      console.error(`[Automation] ❌ Contact not found: ${contactId}`);
+      return { success: false, error: 'Contact not found' };
+    }
+    
+    // 4. Get conversation
+    let conversation = null;
+    if (triggerData?.metadata?.conversation_id) {
+      const [convo] = await db.select()
+        .from(conversations)
+        .where(eq(conversations.id, triggerData.metadata.conversation_id))
+        .limit(1);
       
-      // 1. Get automation with flow data
-      const [automation] = await db.select({
-        id: automations.id,
-        name: automations.name,
-        flowData: automations.flowData,
-        userId: automations.userId
-      })
-      .from(automations)
-      .where(eq(automations.id, automationId))
-      .limit(1);
+      conversation = convo;
+    }
+    
+    // 5. Create execution context
+    const context: ExecutionContext = {
+      contactId: contact.id,
+      workflowId: automation.id,
+      executionId,
+      currentData: {
+        contact,
+        user,
+        conversation,
+        triggerData,
+        variables: {}
+      },
+      userData: user
+    };
+    
+    // 6. Execute flow data
+    const flowData = automation.flowData as any;
+    if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
+      console.error(`[Automation] ❌ Invalid flow data`);
+      return { success: false, error: 'Invalid flow data' };
+    }
+    
+    console.log(`[Automation] Processing ${flowData.nodes.length} nodes`);
+    
+    // Create a map of nodes by ID for quick lookup
+    const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
+
+    // Create a map of edges by source node
+    const edgeMap = new Map<string, any[]>();
+    flowData.edges.forEach((edge: any) => {
+      if (!edgeMap.has(edge.source)) {
+        edgeMap.set(edge.source, []);
+      }
+      edgeMap.get(edge.source)!.push(edge);
+    });
+
+    // Track visited nodes to avoid infinite loops
+    const visitedNodes = new Set<string>();
+
+    // Start from trigger node
+    let currentNode = flowData.nodes.find((n: any) => n.type === 'triggerNode');
+    
+    if (!currentNode) {
+      console.error(`[Automation] ❌ No trigger node found in flow`);
+      return { success: false, error: 'No trigger node found' };
+    }
+    
+    let executionCount = 0;
+    const maxExecutions = 100; // Safety limit
+
+    // Execution loop
+    while (currentNode && executionCount < maxExecutions) {
+      executionCount++;
       
-      if (!automation) {
-        console.error(`[Automation] ❌ Automation not found: ${automationId}`);
-        return { success: false, error: 'Automation not found' };
+      // Skip if already visited (prevents loops)
+      if (visitedNodes.has(currentNode.id)) {
+        console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, skipping to avoid loop`);
+        break;
       }
       
-      // Verify ownership
-      if (automation.userId !== userId) {
-        console.error(`[Automation] ❌ Unauthorized access to automation`);
-        return { success: false, error: 'Unauthorized' };
+      visitedNodes.add(currentNode.id);
+      
+      console.log(`[Automation] ➡️ Processing node: ${currentNode.id} (${currentNode.type})`);
+      
+      const nodeStartTime = Date.now();
+      let nodeSuccess = false;
+      let nodeError = null;
+      let conditionResult = null;
+      
+      try {
+        switch (currentNode.type) {
+          case 'textMessageNode':
+            await this.executeTextMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+            
+          case 'tagNode':
+            await this.executeTagNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+            
+          case 'delayNode':
+            await this.executeDelayNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+            
+          case 'conditionNode':
+            const conditionResponse = await this.executeConditionNode(currentNode, context);
+            nodeSuccess = conditionResponse.success;
+            conditionResult = conditionResponse.success;
+            console.log(`[Automation] Condition result: ${conditionResult}`);
+            break;
+            
+          case 'triggerNode':
+            // Trigger node doesn't need execution, just continue
+            console.log(`[Automation] ⚡ Trigger node: ${currentNode.data?.label || 'Trigger'}`);
+            nodeSuccess = true;
+            break;
+            
+          default:
+            console.log(`[Automation] ⚠️ Unknown node type: ${currentNode.type}`);
+            nodeSuccess = true;
+        }
+      } catch (error: any) {
+        nodeError = error.message;
+        console.error(`[Automation] ❌ Error in node ${currentNode.id}:`, error);
       }
       
-      // 2. Get user
-      const [user] = await db.select({
-        id: users.id,
-        email: users.email,
-        whatsappPhoneNumberId: users.whatsappPhoneNumberId,
-        whatsappAccessToken: users.whatsappAccessToken,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+      nodeExecutions.push({
+        nodeId: currentNode.id,
+        nodeType: currentNode.type,
+        success: nodeSuccess,
+        error: nodeError,
+        duration: Date.now() - nodeStartTime,
+        timestamp: new Date(),
+        conditionResult,
+      });
       
-      if (!user) {
-        console.error(`[Automation] ❌ User not found: ${userId}`);
-        return { success: false, error: 'User not found' };
+      // Determine next node based on edges
+      const outgoingEdges = edgeMap.get(currentNode.id) || [];
+      
+      if (outgoingEdges.length === 0) {
+        console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, execution complete`);
+        break;
       }
       
-      // 3. Get contact
-      const [contact] = await db.select({ 
-        id: contacts.id,
-        phone: contacts.phone,
-        name: contacts.name,
-        email: contacts.email,
-        tagIds: contacts.tagIds
-      })
-      .from(contacts)
-      .where(eq(contacts.id, contactId))
-      .limit(1);
-      
-      if (!contact) {
-        console.error(`[Automation] ❌ Contact not found: ${contactId}`);
-        return { success: false, error: 'Contact not found' };
-      }
-      
-      // 4. Get conversation
-      let conversation = null;
-      if (triggerData?.metadata?.conversation_id) {
-        const [convo] = await db.select()
-          .from(conversations)
-          .where(eq(conversations.id, triggerData.metadata.conversation_id))
-          .limit(1);
+      // Handle condition node branching
+      if (currentNode.type === 'conditionNode') {
+        const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
+        const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
         
-        conversation = convo;
-      }
-      
-      // 5. Create execution context
-      const context: ExecutionContext = {
-        contactId: contact.id,
-        workflowId: automation.id,
-        executionId,
-        currentData: {
-          contact,
-          user,
-          conversation,
-          triggerData,
-          variables: {}
-        },
-        userData: user
-      };
-      
-      // 6. Execute flow data
-      const flowData = automation.flowData as any;
-      if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
-        console.error(`[Automation] ❌ Invalid flow data`);
-        return { success: false, error: 'Invalid flow data' };
-      }
-      
-      console.log(`[Automation] Processing ${flowData.nodes.length} nodes`);
-      
-      // Sort nodes by position
-      const sortedNodes = this.sortNodesByPosition(flowData.nodes);
-      
-      // Track execution results
-      const nodeExecutions: any[] = [];
-      
-      // Process each node
-      for (const node of sortedNodes) {
-        console.log(`[Automation] ➡️ Processing node: ${node.id} (${node.type})`);
-        
-        const nodeStartTime = Date.now();
-        let nodeSuccess = false;
-        let nodeError = null;
-        
-        try {
-          switch (node.type) {
-            case 'textMessageNode':
-              await this.executeTextMessageNode(node, context);
-              nodeSuccess = true;
-              break;
-              
-            case 'tagNode':
-              await this.executeTagNode(node, context);
-              nodeSuccess = true;
-              break;
-              
-            case 'delayNode':
-              await this.executeDelayNode(node, context);
-              nodeSuccess = true;
-              break;
-              
-            case 'conditionNode':
-              const conditionResult = await this.executeConditionNode(node, context);
-              nodeSuccess = conditionResult.success;
-              break;
-              
-            default:
-              console.log(`[Automation] ⚠️ Unknown node type: ${node.type}`);
-              nodeSuccess = true; // Continue with other nodes
-          }
-        } catch (error: any) {
-          nodeError = error.message;
-          console.error(`[Automation] ❌ Error in node ${node.id}:`, error);
+        let nextEdge;
+        if (conditionResult === true && trueEdge) {
+          nextEdge = trueEdge;
+          console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
+        } else if (conditionResult === false && falseEdge) {
+          nextEdge = falseEdge;
+          console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
+        } else {
+          // Fallback: follow first edge
+          nextEdge = outgoingEdges[0];
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
         }
         
-        nodeExecutions.push({
-          nodeId: node.id,
-          nodeType: node.type,
-          success: nodeSuccess,
-          error: nodeError,
-          duration: Date.now() - nodeStartTime,
-          timestamp: new Date()
-        });
+        if (nextEdge) {
+          currentNode = nodeMap.get(nextEdge.target);
+          continue;
+        }
       }
       
-      // 7. Update automation stats
-      const allNodesSuccessful = nodeExecutions.every(exec => exec.success);
-      await this.updateAutomationStats(automationId, allNodesSuccessful);
-      
-      // 8. Save execution record
+      // For regular nodes, follow the first outgoing edge
+      if (outgoingEdges.length > 0) {
+        const nextEdge = outgoingEdges[0];
+        currentNode = nodeMap.get(nextEdge.target);
+      } else {
+        currentNode = null;
+      }
+    }
+
+    if (executionCount >= maxExecutions) {
+      console.warn(`[Automation] ⚠️ Execution stopped: reached maximum execution limit (${maxExecutions} nodes)`);
+    }
+    
+    // 7. Update automation stats
+    const allNodesSuccessful = nodeExecutions.every(exec => exec.success);
+    await this.updateAutomationStats(automationId, allNodesSuccessful);
+    
+    // 8. Save execution record
+    await this.saveExecutionRecord({
+      automationId,
+      contactId,
+      userId,
+      status: allNodesSuccessful ? 'completed' : 'partial_failure',
+      triggerData,
+      nodeExecutions,
+      executionData: context,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    
+    console.log(`[Automation] ✅ Execution completed: ${executionId}`);
+    console.log(`[Automation] Processed ${executionCount} nodes, ${nodeExecutions.filter(e => e.success).length} successful`);
+    
+    return { success: true, executionId };
+    
+  } catch (error: any) {
+    console.error(`[Automation] ❌ Execution failed:`, error);
+    
+    // Save failed execution
+    try {
       await this.saveExecutionRecord({
         automationId,
         contactId,
         userId,
-        status: allNodesSuccessful ? 'completed' : 'partial_failure',
+        status: 'failed',
         triggerData,
         nodeExecutions,
-        executionData: context,
+        error: error.message,
         startedAt: new Date(),
         completedAt: new Date(),
       });
-      
-      console.log(`[Automation] ✅ Execution completed: ${executionId}`);
-      return { success: true, executionId };
-      
-    } catch (error: any) {
-      console.error(`[Automation] ❌ Execution failed:`, error);
-      
-      // Save failed execution
-      try {
-        await this.saveExecutionRecord({
-          automationId,
-          contactId,
-          userId,
-          status: 'failed',
-          triggerData,
-          nodeExecutions: [],
-          error: error.message,
-          startedAt: new Date(),
-          completedAt: new Date(),
-        });
-      } catch (saveError) {
-        console.error('[Automation] Failed to save error record:', saveError);
-      }
-      
-      return { success: false, error: error.message };
+    } catch (saveError) {
+      console.error('[Automation] Failed to save error record:', saveError);
     }
+    
+    return { success: false, error: error.message };
   }
+}
 
   /**
    * Execute tag node
@@ -673,11 +763,367 @@ private async executeTagNode(node: any, context: ExecutionContext): Promise<void
   /**
    * Execute condition node
    */
-  private async executeConditionNode(node: any, context: ExecutionContext): Promise<{ success: boolean }> {
-    console.log(`[Automation] 🔍 Condition node: ${node.id}`);
-    // TODO: Implement condition logic
+private async executeConditionNode(node: any, context: ExecutionContext): Promise<{ success: boolean }> {
+  console.log(`[Automation] 🔍 Condition node: ${node.id}`);
+  
+  const nodeData = node.data || {};
+  const rules = nodeData.rules || [];
+  const logic = nodeData.logic || 'all';
+  const nodeLabel = nodeData.label || 'Condition';
+  
+  console.log(`[Automation] Evaluating condition "${nodeLabel}" with ${rules.length} rules (${logic} logic)`);
+  
+  if (rules.length === 0) {
+    console.log(`[Automation] ⚠️ No rules defined, condition passes by default`);
     return { success: true };
   }
+  
+  // Get data for evaluation
+  const contact = context.currentData.contact;
+  const conversation = context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 };
+  const user = context.currentData.user;
+  const triggerData = context.currentData.triggerData;
+  
+  // Prepare evaluation context
+  const evaluationContext = {
+    contact,
+    conversation,
+    user,
+    triggerData,
+    // Helper functions
+    now: new Date(),
+    date: (dateStr: string) => new Date(dateStr),
+  };
+  
+  console.log(`[Automation] Evaluation context:`, {
+    contactId: contact?.id,
+    contactName: contact?.name,
+    conversationId: conversation?.id,
+  });
+  
+  // Evaluate each rule
+  const ruleResults = rules.map((rule: any) => {
+    try {
+      const result = this.evaluateRule(rule, evaluationContext);
+      console.log(`[Automation] Rule "${rule.field} ${rule.operator} ${rule.value}": ${result ? '✅ PASS' : '❌ FAIL'}`);
+      return result;
+    } catch (error: any) {
+      console.error(`[Automation] ❌ Error evaluating rule:`, error.message);
+      return false; // Treat errors as false
+    }
+  });
+  
+  // Apply logic (ALL or ANY)
+  let finalResult: boolean;
+  
+  if (logic === 'all') {
+    finalResult = ruleResults.every(result => result === true);
+    console.log(`[Automation] ALL logic: ${finalResult ? '✅ ALL rules passed' : '❌ Some rules failed'}`);
+  } else {
+    finalResult = ruleResults.some(result => result === true);
+    console.log(`[Automation] ANY logic: ${finalResult ? '✅ At least one rule passed' : '❌ No rules passed'}`);
+  }
+  
+  // Update context with result for debugging
+  context.currentData.conditionResults = context.currentData.conditionResults || {};
+  context.currentData.conditionResults[node.id] = {
+    success: finalResult,
+    ruleResults,
+    logic,
+    timestamp: new Date(),
+  };
+  
+  console.log(`[Automation] Condition "${nodeLabel}": ${finalResult ? '✅ PASS' : '❌ FAIL'}`);
+  
+  return { success: finalResult };
+}
+
+/**
+ * Evaluate a single rule
+ */
+private evaluateRule(rule: any, context: any): boolean {
+  const { field, operator, value } = rule;
+  
+  if (!field) return false;
+  
+  // Get the actual value from context
+  const actualValue = this.getValueFromContext(field, context);
+  const comparisonValue = this.parseComparisonValue(value, field, context);
+  
+  console.log(`[Automation] Evaluating: ${field} ${operator} ${value}`);
+  console.log(`[Automation] Actual value:`, actualValue);
+  console.log(`[Automation] Comparison value:`, comparisonValue);
+  
+  switch (operator) {
+    case 'equals':
+      return this.equals(actualValue, comparisonValue);
+    case 'not_equals':
+      return !this.equals(actualValue, comparisonValue);
+    case 'contains':
+      return this.contains(actualValue, comparisonValue);
+    case 'not_contains':
+      return !this.contains(actualValue, comparisonValue);
+    case 'starts_with':
+      return this.startsWith(actualValue, comparisonValue);
+    case 'ends_with':
+      return this.endsWith(actualValue, comparisonValue);
+    case 'greater_than':
+      return this.greaterThan(actualValue, comparisonValue);
+    case 'less_than':
+      return this.lessThan(actualValue, comparisonValue);
+    case 'greater_than_or_equal':
+      return this.greaterThanOrEqual(actualValue, comparisonValue);
+    case 'less_than_or_equal':
+      return this.lessThanOrEqual(actualValue, comparisonValue);
+    case 'is_empty':
+      return this.isEmpty(actualValue);
+    case 'is_not_empty':
+      return !this.isEmpty(actualValue);
+    case 'exists':
+      return this.exists(actualValue);
+    case 'not_exists':
+      return !this.exists(actualValue);
+    default:
+      console.warn(`[Automation] Unknown operator: ${operator}`);
+      return false;
+  }
+}
+
+/**
+ * Get value from context using dot notation
+ */
+private getValueFromContext(path: string, context: any): any {
+  if (!path) return null;
+  
+  const parts = path.split('.');
+  let current = context;
+  
+  for (const part of parts) {
+    if (current === null || current === undefined) {
+      return null;
+    }
+    
+    // Handle array indices
+    if (part.match(/^\d+$/)) {
+      const index = parseInt(part, 10);
+      if (Array.isArray(current) && index < current.length) {
+        current = current[index];
+      } else {
+        return null;
+      }
+    } else {
+      current = current[part];
+    }
+  }
+  
+  return current;
+}
+
+/**
+ * Parse comparison value (handle variables, dates, etc.)
+ */
+private parseComparisonValue(value: string, fieldPath: string, context: any): any {
+  if (!value) return null;
+  
+  // Check if value is a variable (e.g., {{contact.name}})
+  if (value.startsWith('{{') && value.endsWith('}}')) {
+    const variablePath = value.slice(2, -2).trim();
+    return this.getValueFromContext(variablePath, context);
+  }
+  
+  // Parse numbers
+  if (!isNaN(Number(value)) && value.trim() !== '') {
+    return Number(value);
+  }
+  
+  // Parse booleans
+  if (value.toLowerCase() === 'true') return true;
+  if (value.toLowerCase() === 'false') return false;
+  if (value.toLowerCase() === 'yes') return true;
+  if (value.toLowerCase() === 'no') return false;
+  
+  // Parse dates
+  const date = this.parseDate(value);
+  if (date) return date;
+  
+  // Return as string
+  return value;
+}
+
+/**
+ * Parse date from string
+ */
+private parseDate(dateStr: string): Date | null {
+  try {
+    // Try ISO format
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+      return new Date(dateStr);
+    }
+    
+    // Try relative date (e.g., "7 days ago", "tomorrow")
+    const now = new Date();
+    const relativeMatch = dateStr.match(/^(\d+)\s+(day|week|month|year)s?\s+(ago|from now)$/i);
+    
+    if (relativeMatch) {
+      const amount = parseInt(relativeMatch[1], 10);
+      const unit = relativeMatch[2].toLowerCase();
+      const direction = relativeMatch[3].toLowerCase();
+      
+      const multiplier = direction === 'ago' ? -1 : 1;
+      
+      switch (unit) {
+        case 'day':
+          return new Date(now.setDate(now.getDate() + (amount * multiplier)));
+        case 'week':
+          return new Date(now.setDate(now.getDate() + (amount * 7 * multiplier)));
+        case 'month':
+          return new Date(now.setMonth(now.getMonth() + (amount * multiplier)));
+        case 'year':
+          return new Date(now.setFullYear(now.getFullYear() + (amount * multiplier)));
+      }
+    }
+    
+    // Try common date formats
+    const parsedDate = new Date(dateStr);
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  
+  return null;
+}
+
+// Comparison functions
+private equals(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  
+  // Date comparison
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() === b.getTime();
+  }
+  
+  // Number comparison (loose equality for numbers)
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Math.abs(a - b) < 0.000001;
+  }
+  
+  // String comparison (case-insensitive)
+  if (typeof a === 'string' && typeof b === 'string') {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  
+  // Array comparison (check if arrays contain same items)
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every(item => b.includes(item));
+  }
+  
+  return a === b;
+}
+
+private contains(actualValue: any, searchValue: any): boolean {
+  if (actualValue == null || searchValue == null) return false;
+  
+  // String contains
+  if (typeof actualValue === 'string' && typeof searchValue === 'string') {
+    return actualValue.toLowerCase().includes(searchValue.toLowerCase());
+  }
+  
+  // Array contains
+  if (Array.isArray(actualValue)) {
+    return actualValue.some(item => 
+      this.equals(item, searchValue)
+    );
+  }
+  
+  // Object contains key
+  if (typeof actualValue === 'object' && actualValue !== null) {
+    return Object.keys(actualValue).some(key => 
+      this.equals(key, searchValue) || this.equals(actualValue[key], searchValue)
+    );
+  }
+  
+  return false;
+}
+
+private startsWith(actualValue: any, searchValue: any): boolean {
+  if (typeof actualValue !== 'string' || typeof searchValue !== 'string') {
+    return false;
+  }
+  return actualValue.toLowerCase().startsWith(searchValue.toLowerCase());
+}
+
+private endsWith(actualValue: any, searchValue: any): boolean {
+  if (typeof actualValue !== 'string' || typeof searchValue !== 'string') {
+    return false;
+  }
+  return actualValue.toLowerCase().endsWith(searchValue.toLowerCase());
+}
+
+private greaterThan(a: any, b: any): boolean {
+  if (a == null || b == null) return false;
+  
+  // Number comparison
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a > b;
+  }
+  
+  // Date comparison
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() > b.getTime();
+  }
+  
+  // String comparison (alphabetical)
+  if (typeof a === 'string' && typeof b === 'string') {
+    return a.toLowerCase() > b.toLowerCase();
+  }
+  
+  return false;
+}
+
+private lessThan(a: any, b: any): boolean {
+  if (a == null || b == null) return false;
+  
+  // Number comparison
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a < b;
+  }
+  
+  // Date comparison
+  if (a instanceof Date && b instanceof Date) {
+    return a.getTime() < b.getTime();
+  }
+  
+  // String comparison (alphabetical)
+  if (typeof a === 'string' && typeof b === 'string') {
+    return a.toLowerCase() < b.toLowerCase();
+  }
+  
+  return false;
+}
+
+private greaterThanOrEqual(a: any, b: any): boolean {
+  return this.greaterThan(a, b) || this.equals(a, b);
+}
+
+private lessThanOrEqual(a: any, b: any): boolean {
+  return this.lessThan(a, b) || this.equals(a, b);
+}
+
+private isEmpty(value: any): boolean {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  return false;
+}
+
+private exists(value: any): boolean {
+  return value != null;
+}
 
   /**
    * Sort nodes by position (top to bottom, left to right)

@@ -2,6 +2,7 @@ import { NodeTypes } from '@xyflow/react';
 import { memo } from 'react';
 import TextMessageNode from './TextMessageNode';
 import QuickRepliesNode from './QuickRepliesNode';
+import ConditionNode from './ConditionNode';
 import TriggerNode from './TriggerNode'; // ADD THIS
 import TagNode from './TagNode';
 export { TextMessageNode, QuickRepliesNode, TriggerNode }; // REMOVE StartNode
@@ -13,4 +14,5 @@ export const nodeTypes = {
   quickRepliesNode: QuickRepliesNode,
   triggerNode: TriggerNode ,
   tagNode: TagNode,
+  conditionNode:ConditionNode
 } as NodeTypes;

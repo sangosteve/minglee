@@ -52,6 +52,7 @@ import {
   useUpdateAutomationStatus
 } from "@/lib/api/automations";
 import { api } from "@/lib/api";
+import ConditionPanel from "@/components/automations/panels/ConditionPanel";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -1045,7 +1046,13 @@ function AutomationEditorInner() {
               onClose={closePanel}
               onUpdate={updateNode}
             />
-          ) : selectedNode && (
+          ) : selectedNode && selectedNode.type === 'conditionNode' ? (
+  <ConditionPanel
+    node={selectedNode}
+    onClose={closePanel}
+    onUpdate={updateNode}
+  />
+) : selectedNode && (
             <div className="w-96 bg-card border-l border-border flex flex-col shadow-lg">
               <div className="p-4 border-b border-border flex items-center justify-between">
                 <h3 className="font-semibold text-foreground">
