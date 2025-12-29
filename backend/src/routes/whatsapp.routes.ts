@@ -11,6 +11,7 @@ import { users, contacts, conversations, messages, mediaAttachments, automations
 import { eq, and, sql } from 'drizzle-orm';
 import Busboy from 'busboy';
 import { messageService } from '../services/message/message.service';
+import { triggerMatchingService } from '../services/trigger-matching.service';
 
 const router = Router();
 
@@ -185,6 +186,37 @@ function getLastMessageText(message: any): string {
   };
   
   return typeLabels[messageType] || 'Message';
+}
+
+/**
+ * Check if this is the first message from a contact
+ */
+async function checkIsFirstMessage(
+  userId: string,
+  contactId: string,
+  phoneNumberId: string
+): Promise<boolean> {
+  try {
+    const db = getDb();
+    
+    // Check if there are any previous messages from this contact
+    const previousMessages = await db.execute(sql`
+      SELECT COUNT(*) as count
+      FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.contact_id = ${contactId}
+      AND c.user_id = ${userId}
+      AND c.whatsapp_phone_number_id = ${phoneNumberId}
+      AND m.direction = 'incoming'
+    `);
+    
+    const count = Number(previousMessages.rows[0]?.count || 0);
+    return count === 0;
+    
+  } catch (error) {
+    console.error('Error checking first message:', error);
+    return false;
+  }
 }
 
 /**
@@ -368,13 +400,22 @@ async function processIncomingMessage(
       console.log(`✅ Updated conversation: ID ${conversation.id}`);
     }
     
-    // 4. Prepare message body and metadata
+    // 4. Check if this is the first message from this contact
+    const isFirstMessage = await checkIsFirstMessage(
+      user.id,
+      contact.id,
+      whatsappPhoneNumberId
+    );
+    console.log(`📨 Is first message from contact: ${isFirstMessage}`);
+    
+    // 5. Prepare message body and metadata
     let messageBody = '';
     let messageMetadata: any = {
       type: message.type,
       whatsappMessageId: message.id,
       sender: message.from,
       timestamp: message.timestamp,
+      isFirstMessage,
     };
     
     if (message.text?.body) {
@@ -396,7 +437,7 @@ async function processIncomingMessage(
       messageBody = `${message.type} message`;
     }
     
-    // 5. Handle media messages
+    // 6. Handle media messages
     const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
     const isMediaMessage = mediaTypes.includes(message.type);
     
@@ -450,9 +491,9 @@ async function processIncomingMessage(
       
       console.log(`✅ Message saved: ID ${result.message.id}`);
       
-      // Check and trigger automations for text messages
+      // Check and trigger automations for text messages using new trigger system
       if (message.text?.body && contact && user) {
-        console.log(`📨 Checking automations for incoming message: "${message.text.body.substring(0, 50)}..."`);
+        console.log(`🤖 Checking automations for incoming message: "${message.text.body.substring(0, 50)}..."`);
         
         checkAndTriggerAutomations(
           contact.id,
@@ -464,14 +505,15 @@ async function processIncomingMessage(
             business_phone_number: metadata.display_phone_number,
             conversation_id: conversation.id,
             saved_message_id: result.message.id,
-          }
+          },
+          isFirstMessage
         ).catch(error => {
           console.error('❌ Background automation trigger failed:', error);
         });
       }
     }
     
-    // 6. Optional: Mark message as read
+    // 7. Optional: Mark message as read
     try {
       if (user.whatsappAccessToken) {
         await WhatsAppService.markAsRead(
@@ -493,6 +535,79 @@ async function processIncomingMessage(
   } catch (error: any) {
     console.error('❌ Error processing incoming message:', error);
     console.error('❌ Error stack:', error.stack);
+  }
+}
+
+/**
+ * Check and trigger automations for incoming messages (NEW TRIGGER SYSTEM)
+ */
+async function checkAndTriggerAutomations(
+  contactId: string, 
+  userId: string, 
+  messageText: string,
+  metadata: any,
+  isFirstMessage: boolean = false
+) {
+  try {
+    console.log(`🤖 Checking automations for contact ${contactId}, message: "${messageText.substring(0, 50)}..."`);
+    
+    const db = getDb();
+    
+    // Find user to get phone number ID
+    const [user] = await db.select({
+      id: users.id,
+      whatsappPhoneNumberId: users.whatsappPhoneNumberId,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+    
+    if (!user || !user.whatsappPhoneNumberId) {
+      console.error('❌ User or WhatsApp phone number ID not found');
+      return;
+    }
+    
+    // Check for automation triggers using the new trigger matching service
+    const triggerResults = await triggerMatchingService.checkMessageTrigger(
+      userId,
+      contactId,
+      user.whatsappPhoneNumberId,
+      messageText,
+      isFirstMessage
+    );
+    
+    console.log(`🤖 Found ${triggerResults.length} automations to execute`);
+    
+    // Execute matched automations
+    for (const result of triggerResults) {
+      console.log(`🚀 Triggering automation: ${result.matchedAutomation.name} (${result.triggerType})`);
+      
+      try {
+        const executionResult = await automationExecutionService.triggerAutomation(
+          result.matchedAutomation.id,
+          contactId,
+          userId,
+          {
+            triggerType: result.triggerType,
+            message: messageText,
+            isFirstMessage,
+            matchedKeywords: result.matchedKeywords,
+            metadata: metadata,
+          }
+        );
+        
+        if (executionResult.success) {
+          console.log(`✅ Automation "${result.matchedAutomation.name}" executed successfully: ${executionResult.executionId}`);
+        } else {
+          console.error(`❌ Automation "${result.matchedAutomation.name}" failed:`, executionResult.error);
+        }
+      } catch (error: any) {
+        console.error(`❌ Error executing automation "${result.matchedAutomation.name}":`, error.message);
+      }
+    }
+    
+  } catch (error: any) {
+    console.error('❌ Error checking automations:', error.message);
   }
 }
 
@@ -549,113 +664,6 @@ async function processMessageStatus(status: any) {
   } catch (error: any) {
     console.error('❌ Error processing message status:', error);
   }
-}
-
-// ==================== AUTOMATION FUNCTIONS ====================
-
-/**
- * Check and trigger automations for incoming messages
- */
-async function checkAndTriggerAutomations(
-  contactId: string, 
-  userId: string, 
-  messageText: string,
-  metadata: any
-) {
-  try {
-    console.log(`🤖 Checking automations for contact ${contactId}, message: "${messageText}"`);
-    
-    const db = getDb();
-    
-    // Find all active automations with "message_received" trigger
-    const activeAutomations = await db
-      .select()
-      .from(automations)
-      .where(and(
-        eq(automations.userId, userId),
-        eq(automations.status, 'active'),
-        eq(automations.triggerType, 'message_received')
-      ));
-
-    console.log(`🔍 Found ${activeAutomations.length} active message_received automations`);
-
-    for (const automation of activeAutomations) {
-      const triggerConfig = automation.triggerConfig || {};
-      
-      // Check trigger conditions
-      const shouldTrigger = evaluateTriggerConditions(messageText, triggerConfig);
-      
-      if (shouldTrigger) {
-        console.log(`🚀 Triggering automation: ${automation.name} (${automation.id})`);
-        console.log(`💬 Using conversation: ${metadata.conversation_id}`);
-        
-        // Execute the automation in background
-        automationExecutionService.executeWorkflow(
-          automation.id,
-          contactId,
-          userId,
-          {
-            trigger_type: 'message_received',
-            message_text: messageText,
-            received_at: new Date().toISOString(),
-            metadata: metadata,
-            conversation_id: metadata.conversation_id,
-            saved_message_id: metadata.saved_message_id,
-          }
-        ).then(result => {
-          if (result.success) {
-            console.log(`✅ Automation ${automation.name} executed successfully: ${result.executionId}`);
-          } else {
-            console.error(`❌ Automation ${automation.name} failed:`, result.error);
-          }
-        }).catch(error => {
-          console.error(`❌ Automation execution error for ${automation.name}:`, error);
-        });
-      }
-    }
-    
-  } catch (error) {
-    console.error('❌ Error checking automations:', error);
-  }
-}
-
-/**
- * Helper function to evaluate trigger conditions
- */
-function evaluateTriggerConditions(messageText: string, triggerConfig: any): boolean {
-  if (!triggerConfig || Object.keys(triggerConfig).length === 0) {
-    return true;
-  }
-
-  const messageLower = messageText.toLowerCase();
-  
-  if (triggerConfig.keywords && Array.isArray(triggerConfig.keywords)) {
-    for (const keyword of triggerConfig.keywords) {
-      if (messageLower.includes(keyword.toLowerCase())) {
-        console.log(`✅ Keyword match: "${keyword}" in message`);
-        return true;
-      }
-    }
-  }
-  
-  if (triggerConfig.exactMatch && messageText === triggerConfig.exactMatch) {
-    console.log(`✅ Exact match: "${triggerConfig.exactMatch}"`);
-    return true;
-  }
-  
-  if (triggerConfig.regexPattern) {
-    try {
-      const regex = new RegExp(triggerConfig.regexPattern, 'i');
-      if (regex.test(messageText)) {
-        console.log(`✅ Regex match: "${triggerConfig.regexPattern}"`);
-        return true;
-      }
-    } catch (error) {
-      console.error('Invalid regex pattern:', triggerConfig.regexPattern);
-    }
-  }
-  
-  return false;
 }
 
 // ==================== MEDIA PROCESSING ====================

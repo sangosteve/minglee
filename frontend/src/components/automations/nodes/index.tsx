@@ -1,20 +1,15 @@
-// frontend/src/components/automations/nodes/index.tsx
 import { NodeTypes } from '@xyflow/react';
 import { memo } from 'react';
-import StartNode from './StartNode';
 import TextMessageNode from './TextMessageNode';
 import QuickRepliesNode from './QuickRepliesNode';
-// import ListMessageNode from './ListMessageNode';
-// import ConditionNode from './ConditionNode';
-// import DelayNode from './DelayNode';
-// import TagNode from './TagNode';
+import TriggerNode from './TriggerNode'; // ADD THIS
 
-// Re-export all nodes
-export { StartNode, TextMessageNode, QuickRepliesNode };
+export { TextMessageNode, QuickRepliesNode, TriggerNode }; // REMOVE StartNode
 
 // Export node types for React Flow
 export const nodeTypes = {
-  startNode: StartNode,
+  // REMOVE THIS: startNode: StartNode,
   textMessageNode: TextMessageNode,
-  quickRepliesNode: QuickRepliesNode
+  quickRepliesNode: QuickRepliesNode,
+  triggerNode: TriggerNode // ADD THIS
 } as NodeTypes;

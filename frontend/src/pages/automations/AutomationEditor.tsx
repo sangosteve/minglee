@@ -43,12 +43,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { nodeTypes } from "@/components/automations/nodes";
-import TextMessagePanel from "@/components/automations/panels/TextMessagePanel"; // Add this import
+import TextMessagePanel from "@/components/automations/panels/TextMessagePanel"; 
+import TriggerPanel from "@/components/automations/panels/TriggerPanel";
 import { 
   useAutomation, 
   useUpdateAutomation,
   useUpdateAutomationStatus 
 } from "@/lib/api/automations";
+import { api } from "@/lib/api";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -121,22 +123,24 @@ function AutomationEditorInner() {
         console.log('📦 Loaded nodes from DB:', loadedNodes);
         console.log('📦 Loaded edges from DB:', loadedEdges);
         
-        // Check if we have a startNode, if not add one
-        const hasStartNode = loadedNodes.some((node: Node) => node.type === 'startNode');
-        if (!hasStartNode && loadedNodes.length > 0) {
-          console.log('➕ Adding missing startNode...');
-          const startNode: Node = {
-            id: 'start-1',
-            type: 'startNode',
+        // Check if we have a triggerNode, if not add one
+        const hasTriggerNode = loadedNodes.some((node: Node) => node.type === 'triggerNode');
+        if (!hasTriggerNode && loadedNodes.length > 0) {
+          console.log('➕ Adding missing triggerNode...');
+          
+          const triggerNode: Node = {
+            id: `trigger-${Date.now()}`,
+            type: 'triggerNode',
             position: { x: 100, y: 100 },
             data: {
-              label: 'Starting point',
-              description: 'Where your automation begins',
+              triggerType: 'new_conversation',
+              label: 'Trigger',
+              config: {},
               onDelete: undefined,
               onUpdate: updateNode,
             },
           };
-          loadedNodes.unshift(startNode); // Add to beginning
+          loadedNodes.unshift(triggerNode);
         }
         
         // Add onDelete and onUpdate functions to all nodes
@@ -144,7 +148,7 @@ function AutomationEditorInner() {
           ...node,
           data: {
             ...node.data,
-            onDelete: node.type === "startNode" ? undefined : deleteNode,
+            onDelete: node.type === "triggerNode" ? undefined : deleteNode,
             onUpdate: updateNode,
           },
         }));
@@ -162,63 +166,64 @@ function AutomationEditorInner() {
         setNodeId(maxId > 0 ? maxId + 1 : 2);
       } else {
         console.log('❌ No flow data found in automation');
-        // Initialize with just a start node
-        const startNode: Node = {
-          id: 'start-1',
-          type: 'startNode',
+        // Initialize with just a trigger node
+        const triggerNode: Node = {
+          id: 'trigger-1',
+          type: 'triggerNode',
           position: { x: 100, y: 100 },
           data: {
-            label: 'Starting point',
-            description: 'Where your automation begins',
+            triggerType: 'new_conversation',
+            label: 'Trigger',
+            config: {},
             onDelete: undefined,
             onUpdate: updateNode,
           },
         };
-        setNodes([startNode]);
+        setNodes([triggerNode]);
       }
       
       setIsLoading(false);
     }
   }, [automation]);
 
-const triggerAutomation = async () => {
-  if (!id) return;
-  
-  try {
-    // You might want to ask for a contact to test with
-    const contactId = prompt('Enter contact ID to test with (or leave empty for test contact):');
+  const triggerAutomation = async () => {
+    if (!id) return;
     
-    const result = await api.post(`/automations/${id}/trigger`, {
-      contactId: contactId || undefined,
-      triggerData: { manual_trigger: true }
-    });
-    
-    if (result.data.success) {
-      toast({
-        title: "Success",
-        description: "Automation triggered successfully",
+    try {
+      // You might want to ask for a contact to test with
+      const contactId = prompt('Enter contact ID to test with (or leave empty for test contact):');
+      
+      const result = await api.post(`/automations/${id}/trigger`, {
+        contactId: contactId || undefined,
+        triggerData: { manual_trigger: true }
       });
-    } else {
+      
+      if (result.data.success) {
+        toast({
+          title: "Success",
+          description: "Automation triggered successfully",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: result.data.error,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error triggering automation:', error);
       toast({
         title: "Error",
-        description: result.data.error,
+        description: "Failed to trigger automation",
         variant: "destructive",
       });
     }
-  } catch (error) {
-    console.error('Error triggering automation:', error);
-    toast({
-      title: "Error",
-      description: "Failed to trigger automation",
-      variant: "destructive",
-    });
-  }
-};
+  };
 
   // Delete node function
   const deleteNode = useCallback(
     (nodeId: string) => {
-      if (nodeId.startsWith('start-')) return;
+      if (nodeId.startsWith('trigger-')) return;
       
       setNodes((nds) => nds.filter((node) => node.id !== nodeId));
       setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
@@ -285,6 +290,7 @@ const triggerAutomation = async () => {
     };
 
     const nodeDataMap: Record<string, any> = {
+      triggerNode: { triggerType: "new_conversation", config: {} },
       textMessageNode: { message: "" },
       quickRepliesNode: { body: "", buttons: [] },
       listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
@@ -313,6 +319,7 @@ const triggerAutomation = async () => {
     });
 
     const labels = {
+      triggerNode: `Trigger ${nodeId}`,
       textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
@@ -352,13 +359,13 @@ const triggerAutomation = async () => {
     const y = viewportCenter.y + Math.random() * 200 - 100;
     
     const labels = {
+      triggerNode: `Trigger ${nodeId}`,
       textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
       delayNode: `Delay ${nodeId}`,
       tagNode: `Tag ${nodeId}`,
-      startNode: `Start ${nodeId}`,
     };
 
     const newNode = createNode(type, { x, y }, labels[type as keyof typeof labels] || `Node ${nodeId}`);
@@ -398,7 +405,7 @@ const triggerAutomation = async () => {
 
   // Handle node click
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
-    if (node.type !== "startNode") {
+    if (node.type !== "triggerNode") {
       setSelectedNode(node);
     }
   }, []);
@@ -416,160 +423,174 @@ const triggerAutomation = async () => {
   };
 
   // Save workflow
-const saveWorkflow = async () => {
-  if (!workflowName.trim()) {
-    toast({
-      title: "Error",
-      description: "Please enter a name for your automation",
-      variant: "destructive",
-    });
-    return;
-  }
+  const saveWorkflow = async () => {
+    if (!workflowName.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a name for your automation",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  setIsSaving(true);
-  try {
-    // Clean nodes - remove all functions, React components, and circular references
-    const cleanNodes = nodes.map(node => {
-      // Create a clean node without the data first
-      const cleanNode: any = {
-        id: node.id,
-        type: node.type,
-        position: node.position,
-      };
+    setIsSaving(true);
+    try {
+      // Clean nodes - remove all functions, React components, and circular references
+      const cleanNodes = nodes.map(node => {
+        // Create a clean node without the data first
+        const cleanNode: any = {
+          id: node.id,
+          type: node.type,
+          position: node.position,
+        };
 
-      // Only add data if it exists and is an object
-      if (node.data && typeof node.data === 'object') {
-        const cleanData: any = {};
-        
-        // Safely copy each property
-        Object.keys(node.data).forEach(key => {
-          const value = node.data[key];
+        // Only add data if it exists and is an object
+        if (node.data && typeof node.data === 'object') {
+          const cleanData: any = {};
           
-          // Skip functions and undefined
-          if (typeof value === 'function' || value === undefined) {
-            return;
-          }
-          
-          // Skip React components or elements
-          if (value && typeof value === 'object' && 
-              (value.$$typeof === Symbol.for('react.element') || 
-               value.$$typeof === Symbol.for('react.fragment'))) {
-            return;
-          }
-          
-          // Handle arrays
-          if (Array.isArray(value)) {
-            try {
-              cleanData[key] = JSON.parse(JSON.stringify(value));
-            } catch {
-              cleanData[key] = [];
+          // Safely copy each property
+          Object.keys(node.data).forEach(key => {
+            const value = node.data[key];
+            
+            // Skip functions and undefined
+            if (typeof value === 'function' || value === undefined) {
+              return;
             }
-          } 
-          // Handle objects
-          else if (value && typeof value === 'object') {
-            try {
-              cleanData[key] = JSON.parse(JSON.stringify(value));
-            } catch (error) {
-              console.warn(`Could not clone property ${key} for node ${node.id}:`, error);
-              // Try a shallow clone
-              cleanData[key] = { ...value };
+            
+            // Skip React components or elements
+            if (value && typeof value === 'object' && 
+                (value.$$typeof === Symbol.for('react.element') || 
+                 value.$$typeof === Symbol.for('react.fragment'))) {
+              return;
+            }
+            
+            // Handle arrays
+            if (Array.isArray(value)) {
+              try {
+                cleanData[key] = JSON.parse(JSON.stringify(value));
+              } catch {
+                cleanData[key] = [];
+              }
+            } 
+            // Handle objects
+            else if (value && typeof value === 'object') {
+              try {
+                cleanData[key] = JSON.parse(JSON.stringify(value));
+              } catch (error) {
+                console.warn(`Could not clone property ${key} for node ${node.id}:`, error);
+                // Try a shallow clone
+                cleanData[key] = { ...value };
+              }
+            }
+            // Handle primitives
+            else {
+              cleanData[key] = value;
+            }
+          });
+          
+          // Ensure message nodes have their message saved
+          if (node.type === 'textMessageNode') {
+            // Make sure message is included
+            if (node.data.message !== undefined) {
+              cleanData.message = node.data.message;
+            }
+            
+            // Make sure label is included
+            if (node.data.label !== undefined) {
+              cleanData.label = node.data.label;
+            }
+            
+            // Include any other important fields
+            if (node.data.usedVariables !== undefined) {
+              try {
+                cleanData.usedVariables = JSON.parse(JSON.stringify(node.data.usedVariables));
+              } catch {
+                cleanData.usedVariables = [];
+              }
+            }
+            
+            if (node.data.hasVariables !== undefined) {
+              cleanData.hasVariables = node.data.hasVariables;
             }
           }
-          // Handle primitives
-          else {
-            cleanData[key] = value;
-          }
-        });
-        
-        // Ensure message nodes have their message saved
-        if (node.type === 'textMessageNode') {
-          // Make sure message is included
-          if (node.data.message !== undefined) {
-            cleanData.message = node.data.message;
-          }
           
-          // Make sure label is included
-          if (node.data.label !== undefined) {
-            cleanData.label = node.data.label;
-          }
-          
-          // Include any other important fields
-          if (node.data.usedVariables !== undefined) {
-            try {
-              cleanData.usedVariables = JSON.parse(JSON.stringify(node.data.usedVariables));
-            } catch {
-              cleanData.usedVariables = [];
+          // For trigger nodes, ensure trigger config is saved
+          if (node.type === 'triggerNode') {
+            if (node.data.triggerType !== undefined) {
+              cleanData.triggerType = node.data.triggerType;
+            }
+            if (node.data.config !== undefined) {
+              try {
+                cleanData.config = JSON.parse(JSON.stringify(node.data.config));
+              } catch {
+                cleanData.config = {};
+              }
             }
           }
           
-          if (node.data.hasVariables !== undefined) {
-            cleanData.hasVariables = node.data.hasVariables;
+          // Only add data if we have properties
+          if (Object.keys(cleanData).length > 0) {
+            cleanNode.data = cleanData;
           }
         }
         
-        // Only add data if we have properties
-        if (Object.keys(cleanData).length > 0) {
-          cleanNode.data = cleanData;
-        }
-      }
+        return cleanNode;
+      });
       
-      return cleanNode;
-    });
-    
-    // Clean edges
-    const cleanEdges = edges.map(edge => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-      type: edge.type,
-      markerEnd: edge.markerEnd,
-      style: edge.style,
-    }));
-    
-    // Prepare the data
-    const workflowData = {
-      name: workflowName,
-      description: `Automation workflow with ${cleanNodes.filter(n => n.type !== 'startNode').length} nodes`,
-      status: workflowStatus,
-      triggerType: automation?.triggerType || "manual",
-      triggerConfig: automation?.triggerConfig || {},
-      flowData: { 
-        nodes: cleanNodes, 
-        edges: cleanEdges 
-      },
-    };
-    
-    // Debug: Log the cleaned data
-    console.log("Saving workflow with nodes:", JSON.stringify(cleanNodes, null, 2));
-    console.log("Checking message nodes:", cleanNodes.filter(n => n.type === 'textMessageNode'));
-    
-    const result = await updateAutomationMutation.mutateAsync({ 
-      id: id!, 
-      data: workflowData 
-    });
-    
-    console.log("Save response:", result);
-    
-    toast({
-      title: "Success",
-      description: "Automation updated successfully!",
-    });
-    
-    refetch();
-    
-  } catch (error) {
-    console.error('Error updating workflow:', error);
-    toast({
-      title: "Error",
-      description: error instanceof Error ? error.message : "Failed to update automation",
-      variant: "destructive",
-    });
-  } finally {
-    setIsSaving(false);
-  }
-};
+      // Clean edges
+      const cleanEdges = edges.map(edge => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        type: edge.type,
+        markerEnd: edge.markerEnd,
+        style: edge.style,
+      }));
+      
+      // Prepare the data
+      const workflowData = {
+        name: workflowName,
+        description: `Automation workflow with ${cleanNodes.filter(n => n.type !== 'triggerNode').length} nodes`,
+        status: workflowStatus,
+        triggerType: automation?.triggerType || "manual",
+        triggerConfig: automation?.triggerConfig || {},
+        flowData: { 
+          nodes: cleanNodes, 
+          edges: cleanEdges 
+        },
+      };
+      
+      // Debug: Log the cleaned data
+      console.log("Saving workflow with nodes:", JSON.stringify(cleanNodes, null, 2));
+      console.log("Checking trigger nodes:", cleanNodes.filter(n => n.type === 'triggerNode'));
+      
+      const result = await updateAutomationMutation.mutateAsync({ 
+        id: id!, 
+        data: workflowData 
+      });
+      
+      console.log("Save response:", result);
+      
+      toast({
+        title: "Success",
+        description: "Automation updated successfully!",
+      });
+      
+      refetch();
+      
+    } catch (error) {
+      console.error('Error updating workflow:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to update automation",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Toggle workflow status
   const toggleWorkflowStatus = async () => {
@@ -593,11 +614,24 @@ const saveWorkflow = async () => {
 
   // Reset flow
   const resetFlow = useCallback(() => {
-    const startNode = nodes.find(node => node.type === 'startNode');
-    if (startNode) {
-      setNodes([startNode]);
+    const triggerNode = nodes.find(node => node.type === 'triggerNode');
+    if (triggerNode) {
+      setNodes([triggerNode]);
     } else {
-      setNodes([]);
+      // Create a new trigger node if none exists
+      const newTriggerNode: Node = {
+        id: 'trigger-1',
+        type: 'triggerNode',
+        position: { x: 100, y: 100 },
+        data: {
+          triggerType: 'new_conversation',
+          label: 'Trigger',
+          config: {},
+          onDelete: undefined,
+          onUpdate: updateNode,
+        },
+      };
+      setNodes([newTriggerNode]);
     }
     setEdges([]);
     setNodeId(2);
@@ -605,7 +639,7 @@ const saveWorkflow = async () => {
       title: "Flow reset",
       description: "Automation flow has been reset",
     });
-  }, [nodes, setNodes, setEdges]);
+  }, [nodes, setNodes, setEdges, updateNode]);
 
   const goBack = () => {
     navigate(`/automations/${id}`);
@@ -659,16 +693,16 @@ const saveWorkflow = async () => {
               {workflowStatus === 'active' ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
               {workflowStatus === 'active' ? 'Pause' : 'Activate'}
             </Button>
-           <Button 
-  variant="outline" 
-  size="sm" 
-  className="gap-2" 
-  onClick={triggerAutomation}
-  disabled={isSaving}
->
-  <PlayIcon className="h-4 w-4" />
-  Test Run
-</Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-2" 
+              onClick={triggerAutomation}
+              disabled={isSaving}
+            >
+              <PlayIcon className="h-4 w-4" />
+              Test Run
+            </Button>
             <Button 
               size="sm" 
               className="bg-primary text-primary-foreground hover:bg-primary/90" 
@@ -722,6 +756,13 @@ const saveWorkflow = async () => {
                     </button>
                     {expandedSections.messages && (
                       <div className="py-1 pl-4 space-y-1">
+                        <button
+                          onClick={() => addNode("triggerNode")}
+                          className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
+                        >
+                          <BoltIcon className="h-4 w-4 text-green-500" />
+                          Trigger
+                        </button>
                         <button
                           onClick={() => addNode("textMessageNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
@@ -824,42 +865,57 @@ const saveWorkflow = async () => {
 
           {/* Main Flow Area */}
           <div className="flex-1 relative">
-           <ReactFlow
-  nodes={nodes}
-  edges={edges}
-  onNodesChange={onNodesChange}
-  onEdgesChange={onEdgesChange}
-  onConnect={onConnect}
-  onConnectEnd={onConnectEnd}
-  nodeTypes={{
-    ...nodeTypes,
-    textMessageNode: (props) => {
-      // Import MessageNode component
-      const MessageNodeComponent = nodeTypes.textMessageNode;
-      return (
-        <MessageNodeComponent
-          {...props}
-          data={{
-            ...props.data,
-            onSelect: (nodeId: string) => {
-              // Find the node and set it as selected
-              const node = nodes.find(n => n.id === nodeId);
-              if (node) {
-                setSelectedNode(node);
-              }
-            },
-          }}
-        />
-      );
-    },
-  }}
-  defaultEdgeOptions={defaultEdgeOptions}
-  onNodeClick={onNodeClick}
-  onInit={setReactFlowInstance}
-  proOptions={{ hideAttribution: true }}
-  fitView
-  className="bg-muted/20"
->
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onConnectEnd={onConnectEnd}
+             nodeTypes={{
+  ...nodeTypes,
+  triggerNode: (props) => {
+    const TriggerNodeComponent = nodeTypes.triggerNode;
+    return (
+      <TriggerNodeComponent
+        {...props}
+        data={{
+          ...props.data,
+          onSelect: (nodeId: string) => {
+            const node = nodes.find(n => n.id === nodeId);
+            if (node) {
+              setSelectedNode(node);
+            }
+          },
+        }}
+      />
+    );
+  },
+  textMessageNode: (props) => {
+    const MessageNodeComponent = nodeTypes.textMessageNode;
+    return (
+      <MessageNodeComponent
+        {...props}
+        data={{
+          ...props.data,
+          onSelect: (nodeId: string) => {
+            const node = nodes.find(n => n.id === nodeId);
+            if (node) {
+              setSelectedNode(node);
+            }
+          },
+        }}
+      />
+    );
+  },
+}}
+              defaultEdgeOptions={defaultEdgeOptions}
+              onNodeClick={onNodeClick}
+              onInit={setReactFlowInstance}
+              proOptions={{ hideAttribution: true }}
+              fitView
+              className="bg-muted/20"
+            >
               <Background className="bg-muted/20" color="#d1d5db" gap={16} />
               <Controls className="bg-card border-border" />
             </ReactFlow>
@@ -888,6 +944,13 @@ const saveWorkflow = async () => {
                   <div className="space-y-1 py-2">
                     {/* Messages */}
                     <div className="py-1">
+                      <button
+                        onClick={() => handleCreateNode("triggerNode")}
+                        className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <BoltIcon className="h-4 w-4 text-green-500" />
+                        Trigger
+                      </button>
                       <button
                         onClick={() => handleCreateNode("textMessageNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
@@ -946,7 +1009,13 @@ const saveWorkflow = async () => {
           </div>
 
           {/* Right Panel for Node Configuration */}
-          {selectedNode && selectedNode.type === 'textMessageNode' ? (
+          {selectedNode && selectedNode.type === 'triggerNode' ? (
+            <TriggerPanel
+              node={selectedNode}
+              onClose={closePanel}
+              onUpdate={updateNode}
+            />
+          ) : selectedNode && selectedNode.type === 'textMessageNode' ? (
             <TextMessagePanel
               node={selectedNode}
               onClose={closePanel}

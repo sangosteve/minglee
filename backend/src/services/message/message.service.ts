@@ -4,6 +4,8 @@ import { messages, conversations, contacts, users, mediaAttachments } from '../.
 import { eq, and } from 'drizzle-orm';
 import { WhatsAppService } from '../whatsapp.service';
 import { v4 as uuidv4 } from 'uuid';
+import { triggerMatchingService } from '../trigger-matching.service';
+import { automationExecutionService } from '../automation-execution.service';
 
 export interface SendMessageParams {
   conversationId?: string;
@@ -43,6 +45,162 @@ export interface SaveMessageParams {
 }
 
 export class MessageService {
+
+  /**
+ * Handle incoming message and check for automation triggers
+ */
+async handleIncomingMessage(
+  whatsappMessageId: string,
+  phoneNumberId: string,
+  fromNumber: string,
+  messageBody: string,
+  messageType: string = 'text',
+  metadata?: any
+) {
+  const db = getDb();
+  
+  try {
+    console.log(`[Incoming] Handling message from ${fromNumber}: "${messageBody}"`);
+    
+    // 1. Find user by phone number ID
+    const [user] = await db.select()
+      .from(users)
+      .where(eq(users.whatsappPhoneNumberId, phoneNumberId))
+      .limit(1);
+    
+    if (!user) {
+      console.error('[Incoming] User not found for phone number ID:', phoneNumberId);
+      return { success: false, error: 'User not found' };
+    }
+    
+    // 2. Find or create contact
+    let [contact] = await db.select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.phone, fromNumber),
+          eq(contacts.userId, user.id)
+        )
+      )
+      .limit(1);
+    
+    if (!contact) {
+      // Create new contact
+      console.log('[Incoming] Creating new contact for', fromNumber);
+      const [newContact] = await db.insert(contacts).values({
+        id: uuidv4(),
+        userId: user.id,
+        phone: fromNumber,
+        name: fromNumber, // Can be updated later
+        status: 'active',
+        source: 'whatsapp',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }).returning();
+      
+      contact = newContact;
+    }
+    
+    // 3. Check if this is the first message
+    const isFirstMessage = await triggerMatchingService.isFirstMessage(
+      user.id,
+      contact.id,
+      phoneNumberId
+    );
+    
+    console.log(`[Incoming] Is first message: ${isFirstMessage}`);
+    
+    // 4. Save the incoming message
+    const conversation = await this.getOrCreateConversation(
+      contact.id,
+      user.id,
+      phoneNumberId
+    );
+    
+    const savedMessage = await this.saveMessage({
+      conversationId: conversation.id,
+      contactId: contact.id,
+      whatsappMessageId,
+      direction: 'incoming',
+      messageType,
+      body: messageBody,
+      status: 'received',
+      metadata: {
+        ...metadata,
+        isFirstMessage,
+      },
+    });
+    
+    // 5. Check for automation triggers
+    const triggerResults = await triggerMatchingService.checkMessageTrigger(
+      user.id,
+      contact.id,
+      phoneNumberId,
+      messageBody,
+      isFirstMessage
+    );
+    
+    console.log(`[Incoming] Found ${triggerResults.length} automations to execute`);
+    
+    // 6. Execute matched automations
+    const executionPromises = triggerResults.map(result => 
+      automationExecutionService.triggerAutomation(
+        result.matchedAutomation.id,
+        contact.id,
+        user.id,
+        {
+          triggerType: result.triggerType,
+          message: messageBody,
+          isFirstMessage,
+          matchedKeywords: result.matchedKeywords,
+          metadata: {
+            conversation_id: conversation.id,
+            saved_message_id: savedMessage.id,
+            whatsapp_message_id: whatsappMessageId,
+          }
+        }
+      )
+    );
+    
+    // Execute all automations in parallel
+    const executionResults = await Promise.allSettled(executionPromises);
+    
+    executionResults.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value.success) {
+        console.log(`[Incoming] ✅ Automation ${index + 1} executed successfully`);
+      } else {
+        console.error(`[Incoming] ❌ Automation ${index + 1} failed:`, result);
+      }
+    });
+    
+    // 7. Update contact's last contacted time
+    await db.update(contacts)
+      .set({
+        lastContactedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, contact.id));
+    
+    return {
+      success: true,
+      message: savedMessage,
+      contact,
+      conversation,
+      triggeredAutomations: triggerResults.length,
+      executions: executionResults.map((r, i) => ({
+        automation: triggerResults[i]?.matchedAutomation.name,
+        success: r.status === 'fulfilled' && r.value.success,
+      })),
+    };
+    
+  } catch (error: any) {
+    console.error('[Incoming] Error handling message:', error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
   /**
    * Get or create conversation for a contact
    */

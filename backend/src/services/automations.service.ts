@@ -136,27 +136,27 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
       flowData = {
         nodes: [
           {
-            id: 'start-' + Date.now(),
-            type: 'startNode',
+            id: 'trigger-' + Date.now(),
+            type: 'triggerNode',
             position: { x: 100, y: 100 },
             data: {
-              label: 'Start',
-              triggerType: data.triggerType || 'manual',
+              label: 'Trigger',
+              triggerType: data.triggerType || 'new_conversation',
               triggerConfig: data.triggerConfig || {},
             },
           },
         ],
         edges: [],
       };
-    } else if (!flowData.nodes.some((node: any) => node.type === 'startNode')) {
+    } else if (!flowData.nodes.some((node: any) => node.type === 'triggerNode')) {
       // Add start node if not present
       flowData.nodes.unshift({
-        id: 'start-' + Date.now(),
-        type: 'startNode',
+    id: 'trigger-' + Date.now(),
+        type: 'triggerNode', 
         position: { x: 100, y: 100 },
         data: {
-          label: 'Start',
-          triggerType: data.triggerType || 'manual',
+          label: 'Trigger',
+          triggerType: data.triggerType || 'new_conversation',
           triggerConfig: data.triggerConfig || {},
         },
       });

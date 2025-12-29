@@ -1,3 +1,5 @@
+
+//frontend/src/components/automations/nodes/TextMessageNode.tsx
 import { Handle, Position, NodeProps } from '@xyflow/react';
 import { DocumentTextIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui/button';
