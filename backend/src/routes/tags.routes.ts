@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { tags } from '../db/schema';
-import { eq, desc, and, inArray, sql } from 'drizzle-orm';
+import { eq, desc, and, inArray, sql,asc } from 'drizzle-orm';
 
 const router = Router();
 

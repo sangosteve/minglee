@@ -43,12 +43,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { nodeTypes } from "@/components/automations/nodes";
-import TextMessagePanel from "@/components/automations/panels/TextMessagePanel"; 
+import TextMessagePanel from "@/components/automations/panels/TextMessagePanel";
 import TriggerPanel from "@/components/automations/panels/TriggerPanel";
-import { 
-  useAutomation, 
+import TagPanel from "@/components/automations/panels/TagPanel";
+import {
+  useAutomation,
   useUpdateAutomation,
-  useUpdateAutomationStatus 
+  useUpdateAutomationStatus
 } from "@/lib/api/automations";
 import { api } from "@/lib/api";
 
@@ -70,7 +71,7 @@ const defaultEdgeOptions = {
 function AutomationEditorInner() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  
+
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [nodeId, setNodeId] = useState(2);
@@ -105,29 +106,29 @@ function AutomationEditorInner() {
     if (automation) {
       console.log('🔍 Loading automation from backend:', automation);
       console.log('🔍 Available keys:', Object.keys(automation));
-      
+
       setWorkflowName(automation.name);
       setWorkflowStatus(automation.status);
-      
+
       let loadedNodes: Node[] = [];
       let loadedEdges: Edge[] = [];
-      
+
       // Check for flow data in both camelCase and snake_case
       const flowData = automation.flowData || automation.flow_data;
-      
+
       if (flowData) {
         console.log('📦 Found flow data:', flowData);
         loadedNodes = flowData.nodes || [];
         loadedEdges = flowData.edges || [];
-        
+
         console.log('📦 Loaded nodes from DB:', loadedNodes);
         console.log('📦 Loaded edges from DB:', loadedEdges);
-        
+
         // Check if we have a triggerNode, if not add one
         const hasTriggerNode = loadedNodes.some((node: Node) => node.type === 'triggerNode');
         if (!hasTriggerNode && loadedNodes.length > 0) {
           console.log('➕ Adding missing triggerNode...');
-          
+
           const triggerNode: Node = {
             id: `trigger-${Date.now()}`,
             type: 'triggerNode',
@@ -142,7 +143,7 @@ function AutomationEditorInner() {
           };
           loadedNodes.unshift(triggerNode);
         }
-        
+
         // Add onDelete and onUpdate functions to all nodes
         const nodesWithCallbacks = loadedNodes.map((node: Node) => ({
           ...node,
@@ -152,12 +153,12 @@ function AutomationEditorInner() {
             onUpdate: updateNode,
           },
         }));
-        
+
         console.log('✅ Final nodes with callbacks:', nodesWithCallbacks);
-        
+
         setNodes(nodesWithCallbacks);
         setEdges(loadedEdges);
-        
+
         // Calculate next node ID
         const maxId = Math.max(...loadedNodes.map((node: Node) => {
           const match = node.id.match(/-\d+$/);
@@ -181,23 +182,23 @@ function AutomationEditorInner() {
         };
         setNodes([triggerNode]);
       }
-      
+
       setIsLoading(false);
     }
   }, [automation]);
 
   const triggerAutomation = async () => {
     if (!id) return;
-    
+
     try {
       // You might want to ask for a contact to test with
       const contactId = prompt('Enter contact ID to test with (or leave empty for test contact):');
-      
+
       const result = await api.post(`/automations/${id}/trigger`, {
         contactId: contactId || undefined,
         triggerData: { manual_trigger: true }
       });
-      
+
       if (result.data.success) {
         toast({
           title: "Success",
@@ -224,7 +225,7 @@ function AutomationEditorInner() {
   const deleteNode = useCallback(
     (nodeId: string) => {
       if (nodeId.startsWith('trigger-')) return;
-      
+
       setNodes((nds) => nds.filter((node) => node.id !== nodeId));
       setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
     },
@@ -282,7 +283,7 @@ function AutomationEditorInner() {
   // Node creation function
   const createNode = useCallback((type: string, position: { x: number; y: number }, label: string) => {
     const newNodeId = `${type}-${nodeId}`;
-    
+
     const baseData = {
       label,
       onDelete: deleteNode,
@@ -296,7 +297,7 @@ function AutomationEditorInner() {
       listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
       conditionNode: { rules: [] },
       delayNode: { duration: 0, unit: "minutes" },
-      tagNode: { action: "add", tagName: "" },
+      tagNode: { action: "add", tagNames: [] },
     };
 
     const newNode: Node = {
@@ -319,13 +320,13 @@ function AutomationEditorInner() {
     });
 
     const labels = {
-      triggerNode: `Trigger ${nodeId}`,
-      textMessageNode: `Send Message ${nodeId}`,
-      quickRepliesNode: `Quick Replies ${nodeId}`,
-      listMessageNode: `List Message ${nodeId}`,
-      conditionNode: `Condition ${nodeId}`,
-      delayNode: `Delay ${nodeId}`,
-      tagNode: `Tag ${nodeId}`,
+      triggerNode: `Trigger`,
+      textMessageNode: `Send Message`,
+      quickRepliesNode: `Quick Replies`,
+      listMessageNode: `List Message`,
+      conditionNode: `Condition`,
+      delayNode: `Delay`,
+      tagNode: `Tag`,
     };
 
     const newNode = createNode(type, flowPosition, labels[type as keyof typeof labels]);
@@ -353,11 +354,11 @@ function AutomationEditorInner() {
 
     // Get the center of the viewport
     const viewportCenter = reactFlowInstance.getViewport();
-    
+
     // Add some randomness to position
     const x = viewportCenter.x + Math.random() * 200 - 100;
     const y = viewportCenter.y + Math.random() * 200 - 100;
-    
+
     const labels = {
       triggerNode: `Trigger ${nodeId}`,
       textMessageNode: `Send Message ${nodeId}`,
@@ -371,7 +372,7 @@ function AutomationEditorInner() {
     const newNode = createNode(type, { x, y }, labels[type as keyof typeof labels] || `Node ${nodeId}`);
     setNodes((nds) => [...nds, newNode]);
     setNodeId((id) => id + 1);
-    
+
     // Optional: Fit view after adding node
     setTimeout(() => {
       reactFlowInstance.fitView({ padding: 0.2 });
@@ -447,23 +448,23 @@ function AutomationEditorInner() {
         // Only add data if it exists and is an object
         if (node.data && typeof node.data === 'object') {
           const cleanData: any = {};
-          
+
           // Safely copy each property
           Object.keys(node.data).forEach(key => {
             const value = node.data[key];
-            
+
             // Skip functions and undefined
             if (typeof value === 'function' || value === undefined) {
               return;
             }
-            
+
             // Skip React components or elements
-            if (value && typeof value === 'object' && 
-                (value.$$typeof === Symbol.for('react.element') || 
-                 value.$$typeof === Symbol.for('react.fragment'))) {
+            if (value && typeof value === 'object' &&
+              (value.$$typeof === Symbol.for('react.element') ||
+                value.$$typeof === Symbol.for('react.fragment'))) {
               return;
             }
-            
+
             // Handle arrays
             if (Array.isArray(value)) {
               try {
@@ -471,7 +472,7 @@ function AutomationEditorInner() {
               } catch {
                 cleanData[key] = [];
               }
-            } 
+            }
             // Handle objects
             else if (value && typeof value === 'object') {
               try {
@@ -487,19 +488,19 @@ function AutomationEditorInner() {
               cleanData[key] = value;
             }
           });
-          
+
           // Ensure message nodes have their message saved
           if (node.type === 'textMessageNode') {
             // Make sure message is included
             if (node.data.message !== undefined) {
               cleanData.message = node.data.message;
             }
-            
+
             // Make sure label is included
             if (node.data.label !== undefined) {
               cleanData.label = node.data.label;
             }
-            
+
             // Include any other important fields
             if (node.data.usedVariables !== undefined) {
               try {
@@ -508,12 +509,12 @@ function AutomationEditorInner() {
                 cleanData.usedVariables = [];
               }
             }
-            
+
             if (node.data.hasVariables !== undefined) {
               cleanData.hasVariables = node.data.hasVariables;
             }
           }
-          
+
           // For trigger nodes, ensure trigger config is saved
           if (node.type === 'triggerNode') {
             if (node.data.triggerType !== undefined) {
@@ -527,16 +528,16 @@ function AutomationEditorInner() {
               }
             }
           }
-          
+
           // Only add data if we have properties
           if (Object.keys(cleanData).length > 0) {
             cleanNode.data = cleanData;
           }
         }
-        
+
         return cleanNode;
       });
-      
+
       // Clean edges
       const cleanEdges = edges.map(edge => ({
         id: edge.id,
@@ -548,7 +549,7 @@ function AutomationEditorInner() {
         markerEnd: edge.markerEnd,
         style: edge.style,
       }));
-      
+
       // Prepare the data
       const workflowData = {
         name: workflowName,
@@ -556,30 +557,30 @@ function AutomationEditorInner() {
         status: workflowStatus,
         triggerType: automation?.triggerType || "manual",
         triggerConfig: automation?.triggerConfig || {},
-        flowData: { 
-          nodes: cleanNodes, 
-          edges: cleanEdges 
+        flowData: {
+          nodes: cleanNodes,
+          edges: cleanEdges
         },
       };
-      
+
       // Debug: Log the cleaned data
       console.log("Saving workflow with nodes:", JSON.stringify(cleanNodes, null, 2));
       console.log("Checking trigger nodes:", cleanNodes.filter(n => n.type === 'triggerNode'));
-      
-      const result = await updateAutomationMutation.mutateAsync({ 
-        id: id!, 
-        data: workflowData 
+
+      const result = await updateAutomationMutation.mutateAsync({
+        id: id!,
+        data: workflowData
       });
-      
+
       console.log("Save response:", result);
-      
+
       toast({
         title: "Success",
         description: "Automation updated successfully!",
       });
-      
+
       refetch();
-      
+
     } catch (error) {
       console.error('Error updating workflow:', error);
       toast({
@@ -595,7 +596,7 @@ function AutomationEditorInner() {
   // Toggle workflow status
   const toggleWorkflowStatus = async () => {
     const newStatus = workflowStatus === 'active' ? 'paused' : 'active';
-    
+
     try {
       await updateStatusMutation.mutateAsync({ id: id!, status: newStatus });
       setWorkflowStatus(newStatus);
@@ -683,7 +684,7 @@ function AutomationEditorInner() {
             />
           </div>
           <div className="flex items-center gap-3">
-            <Button 
+            <Button
               variant={workflowStatus === 'active' ? "default" : "outline"}
               size="sm"
               onClick={toggleWorkflowStatus}
@@ -693,19 +694,19 @@ function AutomationEditorInner() {
               {workflowStatus === 'active' ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
               {workflowStatus === 'active' ? 'Pause' : 'Activate'}
             </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="gap-2" 
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
               onClick={triggerAutomation}
               disabled={isSaving}
             >
               <PlayIcon className="h-4 w-4" />
               Test Run
             </Button>
-            <Button 
-              size="sm" 
-              className="bg-primary text-primary-foreground hover:bg-primary/90" 
+            <Button
+              size="sm"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={saveWorkflow}
               disabled={isSaving}
             >
@@ -908,6 +909,23 @@ function AutomationEditorInner() {
       />
     );
   },
+  tagNode: (props) => {
+    const TagNodeComponent = nodeTypes.tagNode;
+    return (
+      <TagNodeComponent
+        {...props}
+        data={{
+          ...props.data,
+          onSelect: (nodeId: string) => {
+            const node = nodes.find(n => n.id === nodeId);
+            if (node) {
+              setSelectedNode(node);
+            }
+          },
+        }}
+      />
+    );
+  },
 }}
               defaultEdgeOptions={defaultEdgeOptions}
               onNodeClick={onNodeClick}
@@ -1009,7 +1027,13 @@ function AutomationEditorInner() {
           </div>
 
           {/* Right Panel for Node Configuration */}
-          {selectedNode && selectedNode.type === 'triggerNode' ? (
+          {selectedNode && selectedNode.type === 'tagNode' ? (
+            <TagPanel
+              node={selectedNode}
+              onClose={closePanel}
+              onUpdate={updateNode}
+            />
+          ) : selectedNode && selectedNode.type === 'triggerNode' ? (
             <TriggerPanel
               node={selectedNode}
               onClose={closePanel}
@@ -1043,7 +1067,7 @@ function AutomationEditorInner() {
                       placeholder="Enter node label..."
                     />
                   </div>
-                  
+
                   {/* Node-specific configuration would go here */}
                   <div className="text-sm text-muted-foreground">
                     Configure this {selectedNode.type?.replace('Node', '')} node...
