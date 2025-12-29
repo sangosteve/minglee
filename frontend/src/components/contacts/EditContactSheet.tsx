@@ -1,4 +1,5 @@
 // frontend/src/components/contacts/EditContactSheet.tsx
+import * as React from 'react';
 import { useState, useEffect } from 'react';
 import {
   Sheet,
@@ -11,7 +12,6 @@ import {
   EnvelopeIcon,
   TrashIcon,
   ArrowPathIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
   Select,
@@ -24,19 +24,8 @@ import { useUpdateContact, useDeleteContact } from '@/lib/api/contacts';
 import { toast } from '@/hooks/use-toast';
 import type { Contact } from '@/lib/api/contacts';
 import { cn } from '@/lib/utils';
-import { useTags } from '@/components/tags/TagsProvider';
-import {
-  Tags,
-  TagsContent,
-  TagsEmpty,
-  TagsGroup,
-  TagsInput,
-  TagsItem,
-  TagsList,
-  TagsTrigger,
-  TagsValue,
-} from '@/components/kibo-ui/tags'; // Update import path based on where Kibo UI installed it
-import { CheckIcon } from 'lucide-react';
+import { TagSelect } from '@/components/tag-select';
+import { tagsApi } from '@/lib/api/tags';
 
 interface EditContactSheetProps {
   open: boolean;
@@ -47,7 +36,7 @@ interface EditContactSheetProps {
 
 interface Tag {
   id: string;
-  name: string;
+  label: string;
   color?: string;
 }
 
@@ -60,14 +49,6 @@ const countryCodes = [
   { code: '+86', country: 'CN', flag: '🇨🇳' },
   { code: '+81', country: 'JP', flag: '🇯🇵' },
   { code: '+65', country: 'SG', flag: '🇸🇬' },
-];
-
-// Status configuration
-const statusOptions = [
-  { value: 'active', label: 'Active', color: 'bg-green-500/10 text-green-600 border-green-200' },
-  { value: 'inactive', label: 'Inactive', color: 'bg-gray-500/10 text-gray-600 border-gray-200' },
-  { value: 'lead', label: 'Lead', color: 'bg-blue-500/10 text-blue-600 border-blue-200' },
-  { value: 'customer', label: 'Customer', color: 'bg-purple-500/10 text-purple-600 border-purple-200' },
 ];
 
 const parsePhoneNumber = (phone: string) => {
@@ -95,18 +76,7 @@ const parsePhoneNumber = (phone: string) => {
   return { countryCode: '+263', phoneNumber: clean.replace(/^0+/, '') };
 };
 
-const normalizePhone = (phone: string, countryCode: string) => {
-  if (!phone) return '';
-  const digitsOnly = phone.replace(/\D/g, '');
-  const codeDigits = countryCode.replace('+', '');
-
-  if (digitsOnly.startsWith(`00${codeDigits}`)) return digitsOnly.slice((`00${codeDigits}`).length);
-  if (digitsOnly.startsWith(codeDigits)) return digitsOnly.slice(codeDigits.length);
-  return digitsOnly.replace(/^0+/, '');
-};
-
 export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: EditContactSheetProps) => {
-  const { data: availableTags = [] } = useTags();
   const [formData, setFormData] = useState({
     name: '',
     countryCode: '+263',
@@ -115,18 +85,58 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     city: '',
     state: '',
     country: '',
-    status: 'active' as string,
   });
   
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [isLoadingTags, setIsLoadingTags] = useState(false);
 
   const updateContactMutation = useUpdateContact();
   const deleteContactMutation = useDeleteContact();
 
+  // Fetch available tags
+  useEffect(() => {
+    if (open) {
+      fetchTags();
+    }
+  }, [open]);
+
+  const fetchTags = async () => {
+    setIsLoadingTags(true);
+    try {
+      const tagsData = await tagsApi.getAll();
+      // Transform the API response to match TagSelect format
+      const transformedTags: Tag[] = tagsData.map(tag => ({
+        id: tag.id,
+        label: tag.name,
+        color: tag.color,
+      }));
+      setAvailableTags(transformedTags);
+    } catch (error) {
+      console.error('Failed to fetch tags:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load tags',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoadingTags(false);
+    }
+  };
+
+  // Reset form when contact changes
   useEffect(() => {
     if (!contact) {
       setSelectedTagIds([]);
+      setFormData({
+        name: '',
+        countryCode: '+263',
+        phone: '',
+        email: '',
+        city: '',
+        state: '',
+        country: '',
+      });
       return;
     }
 
@@ -140,10 +150,9 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
       city: contact.city ?? '',
       state: contact.state ?? '',
       country: contact.country ?? '',
-      status: contact.status ?? 'active',
     });
 
-    // Prefer full tag objects if present; fallback to tagIds
+    // Extract tag IDs from contact
     if (contact.tags && Array.isArray(contact.tags) && contact.tags.length > 0) {
       if (typeof contact.tags[0] === 'object') {
         setSelectedTagIds(contact.tags.map((tag: any) => tag.id));
@@ -157,90 +166,52 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     }
   }, [contact?.id, contact?.tagIds?.length, contact?.tags?.length]);
 
-  const normalizePhone = (phone: string) =>
-    phone.replace(/^0+/, '').replace(/\s+/g, '');
-
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!contact) return;
-
-  try {
-    // Build phone from dropdown + local input (normalize to avoid duplicate country codes)
-    const normalizedLocal = normalizePhone(formData.phone, formData.countryCode);
-    const fullPhone = `${formData.countryCode}${normalizedLocal}`;
-
-    const updateData: Record<string, any> = {
-      name: formData.name,
-      phone: fullPhone,
-      status: formData.status,
-      tags: selectedTagIds, // Send array of tag IDs
-    };
-
-    // Optional fields (only send if present)
-    if (formData.email?.trim()) updateData.email = formData.email.trim();
-    if (formData.city?.trim()) updateData.city = formData.city.trim();
-    if (formData.state?.trim()) updateData.state = formData.state.trim();
-    if (formData.country?.trim()) updateData.country = formData.country.trim();
-
-    // DEBUG: Log what we're sending
-    console.log('Sending update data:', {
-      contactId: contact.id,
-      updateData,
-      selectedTagIds,
-      selectedTagDetails: selectedTagIds.map(id => ({
-        id,
-        name: availableTags.find(t => t.id === id)?.name
-      }))
-    });
-
-    await updateContactMutation.mutateAsync({
-      id: contact.id,
-      updates: updateData,
-    });
-
-    toast({
-      title: 'Success',
-      description: 'Contact updated successfully.',
-    });
-
-    onOpenChange(false);
-    onSuccess?.();
-  } catch (error: any) {
-    console.error('Update error:', error);
-    toast({
-      title: 'Error',
-      description: error.message || 'Failed to update contact.',
-      variant: 'destructive',
-    });
-  }
-};
-
-  const handleStatusChange = async (newStatus: string) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!contact) return;
 
-    setUpdatingStatus(newStatus);
     try {
+      // Build phone from dropdown + local input
+      const normalizedLocal = formData.phone.replace(/^0+/, '').replace(/\s+/g, '');
+      const fullPhone = `${formData.countryCode}${normalizedLocal}`;
+
+      const updateData: Record<string, any> = {
+        name: formData.name,
+        phone: fullPhone,
+        tagIds: selectedTagIds, // Send array of tag IDs
+      };
+
+      // Optional fields (only send if present)
+      if (formData.email?.trim()) updateData.email = formData.email.trim();
+      if (formData.city?.trim()) updateData.city = formData.city.trim();
+      if (formData.state?.trim()) updateData.state = formData.state.trim();
+      if (formData.country?.trim()) updateData.country = formData.country.trim();
+
+      console.log('Sending update data:', {
+        contactId: contact.id,
+        updateData,
+        selectedTagIds,
+      });
+
       await updateContactMutation.mutateAsync({
         id: contact.id,
-        updates: { status: newStatus },
+        updates: updateData,
       });
-
-      setFormData(prev => ({ ...prev, status: newStatus }));
 
       toast({
-        title: "Status Updated",
-        description: `Contact status changed to ${newStatus}`,
+        title: 'Success',
+        description: 'Contact updated successfully.',
       });
 
+      onOpenChange(false);
       onSuccess?.();
     } catch (error: any) {
+      console.error('Update error:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to update status.",
-        variant: "destructive",
+        title: 'Error',
+        description: error.message || 'Failed to update contact.',
+        variant: 'destructive',
       });
-    } finally {
-      setUpdatingStatus(null);
     }
   };
 
@@ -268,19 +239,49 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
   };
 
-  const handleTagRemove = (tagId: string) => {
-    if (!selectedTagIds.includes(tagId)) {
-      return;
+  // Function to create a new tag
+  const handleCreateTag = async (label: string): Promise<Tag> => {
+    try {
+      // Create the tag via API
+      const newTag = await tagsApi.create({
+        name: label,
+        color: getRandomColor(),
+      });
+
+      // Transform to TagSelect format
+      const transformedTag: Tag = {
+        id: newTag.id,
+        label: newTag.name,
+        color: newTag.color,
+      };
+
+      // Update local tags list
+      setAvailableTags(prev => [...prev, transformedTag]);
+
+      toast({
+        title: 'Tag Created',
+        description: `Tag "${label}" has been created.`,
+      });
+
+      return transformedTag;
+    } catch (error: any) {
+      console.error('Failed to create tag:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create tag',
+        variant: 'destructive',
+      });
+      throw error;
     }
-    setSelectedTagIds((prev) => prev.filter((id) => id !== tagId));
   };
 
-  const handleTagSelect = (tagId: string) => {
-    if (selectedTagIds.includes(tagId)) {
-      handleTagRemove(tagId);
-      return;
-    }
-    setSelectedTagIds((prev) => [...prev, tagId]);
+  // Helper to generate random color
+  const getRandomColor = (): string => {
+    const colors = [
+      '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
+      '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
   };
 
   const selectedCountry = countryCodes.find((c) => c.code === formData.countryCode);
@@ -365,7 +366,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                 required
                 value={formData.phone}
                 onChange={(e) => {
-                  const value = e.target.value.replace(/\D/g, ''); // digits only
+                  const value = e.target.value.replace(/\D/g, '');
                   setFormData({ ...formData, phone: value });
                 }}
                 placeholder="Phone number"
@@ -437,119 +438,30 @@ const handleSubmit = async (e: React.FormEvent) => {
             />
           </div>
 
-          {/* Status - Simple Button Selector */}
+          {/* Tags Section - Using Custom TagSelect Component */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-1.5">
-              Status
+              Tags
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {statusOptions.map((status) => {
-                const isActive = formData.status === status.value;
-                const isLoading = updatingStatus === status.value;
-
-                return (
-                  <button
-                    key={status.value}
-                    type="button"
-                    onClick={() => handleStatusChange(status.value)}
-                    disabled={updateContactMutation.isPending || isLoading}
-                    className={cn(
-                      "relative px-3 py-2 rounded-md border text-sm font-medium transition-colors",
-                      isActive
-                        ? `${status.color} border-current`
-                        : "bg-secondary/50 hover:bg-secondary border-transparent",
-                      (updateContactMutation.isPending || isLoading) && "opacity-50 cursor-not-allowed"
-                    )}
-                  >
-                    <div className="flex items-center justify-center gap-2">
-                      {isLoading ? (
-                        <ArrowPathIcon className="w-3.5 h-3.5 animate-spin" />
-                      ) : null}
-                      <span>{status.label}</span>
-                    </div>
-
-                    {/* Loading indicator for this specific status */}
-                    {isLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-background/50 rounded-md">
-                        <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Current status indicator */}
-            <div className="mt-2 text-sm text-muted-foreground">
-              Current: <span className="font-medium text-foreground">
-                {statusOptions.find(s => s.value === formData.status)?.label}
+            <TagSelect
+              value={selectedTagIds}
+              onChange={setSelectedTagIds}
+              tags={availableTags}
+              onCreateTag={handleCreateTag}
+              placeholder="Select tags or create new ones..."
+              disabled={updateContactMutation.isPending}
+              isLoading={isLoadingTags}
+              maxTags={20}
+            />
+            <div className="mt-2 text-xs text-muted-foreground flex justify-between">
+              <span>
+                {selectedTagIds.length} tag{selectedTagIds.length !== 1 ? 's' : ''} selected
               </span>
-              {updatingStatus && (
-                <span className="ml-2 text-xs">
-                  <ArrowPathIcon className="w-3 h-3 inline animate-spin mr-1" />
-                  Updating...
-                </span>
+              {availableTags.length === 0 && (
+                <span>Type a name and press Enter to create a new tag</span>
               )}
             </div>
           </div>
-
-          {/* Tags - Using Kibo UI Tags Component */}
-         <div>
-  <label className="block text-sm font-medium text-foreground mb-1.5">
-    Tags
-  </label>
-  <Tags className="w-full">
-    <TagsTrigger>
-      {selectedTagIds.map((tagId) => {
-        const tag = availableTags.find(t => t.id === tagId);
-        return (
-          <TagsValue 
-            key={tagId} 
-            onRemove={() => handleTagRemove(tagId)}
-            style={tag?.color ? 
-              { 
-                backgroundColor: `${tag.color}20`, 
-                color: tag.color,
-                borderColor: tag.color 
-              } : 
-              undefined
-            }
-          >
-            {tag?.name || tagId}
-          </TagsValue>
-        );
-      })}
-    </TagsTrigger>
-    <TagsContent>
-      <TagsInput placeholder="Search tag..." />
-      <TagsList>
-        <TagsEmpty>No tags found</TagsEmpty>
-        <TagsGroup>
-          {availableTags.map((tag) => (
-            <TagsItem 
-              key={tag.id} 
-              onSelect={() => handleTagSelect(tag.id)} 
-              value={tag.id}
-            >
-              <div className="flex items-center gap-2">
-                {tag.color && (
-                  <div 
-                    className="w-3 h-3 rounded-full" 
-                    style={{ backgroundColor: tag.color }}
-                  />
-                )}
-                <span>{tag.name}</span>
-              </div>
-              {selectedTagIds.includes(tag.id) && (
-                <CheckIcon className="text-muted-foreground" size={14} />
-              )}
-            </TagsItem>
-          ))}
-        </TagsGroup>
-      </TagsList>
-    </TagsContent>
-  </Tags>
-</div>
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
