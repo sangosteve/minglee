@@ -6,7 +6,7 @@ import { WhatsAppService } from '../services/whatsapp.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { db, getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and ,sql} from 'drizzle-orm';
 
 const router = Router();
 

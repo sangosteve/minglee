@@ -1,4 +1,5 @@
 
+//frontend/src/lib/api/media.ts
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '../api';
 

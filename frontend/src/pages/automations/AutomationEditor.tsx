@@ -36,6 +36,7 @@ import {
   TrashIcon,
   Cog6ToothIcon,
   ArrowPathIcon,
+  PaperClipIcon,
 } from "@heroicons/react/24/outline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,7 @@ import {
 } from "@/lib/api/automations";
 import { api } from "@/lib/api";
 import ConditionPanel from "@/components/automations/panels/ConditionPanel";
+import MediaMessagePanel from "@/components/automations/panels/MediaMessagePanel";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -299,6 +301,7 @@ function AutomationEditorInner() {
       conditionNode: { rules: [] },
       delayNode: { duration: 0, unit: "minutes" },
       tagNode: { action: "add", tagNames: [] },
+        mediaMessageNode: { media: { type: "image" }, caption: "" },
     };
 
     const newNode: Node = {
@@ -328,6 +331,7 @@ function AutomationEditorInner() {
       conditionNode: `Condition`,
       delayNode: `Delay`,
       tagNode: `Tag`,
+      mediaMessageNode: `Send Media`,
     };
 
     const newNode = createNode(type, flowPosition, labels[type as keyof typeof labels]);
@@ -773,6 +777,13 @@ function AutomationEditorInner() {
                           Send Message
                         </button>
                         <button
+  onClick={() => addNode("mediaMessageNode")}
+  className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
+>
+  <PaperClipIcon className="h-4 w-4 text-purple-500" />
+  Send Media
+</button>
+                        <button
                           onClick={() => addNode("quickRepliesNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
                         >
@@ -910,6 +921,23 @@ function AutomationEditorInner() {
       />
     );
   },
+   mediaMessageNode: (props) => {
+    const MediaNodeComponent = nodeTypes.mediaMessageNode;
+    return (
+      <MediaNodeComponent
+        {...props}
+        data={{
+          ...props.data,
+          onSelect: (nodeId: string) => {
+            const node = nodes.find(n => n.id === nodeId);
+            if (node) {
+              setSelectedNode(node);
+            }
+          },
+        }}
+      />
+    );
+  },
   tagNode: (props) => {
     const TagNodeComponent = nodeTypes.tagNode;
     return (
@@ -977,6 +1005,13 @@ function AutomationEditorInner() {
                         <PaperAirplaneIcon className="h-4 w-4 text-blue-500" />
                         Send Message
                       </button>
+                      <button
+  onClick={() => handleCreateNode("mediaMessageNode")}
+  className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+>
+  <PaperClipIcon className="h-4 w-4 text-purple-500" />
+  Send Media
+</button>
                       <button
                         onClick={() => handleCreateNode("quickRepliesNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
@@ -1046,7 +1081,13 @@ function AutomationEditorInner() {
               onClose={closePanel}
               onUpdate={updateNode}
             />
-          ) : selectedNode && selectedNode.type === 'conditionNode' ? (
+          ): selectedNode && selectedNode.type === 'mediaMessageNode' ? ( // Add this
+  <MediaMessagePanel
+    node={selectedNode}
+    onClose={closePanel}
+    onUpdate={updateNode}
+  />
+           ) : selectedNode && selectedNode.type === 'conditionNode' ? (
   <ConditionPanel
     node={selectedNode}
     onClose={closePanel}

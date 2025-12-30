@@ -6,7 +6,8 @@ import {
   contacts, 
   users, 
   conversations, 
-  tags 
+  tags,
+  mediaAttachments
 } from '../db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { VariableService } from './variable.service';
@@ -182,6 +183,11 @@ async executeWorkflow(
             await this.executeTextMessageNode(currentNode, context);
             nodeSuccess = true;
             break;
+
+          case 'mediaMessageNode':
+            await this.executeMediaMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
             
           case 'tagNode':
             await this.executeTagNode(currentNode, context);
@@ -316,16 +322,85 @@ async executeWorkflow(
   }
 }
 
-  /**
-   * Execute tag node
-   */
-// backend/src/services/automation-execution.service.ts
-// Add this method to your existing AutomationExecutionService class
-
 /**
- * Execute tag node - COMPLETE VERSION
+ * Execute media message node
  */
-// Update the executeTagNode method in AutomationExecutionService.ts
+private async executeMediaMessageNode(node: any, context: ExecutionContext): Promise<void> {
+  const nodeData = node.data || {};
+  const media = nodeData.media || {};
+  const mediaAttachmentId = nodeData.mediaAttachmentId;
+  const caption = nodeData.caption || media.caption || '';
+  
+  console.log(`[Automation] 📎 Media message node: ${node.id}`);
+  console.log(`[Automation] Media type: ${media.type}, Attachment ID: ${mediaAttachmentId}`);
+
+  if (!mediaAttachmentId) {
+    console.error(`[Automation] ❌ No media attachment ID found for node ${node.id}`);
+    throw new Error('Media attachment not found');
+  }
+
+  const db = getDb();
+  
+  // 1. Get media attachment details
+  const [mediaAttachment] = await db.select()
+    .from(mediaAttachments)
+    .where(eq(mediaAttachments.id, mediaAttachmentId))
+    .limit(1);
+
+  if (!mediaAttachment) {
+    console.error(`[Automation] ❌ Media attachment ${mediaAttachmentId} not found`);
+    throw new Error('Media attachment not found in database');
+  }
+
+  // 2. Personalize caption
+  let personalizedCaption = caption;
+  if (caption.includes('{{')) {
+    const allVariables = VariableService.getAvailableVariables(
+      context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+      context.currentData.contact,
+      context.currentData.user
+    );
+    
+    personalizedCaption = VariableService.replaceVariables(caption, allVariables);
+    console.log(`[Automation] Personalized caption: ${personalizedCaption}`);
+  }
+
+  // 3. Send media message via WhatsApp
+  const mediaType = mediaAttachment.resourceType === 'raw' ? 'document' : 
+                   mediaAttachment.resourceType as 'image' | 'video' | 'audio';
+  
+  await messageService.sendMessage({
+    contactId: context.contactId,
+    userId: context.userData.id,
+    conversationId: context.currentData.conversation?.id,
+    body: personalizedCaption,
+    attachments: [{
+      id: mediaAttachmentId,
+      secureUrl: mediaAttachment.secureUrl,
+      url: mediaAttachment.secureUrl,
+      mimeType: mediaAttachment.mimeType,
+      originalFilename: mediaAttachment.originalFilename,
+      filename: mediaAttachment.filename || mediaAttachment.originalFilename,
+      fileSize: mediaAttachment.fileSize,
+      width: mediaAttachment.width,
+      height: mediaAttachment.height,
+      duration: mediaAttachment.duration,
+      caption: personalizedCaption,
+    }],
+    direction: 'outgoing',
+    messageType: mediaType,
+    metadata: {
+      automation: true,
+      automationId: context.workflowId,
+      automationName: 'Automation',
+      nodeId: node.id,
+      executionId: context.executionId,
+      mediaAttachmentId: mediaAttachmentId,
+    },
+  });
+  
+  console.log(`[Automation] ✅ Media message sent successfully`);
+}
 
 /**
  * Execute tag node - FIXED array handling

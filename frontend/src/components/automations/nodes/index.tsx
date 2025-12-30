@@ -5,7 +5,8 @@ import QuickRepliesNode from './QuickRepliesNode';
 import ConditionNode from './ConditionNode';
 import TriggerNode from './TriggerNode'; // ADD THIS
 import TagNode from './TagNode';
-export { TextMessageNode, QuickRepliesNode, TriggerNode }; // REMOVE StartNode
+import MediaMessageNode from './MediaMessageNode'
+export { TextMessageNode, QuickRepliesNode, TriggerNode, MediaMessageNode }; // REMOVE StartNode
 
 // Export node types for React Flow
 export const nodeTypes = {
@@ -14,5 +15,6 @@ export const nodeTypes = {
   quickRepliesNode: QuickRepliesNode,
   triggerNode: TriggerNode ,
   tagNode: TagNode,
-  conditionNode:ConditionNode
+  conditionNode:ConditionNode,
+  mediaMessageNode: MediaMessageNode,
 } as NodeTypes;
