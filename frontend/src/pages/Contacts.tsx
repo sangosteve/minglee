@@ -39,8 +39,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { useTags } from '@/components/tags/TagsProvider';
+import { useTags, transformTagsForSelect } from '@/lib/api/tags';
+import { useTagsStore } from '@/stores/tags.store';
 import { ContactFilter } from "@/components/contacts/ContactFilter";
+
 // Status configuration
 const statusConfig = {
   active: { 
@@ -86,8 +88,17 @@ const Contacts = () => {
     refetch 
   } = useContacts(filters);
 
-  // Available tags (used to map tagIds to full tag objects)
-  const { data: availableTags = [] } = useTags();
+  // Available tags from React Query
+  const { data: tagsData, isLoading: tagsLoading } = useTags();
+  
+  // Zustand store for global tag access
+  const { 
+    selectTags: availableTags, 
+    isLoading: storeLoading, 
+    setSelectTags,
+    getTagById,
+    getTagNameById
+  } = useTagsStore();
 
   const { 
     data: analytics, 
@@ -100,6 +111,13 @@ const Contacts = () => {
 
   const contacts = contactsData?.contacts || [];
   const pagination = contactsData?.pagination;
+
+  // Populate Zustand store when tags are loaded
+  useEffect(() => {
+    if (tagsData && tagsData.length > 0) {
+      setSelectTags(tagsData);
+    }
+  }, [tagsData, setSelectTags]);
 
   // Debounce search
   useEffect(() => {
@@ -192,52 +210,48 @@ const Contacts = () => {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
-  // Get tag display name (handle both string, UUID, and object tags)
-  const getTagName = (tag: any): string => {
-    if (typeof tag === 'string') return tag;
-    if (tag && typeof tag === 'object') {
-      return tag.name || tag.id || '';
-    }
-    return '';
-  };
-
-  // Get tag color (handle both string and object tags)
-  const getTagColor = (tag: any): string | undefined => {
-    if (tag && typeof tag === 'object' && tag.color) {
-      return tag.color;
-    }
-    return undefined;
-  };
-
-  // Get tag display (including UUID strings as fallback)
-  const getTagDisplay = (tag: any, availableTags?: any[]) => {
-    // If it's a UUID string, try to find it in available tags
-    if (typeof tag === 'string' && availableTags) {
-      const found = availableTags.find(t => t.id === tag);
-      if (found) {
+  // Get tag display (using Zustand store)
+  const getTagDisplay = (tag: any) => {
+    // If it's a UUID string, get from Zustand store
+    if (typeof tag === 'string') {
+      const storeTag = getTagById(tag);
+      if (storeTag) {
         return {
-          name: found.name,
-          color: found.color,
-          style: found.color ? { 
-            backgroundColor: `${found.color}20`, 
-            color: found.color,
-            borderColor: `${found.color}30`
+          name: storeTag.label,
+          color: storeTag.color,
+          style: storeTag.color ? { 
+            backgroundColor: `${storeTag.color}20`, 
+            color: storeTag.color,
+            borderColor: `${storeTag.color}30`
           } : undefined
         };
       }
+      // Fallback: show formatted ID
+      return {
+        name: getTagNameById(tag),
+        style: undefined
+      };
     }
     
-    const name = getTagName(tag);
-    const color = getTagColor(tag);
+    // If it's an object
+    if (tag && typeof tag === 'object') {
+      const name = tag.name || tag.label || '';
+      const color = tag.color;
+      
+      return {
+        name,
+        color,
+        style: color ? { 
+          backgroundColor: `${color}20`, 
+          color: color,
+          borderColor: `${color}30`
+        } : undefined
+      };
+    }
     
     return {
-      name: name || (typeof tag === 'string' ? tag.slice(0, 8) : ''),
-      color,
-      style: color ? { 
-        backgroundColor: `${color}20`, 
-        color: color,
-        borderColor: `${color}30`
-      } : undefined
+      name: '',
+      style: undefined
     };
   };
 
@@ -275,10 +289,11 @@ const Contacts = () => {
               className="w-full pl-9 pr-4 py-2 text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
             />
           </div>
-         <ContactFilter
+          <ContactFilter
             filters={filters}
             onFilterChange={setFilters}
-            availableTags={availableTags}
+            availableTags={tagsData || []}
+            isLoading={tagsLoading}
           />
         </div>
         <div className="flex items-center gap-3">
@@ -517,7 +532,14 @@ const Contacts = () => {
               {(((Array.isArray(contact.tags) && contact.tags.length > 0) || (Array.isArray(contact.tagIds) && contact.tagIds.length > 0))) && (
                 <div className="flex flex-wrap gap-1 mb-4">
                   {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : contact.tagIds).slice(0, 3).map((tag, idx) => {
-                    const tagDisplay = getTagDisplay(tag, availableTags);
+                    // Show skeleton if tags are still loading
+                    if (tagsLoading || storeLoading) {
+                      return (
+                        <Skeleton key={idx} className="h-6 w-16 rounded-full" />
+                      );
+                    }
+                    
+                    const tagDisplay = getTagDisplay(tag);
                     if (!tagDisplay.name) return null;
                     
                     return (
@@ -531,7 +553,7 @@ const Contacts = () => {
                       </Badge>
                     );
                   })}
-                  {(((Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 3) ? contact.tagIds.length - 3 : 0)) > 0 && (
+                  {!tagsLoading && !storeLoading && (((Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 3) ? contact.tagIds.length - 3 : 0)) > 0 && (
                     <Badge variant="secondary" className="text-xs">
                       +{ (Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 3 ? contact.tagIds.length - 3 : 0) }
                     </Badge>
@@ -544,7 +566,6 @@ const Contacts = () => {
                   {contact.createdAt ? `Added ${formatTimeSince(contact.createdAt)}` : ''}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {/* Assuming conversationCount is a field - adjust if needed */}
                   {(contact as any).conversationCount || 0} chats
                 </span>
               </div>
@@ -603,7 +624,14 @@ const Contacts = () => {
                   <td className="py-4 px-4">
                     <div className="flex flex-wrap gap-1">
                       {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : (Array.isArray(contact.tagIds) ? contact.tagIds : [])).slice(0, 2).map((tag, idx) => {
-                        const tagDisplay = getTagDisplay(tag, availableTags);
+                        // Show skeleton if tags are still loading
+                        if (tagsLoading || storeLoading) {
+                          return (
+                            <Skeleton key={idx} className="h-6 w-16 rounded-full" />
+                          );
+                        }
+                        
+                        const tagDisplay = getTagDisplay(tag);
                         if (!tagDisplay.name) return null;
                         
                         return (
@@ -617,7 +645,7 @@ const Contacts = () => {
                           </Badge>
                         );
                       })}
-                      {(((Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 2) ? contact.tagIds.length - 2 : 0)) > 0 && (
+                      {!tagsLoading && !storeLoading && (((Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 2) ? contact.tagIds.length - 2 : 0)) > 0 && (
                         <Badge variant="secondary" className="text-xs">
                           +{ (Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 2 ? contact.tagIds.length - 2 : 0) }
                         </Badge>

@@ -1,5 +1,4 @@
-// frontend/src/components/contacts/AddContactSheet.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -7,18 +6,6 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-} from '@/components/ui/command';
 import {
   Select,
   SelectContent,
@@ -26,17 +13,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import {
   EnvelopeIcon,
-  PlusIcon,
-  XMarkIcon,
   ArrowPathIcon,
-  CheckIcon,
 } from '@heroicons/react/24/outline';
 import { useCreateContact } from '@/lib/api/contacts';
 import { toast } from '@/hooks/use-toast';
-import { useTags } from '@/components/tags/TagsProvider';
-import { cn } from '@/lib/utils';
+import { useTagsStore } from '@/stores/tags.store';
+import { useCreateTag } from '@/lib/api/tags';
+import { CustomTagSelect } from '../tag-select';
 
 interface AddContactSheetProps {
   open: boolean;
@@ -46,7 +32,7 @@ interface AddContactSheetProps {
 
 interface Tag {
   id: string;
-  name: string;
+  label: string;
   color?: string;
 }
 
@@ -54,13 +40,9 @@ const countryCodes = [
   { code: '+263', flag: '🇿🇼', country: 'ZW' },
   { code: '+27', flag: '🇿🇦', country: 'ZA' },
   { code: '+1', flag: '🇺🇸', country: 'US' },
-];
-
-const statusOptions = [
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
-  { value: 'lead', label: 'Lead' },
-  { value: 'customer', label: 'Customer' },
+  { code: '+44', flag: '🇬🇧', country: 'UK' },
+  { code: '+91', flag: '🇮🇳', country: 'IN' },
+  { code: '+86', flag: '🇨🇳', country: 'CN' },
 ];
 
 const normalizePhone = (phone: string, countryCode: string) => {
@@ -78,7 +60,14 @@ export const AddContactSheet = ({
   onOpenChange,
   onSuccess,
 }: AddContactSheetProps) => {
-  const { data: availableTags = [] } = useTags();
+  // Use Zustand store for tags
+  const { 
+    selectTags: availableTags, 
+    isLoading: isLoadingTags,
+    isLoaded: tagsLoaded 
+  } = useTagsStore();
+  
+  const createTagMutation = useCreateTag();
   const [formData, setFormData] = useState({
     name: '',
     countryCode: '+263',
@@ -87,17 +76,62 @@ export const AddContactSheet = ({
     city: '',
     state: '',
     country: '',
-    status: 'active',
   });
 
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   const createContactMutation = useCreateContact();
 
   const selectedCountry = countryCodes.find(
     (c) => c.code === formData.countryCode
   );
+
+  // Reset form when sheet opens/closes
+  useEffect(() => {
+    if (open) {
+      setIsReady(false);
+      
+      // Check if tags are already loaded
+      if (tagsLoaded) {
+        setIsReady(true);
+      } else {
+        // Wait for tags to load
+        const checkTags = () => {
+          if (tagsLoaded) {
+            setIsReady(true);
+          }
+        };
+        
+        // Check immediately
+        checkTags();
+        
+        // Also check after a short delay
+        const timeout = setTimeout(checkTags, 100);
+        return () => clearTimeout(timeout);
+      }
+    } else {
+      // Reset when sheet closes
+      setFormData({
+        name: '',
+        countryCode: '+263',
+        phone: '',
+        email: '',
+        city: '',
+        state: '',
+        country: '',
+      });
+      setSelectedTagIds([]);
+      setIsReady(false);
+    }
+  }, [open, tagsLoaded]);
+
+  // Also update ready state when tags become loaded
+  useEffect(() => {
+    if (open && tagsLoaded && !isReady) {
+      setIsReady(true);
+    }
+  }, [open, tagsLoaded, isReady]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,12 +140,12 @@ export const AddContactSheet = ({
       const phone = `${formData.countryCode}${normalizedLocal}`;
       
       // Send tag IDs to backend
-      const tagIds = selectedTagIds.filter(id => id); // Filter out any empty IDs
+      const tagIds = selectedTagIds.filter(id => id);
 
       await createContactMutation.mutateAsync({
         ...formData,
         phone,
-        tags: tagIds, // Send array of tag IDs
+        tags: tagIds,
       });
 
       toast({
@@ -128,10 +162,8 @@ export const AddContactSheet = ({
         city: '',
         state: '',
         country: '',
-        status: 'active',
       });
       setSelectedTagIds([]);
-      setTagPopoverOpen(false);
 
       onOpenChange(false);
       onSuccess?.();
@@ -144,47 +176,77 @@ export const AddContactSheet = ({
     }
   };
 
-  const handleAddTag = (tagId: string) => {
-    if (!selectedTagIds.includes(tagId)) {
-      setSelectedTagIds([...selectedTagIds, tagId]);
+  // Function to create a new tag
+  const handleCreateTag = async (label: string): Promise<Tag> => {
+    try {
+      // Create the tag via API
+      const newTag = await createTagMutation.mutateAsync({
+        name: label,
+        color: getRandomColor(),
+      });
+
+      // Transform to TagSelect format
+      const transformedTag: Tag = {
+        id: newTag.id,
+        label: newTag.name,
+        color: newTag.color,
+      };
+
+      toast({
+        title: 'Tag Created',
+        description: `Tag "${label}" has been created.`,
+      });
+
+      return transformedTag;
+    } catch (error: any) {
+      console.error('Failed to create tag:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create tag',
+        variant: 'destructive',
+      });
+      throw error;
     }
-    setTagPopoverOpen(false);
   };
 
-  const handleRemoveTag = (tagId: string) => {
-    setSelectedTagIds(selectedTagIds.filter((id) => id !== tagId));
+  // Helper to generate random color
+  const getRandomColor = (): string => {
+    const colors = [
+      '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
+      '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
   };
-
-  // Get selected tag objects for display
-  const selectedTags = availableTags.filter(tag => selectedTagIds.includes(tag.id));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
         <SheetHeader className="mb-6">
-          <SheetTitle>Create Contact</SheetTitle>
+          <SheetTitle className="text-xl font-semibold text-foreground">
+            Create Contact
+          </SheetTitle>
         </SheetHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Name */}
           <div>
-            <label className="block text-sm font-medium mb-1.5">
+            <label className="block text-sm font-medium text-foreground mb-1.5">
               Name<span className="text-destructive">*</span>
             </label>
-            <input
+            <Input
               required
               value={formData.name}
               onChange={(e) =>
                 setFormData({ ...formData, name: e.target.value })
               }
-              className="w-full px-4 py-2.5 border rounded-lg"
               placeholder="Enter contact name"
+              disabled={createContactMutation.isPending}
             />
           </div>
 
           {/* Phone */}
           <div>
-            <label className="block text-sm font-medium mb-1.5">
+            <label className="block text-sm font-medium text-foreground mb-1.5">
               Phone<span className="text-destructive">*</span>
             </label>
             <div className="flex">
@@ -193,20 +255,30 @@ export const AddContactSheet = ({
                 onValueChange={(value) =>
                   setFormData({ ...formData, countryCode: value })
                 }
+                disabled={createContactMutation.isPending}
               >
                 <SelectTrigger className="w-28 rounded-r-none border-r-0">
-                  <SelectValue />
+                  <SelectValue>
+                    <span className="flex items-center gap-1.5">
+                      <span>{selectedCountry?.flag}</span>
+                      <span className="text-sm">{selectedCountry?.code}</span>
+                    </span>
+                  </SelectValue>
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="bg-card border border-border">
                   {countryCodes.map((c) => (
                     <SelectItem key={c.code} value={c.code}>
-                      {c.flag} {c.code} ({c.country})
+                      <span className="flex items-center gap-2">
+                        <span>{c.flag}</span>
+                        <span>{c.code}</span>
+                        <span className="text-muted-foreground">{c.country}</span>
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
 
-              <input
+              <Input
                 required
                 value={formData.phone}
                 onChange={(e) =>
@@ -215,25 +287,29 @@ export const AddContactSheet = ({
                     phone: e.target.value.replace(/\D/g, ''),
                   })
                 }
-                className="flex-1 px-4 py-2.5 border rounded-r-lg"
+                className="flex-1 rounded-l-none"
                 placeholder="Phone number"
+                disabled={createContactMutation.isPending}
               />
             </div>
           </div>
 
           {/* Email */}
           <div>
-            <label className="block text-sm font-medium mb-1.5">Email</label>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Email
+            </label>
             <div className="relative">
               <EnvelopeIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-              <input
+              <Input
                 type="email"
                 value={formData.email}
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
                 }
-                className="w-full pl-10 pr-4 py-2.5 border rounded-lg"
+                className="pl-10"
                 placeholder="email@example.com"
+                disabled={createContactMutation.isPending}
               />
             </div>
           </div>
@@ -241,133 +317,75 @@ export const AddContactSheet = ({
           {/* Location Fields */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5">City</label>
-              <input
+              <label className="block text-sm font-medium text-foreground mb-1.5">
+                City
+              </label>
+              <Input
                 value={formData.city}
                 onChange={(e) =>
                   setFormData({ ...formData, city: e.target.value })
                 }
-                className="w-full px-4 py-2.5 border rounded-lg"
                 placeholder="City"
+                disabled={createContactMutation.isPending}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1.5">
+              <label className="block text-sm font-medium text-foreground mb-1.5">
                 State/Region
               </label>
-              <input
+              <Input
                 value={formData.state}
                 onChange={(e) =>
                   setFormData({ ...formData, state: e.target.value })
                 }
-                className="w-full px-4 py-2.5 border rounded-lg"
                 placeholder="State/Region"
+                disabled={createContactMutation.isPending}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1.5">Country</label>
-            <input
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Country
+            </label>
+            <Input
               value={formData.country}
               onChange={(e) =>
                 setFormData({ ...formData, country: e.target.value })
               }
-              className="w-full px-4 py-2.5 border rounded-lg"
               placeholder="Country"
+              disabled={createContactMutation.isPending}
             />
           </div>
 
-          {/* Status */}
+          {/* Tags - Using CustomTagSelect Component */}
           <div>
-            <label className="block text-sm font-medium mb-1.5">Status</label>
-            <Select
-              value={formData.status}
-              onValueChange={(value) =>
-                setFormData({ ...formData, status: value })
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {statusOptions.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Tags */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Tags</label>
-            
-            {/* Selected Tags Display */}
-            <div className="flex flex-wrap gap-2 mb-2">
-              {selectedTags.map((tag) => (
-                <Badge 
-                  key={tag.id} 
-                  variant="secondary"
-                  style={tag.color ? { backgroundColor: `${tag.color}20`, color: tag.color } : undefined}
-                >
-                  {tag.name}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveTag(tag.id)}
-                    className="ml-1 hover:opacity-70"
-                  >
-                    <XMarkIcon className="w-3 h-3" />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-
-            {/* Tags Popover */}
-            <Popover open={tagPopoverOpen} onOpenChange={setTagPopoverOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-start"
-                  disabled={createContactMutation.isPending}
-                >
-                  <PlusIcon className="w-4 h-4 mr-2" />
-                  Add Tags
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="p-0 w-48" align="start">
-                <Command>
-                  <CommandEmpty>No tags found.</CommandEmpty>
-                  <CommandGroup>
-                    {availableTags
-                      .filter((tag) => !selectedTagIds.includes(tag.id))
-                      .map((tag) => (
-                        <CommandItem
-                          key={tag.id}
-                          onSelect={() => handleAddTag(tag.id)}
-                          className="flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-2">
-                            {tag.color && (
-                              <div 
-                                className="w-3 h-3 rounded-full" 
-                                style={{ backgroundColor: tag.color }}
-                              />
-                            )}
-                            <span>{tag.name}</span>
-                          </div>
-                        </CommandItem>
-                      ))}
-                  </CommandGroup>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Tags
+            </label>
+            {!isReady ? (
+              <div className="w-full px-3 py-2.5 border border-border rounded-lg bg-background text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                  Loading tags...
+                </div>
+              </div>
+            ) : (
+              <CustomTagSelect
+                value={selectedTagIds}
+                onChange={setSelectedTagIds}
+                tags={availableTags}
+                onCreateTag={handleCreateTag}
+                placeholder="Select tags or create new ones..."
+                disabled={createContactMutation.isPending}
+                isLoading={isLoadingTags}
+                maxTags={20}
+              />
+            )}
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-4 border-t">
+          <div className="flex justify-end gap-3 pt-4 border-t border-border">
             <Button
               type="button"
               variant="outline"
@@ -376,7 +394,11 @@ export const AddContactSheet = ({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={createContactMutation.isPending}>
+            <Button 
+              type="submit" 
+              disabled={createContactMutation.isPending || !isReady}
+              className="min-w-[120px]"
+            >
               {createContactMutation.isPending ? (
                 <>
                   <ArrowPathIcon className="w-4 h-4 mr-2 animate-spin" />

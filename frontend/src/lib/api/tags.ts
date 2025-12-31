@@ -1,5 +1,6 @@
 // frontend/src/lib/api/tags.ts
 import { api } from '../api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export interface Tag {
   id: string;
@@ -152,4 +153,78 @@ export const tagsApi = {
       throw error;
     }
   },
+};
+
+// React Query hooks
+export const useTags = (params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}) => {
+  return useQuery({
+    queryKey: ['tags', params],
+    queryFn: () => tagsApi.getAll(params),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+  });
+};
+
+export const useCreateTag = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: tagsApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+    onError: (error: Error) => {
+      console.error('Failed to create tag:', error);
+    },
+  });
+};
+
+export const useUpdateTag = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateTagDto }) => 
+      tagsApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+  });
+};
+
+export const useDeleteTag = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: tagsApi.delete,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+  });
+};
+
+export const useTaggedItems = (
+  tagId: string, 
+  type: 'all' | 'conversations' | 'contacts' = 'all'
+) => {
+  return useQuery({
+    queryKey: ['tagged-items', tagId, type],
+    queryFn: () => tagsApi.getTaggedItems(tagId, type),
+    enabled: !!tagId,
+  });
+};
+
+// Utility function to transform tags for select components
+export const transformTagsForSelect = (tags: Tag[]) => {
+  return tags.map(tag => ({
+    id: tag.id,
+    label: tag.name,
+    color: tag.color,
+    description: tag.description,
+  }));
 };

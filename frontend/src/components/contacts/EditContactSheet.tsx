@@ -24,8 +24,10 @@ import { useUpdateContact, useDeleteContact } from '@/lib/api/contacts';
 import { toast } from '@/hooks/use-toast';
 import type { Contact } from '@/lib/api/contacts';
 import { cn } from '@/lib/utils';
-import { TagSelect } from '@/components/tag-select';
-import { tagsApi } from '@/lib/api/tags';
+
+import { useTagsStore } from '@/stores/tags.store';
+import { useCreateTag } from '@/lib/api/tags';
+import { CustomTagSelect } from '../tag-select';
 
 interface EditContactSheetProps {
   open: boolean;
@@ -88,45 +90,31 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
   });
   
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
-  const [isLoadingTags, setIsLoadingTags] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
   const updateContactMutation = useUpdateContact();
   const deleteContactMutation = useDeleteContact();
+  const createTagMutation = useCreateTag();
 
-  // Fetch available tags
+  // Use Zustand store for tags
+  const { 
+    selectTags: availableTags, 
+    isLoading: isLoadingTags,
+    isLoaded: tagsLoaded,
+    refreshTags 
+  } = useTagsStore();
+
+  // Reset form when sheet opens/closes
   useEffect(() => {
-    if (open) {
-      fetchTags();
-    }
-  }, [open]);
-
-  const fetchTags = async () => {
-    setIsLoadingTags(true);
-    try {
-      const tagsData = await tagsApi.getAll();
-      // Transform the API response to match TagSelect format
-      const transformedTags: Tag[] = tagsData.map(tag => ({
-        id: tag.id,
-        label: tag.name,
-        color: tag.color,
-      }));
-      setAvailableTags(transformedTags);
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load tags',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoadingTags(false);
-    }
-  };
-
-  // Reset form when contact changes
-  useEffect(() => {
-    if (!contact) {
+    if (open && contact) {
+      setIsReady(false);
+      
+      // Check if tags are already loaded
+      if (tagsLoaded) {
+        setContactData();
+      }
+    } else {
+      // Reset when sheet closes
       setSelectedTagIds([]);
       setFormData({
         name: '',
@@ -137,8 +125,13 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
         state: '',
         country: '',
       });
-      return;
+      setIsReady(false);
     }
+  }, [open, contact, tagsLoaded]);
+
+  // Set contact data when tags are loaded
+  const setContactData = () => {
+    if (!contact) return;
 
     const { countryCode, phoneNumber } = parsePhoneNumber(contact.phone ?? '');
 
@@ -164,7 +157,16 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
     } else {
       setSelectedTagIds([]);
     }
-  }, [contact?.id, contact?.tagIds?.length, contact?.tags?.length]);
+    
+    setIsReady(true);
+  };
+
+  // Also set contact data when tags become loaded
+  useEffect(() => {
+    if (open && contact && tagsLoaded && !isReady) {
+      setContactData();
+    }
+  }, [open, contact, tagsLoaded, isReady]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -243,7 +245,7 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
   const handleCreateTag = async (label: string): Promise<Tag> => {
     try {
       // Create the tag via API
-      const newTag = await tagsApi.create({
+      const newTag = await createTagMutation.mutateAsync({
         name: label,
         color: getRandomColor(),
       });
@@ -255,8 +257,8 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
         color: newTag.color,
       };
 
-      // Update local tags list
-      setAvailableTags(prev => [...prev, transformedTag]);
+      // Note: The store will be automatically updated via React Query invalidation
+      // and the effect in Contacts.tsx
 
       toast({
         title: 'Tag Created',
@@ -443,24 +445,35 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
             <label className="block text-sm font-medium text-foreground mb-1.5">
               Tags
             </label>
-            <TagSelect
-              value={selectedTagIds}
-              onChange={setSelectedTagIds}
-              tags={availableTags}
-              onCreateTag={handleCreateTag}
-              placeholder="Select tags or create new ones..."
-              disabled={updateContactMutation.isPending}
-              isLoading={isLoadingTags}
-              maxTags={20}
-            />
-            <div className="mt-2 text-xs text-muted-foreground flex justify-between">
-              <span>
-                {selectedTagIds.length} tag{selectedTagIds.length !== 1 ? 's' : ''} selected
-              </span>
-              {availableTags.length === 0 && (
-                <span>Type a name and press Enter to create a new tag</span>
-              )}
-            </div>
+            {!isReady || isLoadingTags ? (
+              <div className="w-full px-3 py-2.5 border border-border rounded-lg bg-background text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                  Loading tags...
+                </div>
+              </div>
+            ) : (
+              <>
+                <CustomTagSelect
+                  value={selectedTagIds}
+                  onChange={setSelectedTagIds}
+                  tags={availableTags}
+                  onCreateTag={handleCreateTag}
+                  placeholder="Select tags or create new ones..."
+                  disabled={updateContactMutation.isPending}
+                  isLoading={isLoadingTags}
+                  maxTags={20}
+                />
+                <div className="mt-2 text-xs text-muted-foreground flex justify-between">
+                  <span>
+                    {selectedTagIds.length} tag{selectedTagIds.length !== 1 ? 's' : ''} selected
+                  </span>
+                  {availableTags.length === 0 && (
+                    <span>Type a name and press Enter to create a new tag</span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Actions */}
@@ -475,7 +488,7 @@ export const EditContactSheet = ({ open, onOpenChange, contact, onSuccess }: Edi
             </Button>
             <Button
               type="submit"
-              disabled={updateContactMutation.isPending || deleteContactMutation.isPending}
+              disabled={updateContactMutation.isPending || deleteContactMutation.isPending || !isReady}
               className="min-w-[100px]"
             >
               {updateContactMutation.isPending ? (

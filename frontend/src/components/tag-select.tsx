@@ -1,51 +1,40 @@
-import * as React from "react";
-import { X, Check, Plus } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+"use client"
+
+import * as React from "react"
+import { X, Plus, Check, Search } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
 
 export interface Tag {
-  id: string;
-  label: string;
-  color?: string;
+  id: string
+  label: string
+  color?: string
 }
 
-export interface TagSelectProps {
+export interface CustomTagSelectProps {
   /** Currently selected tag IDs */
-  value: string[];
+  value: string[]
   /** Callback when selection changes */
-  onChange: (value: string[]) => void;
+  onChange: (value: string[]) => void
   /** Available tags to select from */
-  tags: Tag[];
+  tags: Tag[]
   /** Callback when a new tag is created */
-  onCreateTag?: (label: string) => Promise<Tag> | Tag;
+  onCreateTag?: (label: string) => Promise<Tag> | Tag
   /** Placeholder text for the trigger button */
-  placeholder?: string;
+  placeholder?: string
   /** Whether the component is disabled */
-  disabled?: boolean;
+  disabled?: boolean
   /** Whether the component is loading tags */
-  isLoading?: boolean;
+  isLoading?: boolean
   /** Maximum number of tags that can be selected */
-  maxTags?: number;
+  maxTags?: number
   /** Custom class name for the trigger */
-  className?: string;
+  className?: string
 }
 
-export function TagSelect({
+export function CustomTagSelect({
   value,
   onChange,
   tags,
@@ -55,239 +44,313 @@ export function TagSelect({
   isLoading = false,
   maxTags,
   className,
-}: TagSelectProps) {
-  const [open, setOpen] = React.useState(false);
-  const [inputValue, setInputValue] = React.useState("");
-  const [isCreating, setIsCreating] = React.useState(false);
+}: CustomTagSelectProps) {
+  const [isOpen, setIsOpen] = React.useState(false)
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [isCreating, setIsCreating] = React.useState(false)
+  const containerRef = React.useRef<HTMLDivElement>(null)
 
   const selectedTags = React.useMemo(
     () => tags.filter((tag) => value.includes(tag.id)),
     [tags, value]
-  );
+  )
 
   const availableTags = React.useMemo(
     () => tags.filter((tag) => !value.includes(tag.id)),
     [tags, value]
-  );
+  )
 
-  const canAddMore = maxTags === undefined || value.length < maxTags;
+  const canAddMore = maxTags === undefined || value.length < maxTags
 
   const handleSelect = (tagId: string) => {
+    if (isLoading || disabled) return; // Prevent interaction while loading
     if (value.includes(tagId)) {
-      onChange(value.filter((id) => id !== tagId));
+      onChange(value.filter((id) => id !== tagId))
     } else if (canAddMore) {
-      onChange([...value, tagId]);
+      onChange([...value, tagId])
     }
-  };
+    // Keep dropdown open for multiple selections
+  }
 
   const handleRemove = (tagId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    onChange(value.filter((id) => id !== tagId));
-  };
+    e?.stopPropagation()
+    if (isLoading || disabled) return; // Prevent interaction while loading
+    onChange(value.filter((id) => id !== tagId))
+  }
 
   const handleCreateTag = async () => {
-    if (!onCreateTag || !inputValue.trim() || isCreating) return;
+    if (isLoading || disabled || !onCreateTag || !searchQuery.trim() || isCreating) return
 
     const existingTag = tags.find(
-      (tag) => tag.label.toLowerCase() === inputValue.toLowerCase()
-    );
+      (tag) => tag.label.toLowerCase() === searchQuery.toLowerCase()
+    )
 
     if (existingTag) {
       if (!value.includes(existingTag.id) && canAddMore) {
-        onChange([...value, existingTag.id]);
+        onChange([...value, existingTag.id])
       }
-      setInputValue("");
-      return;
+      setSearchQuery("")
+      return
     }
 
-    setIsCreating(true);
+    setIsCreating(true)
     try {
-      const newTag = await onCreateTag(inputValue.trim());
+      const newTag = await onCreateTag(searchQuery.trim())
       if (canAddMore) {
-        onChange([...value, newTag.id]);
+        onChange([...value, newTag.id])
       }
-      setInputValue("");
+      setSearchQuery("")
     } finally {
-      setIsCreating(false);
+      setIsCreating(false)
     }
-  };
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && inputValue.trim() && onCreateTag) {
-      e.preventDefault();
-      handleCreateTag();
+    if (isLoading || disabled) return; // Prevent interaction while loading
+    
+    if (e.key === "Enter" && searchQuery.trim() && onCreateTag) {
+      e.preventDefault()
+      handleCreateTag()
     }
-    if (e.key === "Backspace" && !inputValue && selectedTags.length > 0) {
-      handleRemove(selectedTags[selectedTags.length - 1].id);
+    if (e.key === "Escape") {
+      setIsOpen(false)
     }
-  };
+  }
 
   const showCreateOption =
     onCreateTag &&
-    inputValue.trim() &&
-    !tags.some((tag) => tag.label.toLowerCase() === inputValue.toLowerCase()) &&
-    canAddMore;
+    searchQuery.trim() &&
+    !tags.some((tag) => tag.label.toLowerCase() === searchQuery.toLowerCase()) &&
+    canAddMore &&
+    !isLoading && // Don't show create option while loading
+    !disabled // Don't show create option while disabled
+
+  // Filter tags based on search
+  const filteredAvailableTags = availableTags.filter((tag) =>
+    tag.label.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  const filteredSelectedTags = selectedTags.filter((tag) =>
+    tag.label.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  // Prevent opening dropdown while loading
+  const handleTriggerClick = () => {
+    if (disabled || isLoading) {
+      return;
+    }
+    setIsOpen(!isOpen);
+  }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          className={cn(
-            "min-h-10 h-auto w-full justify-start text-left font-normal hover:bg-transparent",
-            !selectedTags.length && "text-muted-foreground",
-            className
-          )}
-        >
-          <div className="flex flex-wrap gap-1.5 items-center w-full">
-            {selectedTags.length > 0 ? (
-              selectedTags.map((tag) => (
-                <Badge
-                  key={tag.id}
-                  variant="secondary"
-                  className="shrink-0 gap-1 pr-1"
-                  style={
-                    tag.color
-                      ? {
-                          backgroundColor: `${tag.color}20`,
-                          borderColor: tag.color,
-                          color: tag.color,
-                        }
-                      : undefined
-                  }
-                >
-                  {tag.label}
-                  <button
-                    type="button"
-                    className="ml-0.5 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2 hover:bg-foreground/10 p-0.5 transition-colors"
-                    onClick={(e) => handleRemove(tag.id, e)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleRemove(tag.id);
+    <div className="relative w-full" ref={containerRef}>
+      {/* Trigger Button */}
+      <button
+        type="button"
+        onClick={handleTriggerClick}
+        disabled={disabled || isLoading}
+        className={cn(
+          "flex min-h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+          "hover:bg-accent hover:text-accent-foreground",
+          "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          "text-left",
+          className
+        )}
+      >
+        <div className="flex flex-wrap gap-1.5 flex-1 overflow-hidden">
+          {isLoading ? (
+            <span className="text-muted-foreground italic">Loading tags...</span>
+          ) : selectedTags.length > 0 ? (
+            selectedTags.map((tag) => (
+              <Badge
+                key={tag.id}
+                variant="secondary"
+                className="shrink-0 gap-1 pr-1 max-w-full"
+                style={
+                  tag.color
+                    ? {
+                        backgroundColor: `${tag.color}20`,
+                        borderColor: tag.color,
+                        color: tag.color,
                       }
-                    }}
-                  >
-                    <X className="h-3 w-3" />
-                    <span className="sr-only">Remove {tag.label}</span>
-                  </button>
-                </Badge>
-              ))
-            ) : (
-              <span>{placeholder}</span>
-            )}
+                    : undefined
+                }
+              >
+                <span className="truncate">{tag.label}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2 hover:bg-foreground/10 p-0.5 transition-colors"
+                  onClick={(e) => handleRemove(tag.id, e)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      handleRemove(tag.id)
+                    }
+                  }}
+                  disabled={disabled}
+                >
+                  <X className="h-3 w-3" />
+                  <span className="sr-only">Remove {tag.label}</span>
+                </button>
+              </Badge>
+            ))
+          ) : (
+            <span className="text-muted-foreground">
+              {isLoading ? "Loading tags..." : placeholder}
+            </span>
+          )}
+        </div>
+        <svg
+          className={cn(
+            "ml-2 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            isOpen && "rotate-180",
+            (disabled || isLoading) && "opacity-50"
+          )}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Dropdown */}
+      {isOpen && !isLoading && !disabled && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border bg-popover text-popover-foreground shadow-md">
+          {/* Search input */}
+          <div className="p-2 border-b">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search or create tag..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="pl-9 bg-background"
+                autoFocus
+                disabled={disabled}
+              />
+            </div>
           </div>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[300px] p-0" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput
-            placeholder="Search or create tag..."
-            value={inputValue}
-            onValueChange={setInputValue}
-            onKeyDown={handleKeyDown}
-          />
-          <CommandList>
+
+          {/* Content */}
+          <div className="max-h-64 overflow-y-auto p-1">
             {isLoading ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 Loading tags...
               </div>
             ) : (
               <>
-                <CommandEmpty>
-                  {showCreateOption ? null : "No tags found."}
-                </CommandEmpty>
-
+                {/* Create option */}
                 {showCreateOption && (
-                  <>
-                    <CommandGroup>
-                      <CommandItem
-                        onSelect={handleCreateTag}
-                        disabled={isCreating}
-                        className="gap-2"
+                  <button
+                    type="button"
+                    onClick={handleCreateTag}
+                    disabled={isCreating || disabled}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground rounded-sm mb-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>
+                      Create "{searchQuery.trim()}"
+                      {isCreating && "..."}
+                    </span>
+                  </button>
+                )}
+
+                {/* Available tags */}
+                {filteredAvailableTags.length > 0 && (
+                  <div className="mb-2">
+                    <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                      Available
+                    </div>
+                    {filteredAvailableTags.map((tag) => (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() => handleSelect(tag.id)}
+                        disabled={!canAddMore || disabled}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground rounded-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <Plus className="h-4 w-4" />
-                        <span>
-                          Create "{inputValue.trim()}"
-                          {isCreating && "..."}
-                        </span>
-                      </CommandItem>
-                    </CommandGroup>
-                    {availableTags.length > 0 && <CommandSeparator />}
-                  </>
+                        <div
+                          className="h-3 w-3 rounded-full border"
+                          style={{
+                            backgroundColor: tag.color || "hsl(var(--muted))",
+                            borderColor: tag.color || "hsl(var(--muted-foreground))",
+                          }}
+                        />
+                        {tag.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
 
-                {availableTags.length > 0 && (
-                  <CommandGroup heading="Available">
-                    {availableTags
-                      .filter((tag) =>
-                        tag.label
-                          .toLowerCase()
-                          .includes(inputValue.toLowerCase())
-                      )
-                      .map((tag) => (
-                        <CommandItem
-                          key={tag.id}
-                          value={tag.id}
-                          onSelect={() => handleSelect(tag.id)}
-                          disabled={!canAddMore}
-                          className="gap-2"
-                        >
-                          <div
-                            className="h-3 w-3 rounded-full border"
-                            style={{
-                              backgroundColor: tag.color || "hsl(var(--muted))",
-                              borderColor:
-                                tag.color || "hsl(var(--muted-foreground))",
-                            }}
-                          />
-                          {tag.label}
-                        </CommandItem>
-                      ))}
-                  </CommandGroup>
+                {/* Selected tags */}
+                {filteredSelectedTags.length > 0 && (
+                  <div>
+                    <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                      Selected
+                    </div>
+                    {filteredSelectedTags.map((tag) => (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() => handleSelect(tag.id)}
+                        disabled={disabled}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground rounded-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Check className="h-4 w-4" />
+                        <div
+                          className="h-3 w-3 rounded-full border"
+                          style={{
+                            backgroundColor: tag.color || "hsl(var(--muted))",
+                            borderColor: tag.color || "hsl(var(--muted-foreground))",
+                          }}
+                        />
+                        {tag.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
 
-                {selectedTags.length > 0 && (
-                  <>
-                    <CommandSeparator />
-                    <CommandGroup heading="Selected">
-                      {selectedTags
-                        .filter((tag) =>
-                          tag.label
-                            .toLowerCase()
-                            .includes(inputValue.toLowerCase())
-                        )
-                        .map((tag) => (
-                          <CommandItem
-                            key={tag.id}
-                            value={tag.id}
-                            onSelect={() => handleSelect(tag.id)}
-                            className="gap-2"
-                          >
-                            <Check className="h-4 w-4" />
-                            <div
-                              className="h-3 w-3 rounded-full border"
-                              style={{
-                                backgroundColor:
-                                  tag.color || "hsl(var(--muted))",
-                                borderColor:
-                                  tag.color || "hsl(var(--muted-foreground))",
-                              }}
-                            />
-                            {tag.label}
-                          </CommandItem>
-                        ))}
-                    </CommandGroup>
-                  </>
+                {/* No results */}
+                {!showCreateOption && 
+                 filteredAvailableTags.length === 0 && 
+                 filteredSelectedTags.length === 0 && (
+                  <div className="py-6 text-center text-sm text-muted-foreground">
+                    {searchQuery ? "No tags found" : "No tags available"}
+                  </div>
                 )}
               </>
             )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
+          </div>
+
+          {/* Footer */}
+          <div className="border-t p-2 text-xs text-muted-foreground flex justify-between">
+            <span>
+              {selectedTags.length} tag{selectedTags.length !== 1 ? 's' : ''} selected
+            </span>
+            {maxTags && (
+              <span>
+                Max: {maxTags}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
