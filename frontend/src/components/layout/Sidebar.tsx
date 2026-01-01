@@ -15,7 +15,18 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ArrowRightOnRectangleIcon,
+  UserIcon,
+  ShieldCheckIcon,
+  InformationCircleIcon,
 } from "@heroicons/react/24/outline";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth.store";
 import { toast } from "sonner";
@@ -24,13 +35,9 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: HomeIcon },
   { name: "Conversations", href: "/conversations", icon: ChatBubbleLeftRightIcon, badge: 12 },
   { name: "Contacts", href: "/contacts", icon: UsersIcon },
-  { name: "Broadcasts", href: "/broadcasts", icon: MegaphoneIcon },
-  { name: "Campaigns", href: "/campaigns", icon: RocketLaunchIcon },
   { name: "Automations", href: "/automations", icon: SparklesIcon },
-  { name: "Teams", href: "/teams", icon: UserGroupIcon },
-  { name: "Tags", href: "/tags", icon: TagIcon },
   { name: "Analytics", href: "/analytics", icon: ChartBarIcon },
-  { name: "Settings", href: "/settings", icon: CogIcon },
+  
 ];
 
 export function Sidebar() {
@@ -59,10 +66,15 @@ export function Sidebar() {
     return user.name[0].toUpperCase();
   };
 
+  const getUserRole = () => {
+    if (!user?.role) return "Member";
+    return user.role.charAt(0).toUpperCase() + user.role.slice(1);
+  };
+
   return (
     <aside
       className={cn(
-        "gradient-sidebar flex flex-col transition-all duration-300 ease-in-out h-screen overflow-hidden",
+        "gradient-sidebar flex flex-col transition-all duration-300 ease-in-out h-screen overflow-hidden z-50",
         collapsed ? "w-16" : "w-64"
       )}
     >
@@ -156,75 +168,156 @@ export function Sidebar() {
         </ul>
       </nav>
 
-      {/* User Profile & Logout */}
-      <div className="border-t border-sidebar-border p-3 space-y-2 shrink-0">
-        {/* User Profile with Tooltip */}
-        <div className="relative group">
-          <div
-            className={cn(
-              "flex items-center gap-3 p-2 rounded-lg hover:bg-sidebar-accent transition-colors cursor-default",
-              collapsed ? "justify-center" : ""
-            )}
-          >
-            <div className="w-8 h-8 rounded-full bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0">
-              {user?.avatarUrl ? (
-                <img 
-                  src={user.avatarUrl} 
-                  alt={user.name || "User"}
-                  className="w-full h-full rounded-full object-cover"
-                />
-              ) : (
-                <span className="text-sm font-medium text-sidebar-foreground">
-                  {getUserInitials()}
-                </span>
+      {/* User Profile with Dropdown Menu */}
+      <div className="border-t border-sidebar-border p-3 shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className={cn(
+                "w-full flex items-center gap-3 p-2 rounded-lg transition-colors",
+                "hover:bg-sidebar-accent focus:outline-none focus:ring-2 focus:ring-sidebar-foreground/30",
+                collapsed ? "justify-center" : ""
               )}
-            </div>
-            
-            {!collapsed && user && (
-              <div className="flex-1 min-w-0 overflow-hidden">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">
-                  {user.name || "User"}
-                </p>
-                <p className="text-xs text-sidebar-muted truncate">
-                  {user.email}
-                </p>
+              aria-label="User menu"
+            >
+              <div className="w-8 h-8 rounded-full bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0 relative">
+                {user?.avatarUrl ? (
+                  <img 
+                    src={user.avatarUrl} 
+                    alt={user.name || "User"}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="text-sm font-medium text-sidebar-foreground">
+                    {getUserInitials()}
+                  </span>
+                )}
+                {/* Online indicator */}
+                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-sidebar-background"></div>
               </div>
-            )}
-          </div>
-          
-          {collapsed && user && (
-            <div className="absolute left-full bottom-0 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
-              <div className="font-medium">{user.name || "User"}</div>
-              <div className="text-gray-300 text-xs">{user.email}</div>
-              <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-y-4 border-l-0 border-r-4 border-r-gray-900 border-transparent"></div>
-            </div>
-          )}
-        </div>
+              
+              {!collapsed && user && (
+                <div className="flex-1 min-w-0 overflow-hidden text-left">
+                  <p className="text-sm font-medium text-sidebar-foreground truncate">
+                    {user.name || "User"}
+                  </p>
+                  <p className="text-xs text-sidebar-muted truncate">
+                    {getUserRole()}
+                  </p>
+                </div>
+              )}
 
-        {/* Logout Button with Tooltip */}
-        <div className="relative group">
-          <button
-            onClick={handleLogout}
-            className={cn(
-              "w-full flex items-center gap-3 p-2 rounded-lg text-sm font-medium transition-all duration-200",
-              "text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-foreground",
-              collapsed ? "justify-center" : ""
-            )}
-            title={collapsed ? "Logout" : ""}
+              {/* Chevron icon when sidebar is expanded */}
+              {!collapsed && (
+                <ChevronRightIcon className="w-4 h-4 text-sidebar-muted flex-shrink-0" />
+              )}
+            </button>
+          </DropdownMenuTrigger>
+
+          <DropdownMenuContent 
+            align={collapsed ? "start" : "end"}
+            alignOffset={collapsed ? 10 : -10}
+            side={collapsed ? "right" : "top"}
+            sideOffset={10}
+            className="w-64 bg-card border-border shadow-lg"
           >
-            <ArrowRightOnRectangleIcon className="w-5 h-5 flex-shrink-0" />
-            {!collapsed && (
-              <span className="flex-1 text-left truncate">Logout</span>
-            )}
-          </button>
-          
-          {collapsed && (
-            <div className="absolute left-full bottom-0 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
-              Logout
+            {/* User Info */}
+            <DropdownMenuLabel className="p-0">
+              <div className="p-4 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-sidebar-foreground/20 flex items-center justify-center flex-shrink-0">
+                    {user?.avatarUrl ? (
+                      <img 
+                        src={user.avatarUrl} 
+                        alt={user.name || "User"}
+                        className="w-full h-full rounded-full object-cover"
+                      />
+                    ) : (
+                      <UserIcon className="w-5 h-5 text-sidebar-foreground" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">
+                      {user?.name || "User"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user?.email || "No email"}
+                    </p>
+                    {user?.role && (
+                      <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-primary/10 rounded-full">
+                        <ShieldCheckIcon className="w-3 h-3 text-primary" />
+                        <span className="text-xs font-medium text-primary">
+                          {getUserRole()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+
+            {/* Menu Items */}
+            <div className="py-1">
+              <DropdownMenuItem
+                onClick={() => navigate("/settings/profile")}
+                className="cursor-pointer gap-3 px-4 py-2.5"
+              >
+                <UserIcon className="w-4 h-4" />
+                My Profile
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem
+                onClick={() => navigate("/settings")}
+                className="cursor-pointer gap-3 px-4 py-2.5"
+              >
+                <CogIcon className="w-4 h-4" />
+                Account Settings
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem
+                onClick={() => {
+                  // Navigate to help/support page
+                  console.log("Help clicked");
+                }}
+                className="cursor-pointer gap-3 px-4 py-2.5"
+              >
+                <InformationCircleIcon className="w-4 h-4" />
+                Help & Support
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+
+              {/* Logout Button */}
+              <DropdownMenuItem
+                onClick={handleLogout}
+                className="cursor-pointer gap-3 px-4 py-2.5 text-destructive focus:text-destructive focus:bg-destructive/10"
+              >
+                <ArrowRightOnRectangleIcon className="w-4 h-4" />
+                Logout
+              </DropdownMenuItem>
+            </div>
+
+            {/* Footer with version info */}
+            <div className="px-4 py-2.5 border-t border-border bg-muted/30">
+              <p className="text-xs text-muted-foreground text-center">
+                Minglee v1.0.0
+              </p>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Tooltip for collapsed sidebar (hover only) */}
+        {collapsed && (
+          <div className="relative group">
+            <div className="absolute left-full bottom-0 mb-2 ml-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
+              <div className="font-medium">{user?.name || "User"}</div>
+              <div className="text-gray-300 text-xs">{user?.email}</div>
               <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-y-4 border-l-0 border-r-4 border-r-gray-900 border-transparent"></div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </aside>
   );

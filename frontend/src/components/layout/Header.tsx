@@ -113,7 +113,7 @@ export function Header({ title, subtitle }: HeaderProps) {
         {!title ? (
           // Show user welcome when no page title is provided
           <div className="flex items-center gap-3">
-            {getUserAvatar()}
+            {/* {getUserAvatar()} */}
             <div>
               <h1 className="text-lg font-semibold text-foreground">
                 {greeting}, {getUserName()}!
