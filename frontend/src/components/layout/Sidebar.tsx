@@ -1,3 +1,4 @@
+// frontend/src/components/layout/Sidebar.tsx
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
@@ -61,7 +62,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "gradient-sidebar flex flex-col transition-all duration-300 ease-in-out relative h-screen overflow-hidden",
+        "gradient-sidebar flex flex-col transition-all duration-300 ease-in-out h-screen overflow-hidden",
         collapsed ? "w-16" : "w-64"
       )}
     >

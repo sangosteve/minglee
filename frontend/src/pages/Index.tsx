@@ -1,3 +1,4 @@
+// frontend/src/pages/Index.tsx
 import { MainLayout } from "@/components/layout/MainLayout";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { ConversationList } from "@/components/dashboard/ConversationList";
@@ -13,7 +14,8 @@ import {
 
 const Index = () => {
   return (
-    <MainLayout title="Dashboard" subtitle="Welcome back, John">
+    // REMOVE title and subtitle props here
+    <MainLayout>
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <MetricCard
