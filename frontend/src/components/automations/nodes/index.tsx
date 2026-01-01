@@ -3,18 +3,30 @@ import { NodeTypes } from '@xyflow/react';
 import TextMessageNode from './TextMessageNode';
 import QuickRepliesNode from './QuickRepliesNode';
 import ConditionNode from './ConditionNode';
-import TriggerNode from './TriggerNode'; // ADD THIS
+import TriggerNode from './TriggerNode';
 import TagNode from './TagNode';
-import MediaMessageNode from './MediaMessageNode'
-export { TextMessageNode, QuickRepliesNode, TriggerNode, MediaMessageNode }; // REMOVE StartNode
+import MediaMessageNode from './MediaMessageNode';
+import KeywordActionNode from './KeywordActionNode'; // Add this
+
+
+// Export individual nodes
+export { 
+  TextMessageNode, 
+  QuickRepliesNode, 
+  TriggerNode, 
+  MediaMessageNode,
+  TagNode,
+  ConditionNode,
+  KeywordActionNode, // Add this
+};
 
 // Export node types for React Flow
 export const nodeTypes = {
-  // REMOVE THIS: startNode: StartNode,
   textMessageNode: TextMessageNode,
   quickRepliesNode: QuickRepliesNode,
-  triggerNode: TriggerNode ,
+  triggerNode: TriggerNode,
   tagNode: TagNode,
-  conditionNode:ConditionNode,
+  conditionNode: ConditionNode,
   mediaMessageNode: MediaMessageNode,
+  keywordActionNode: KeywordActionNode, // Add this
 } as NodeTypes;

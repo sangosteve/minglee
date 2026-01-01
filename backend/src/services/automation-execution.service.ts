@@ -8,7 +8,8 @@ import {
   conversations,
   tags,
   mediaAttachments,
-  quickReplies
+  quickReplies,
+  messages,
 } from '../db/schema';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { VariableService } from './variable.service';
@@ -160,124 +161,156 @@ export class AutomationExecutionService {
       const maxExecutions = 100; // Safety limit
 
       // Execution loop
-      while (currentNode && executionCount < maxExecutions) {
-        executionCount++;
+while (currentNode && executionCount < maxExecutions) {
+  executionCount++;
 
-        // Skip if already visited (prevents loops)
-        if (visitedNodes.has(currentNode.id)) {
-          console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, skipping to avoid loop`);
-          break;
-        }
+  // Skip if already visited (prevents loops)
+  if (visitedNodes.has(currentNode.id)) {
+    console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, skipping to avoid loop`);
+    break;
+  }
 
-        visitedNodes.add(currentNode.id);
+  visitedNodes.add(currentNode.id);
 
-        console.log(`[Automation] ➡️ Processing node: ${currentNode.id} (${currentNode.type})`);
+  console.log(`[Automation] ➡️ Processing node: ${currentNode.id} (${currentNode.type})`);
 
-        const nodeStartTime = Date.now();
-        let nodeSuccess = false;
-        let nodeError = null;
-        let conditionResult = null;
+  const nodeStartTime = Date.now();
+  let nodeSuccess = false;
+  let nodeError = null;
+  let conditionResult = null;
+  let keywordResult = null; // Add this for keyword nodes
 
-        try {
-          switch (currentNode.type) {
-            case 'textMessageNode':
-              await this.executeTextMessageNode(currentNode, context);
-              nodeSuccess = true;
-              break;
+  try {
+    switch (currentNode.type) {
+      case 'textMessageNode':
+        await this.executeTextMessageNode(currentNode, context);
+        nodeSuccess = true;
+        break;
 
-            case 'mediaMessageNode':
-              await this.executeMediaMessageNode(currentNode, context);
-              nodeSuccess = true;
-              break;
+      case 'mediaMessageNode':
+        await this.executeMediaMessageNode(currentNode, context);
+        nodeSuccess = true;
+        break;
 
-            case 'quickRepliesNode':
-              await this.executeQuickRepliesNode(currentNode, context);
-              nodeSuccess = true;
-              break;
+      case 'quickRepliesNode':
+        await this.executeQuickRepliesNode(currentNode, context);
+        nodeSuccess = true;
+        break;
 
+      case 'keywordActionNode':
+        const keywordResponse = await this.executeKeywordActionNode(currentNode, context);
+        nodeSuccess = keywordResponse.success;
+        keywordResult = keywordResponse.matched; // Store keyword result separately
+        console.log(`[Automation] Keyword check result: ${keywordResult ? 'MATCH' : 'NO MATCH'}`);
+        break;
 
-            case 'tagNode':
-              await this.executeTagNode(currentNode, context);
-              nodeSuccess = true;
-              break;
+      case 'tagNode':
+        await this.executeTagNode(currentNode, context);
+        nodeSuccess = true;
+        break;
 
-            case 'delayNode':
-              await this.executeDelayNode(currentNode, context);
-              nodeSuccess = true;
-              break;
+      case 'delayNode':
+        await this.executeDelayNode(currentNode, context);
+        nodeSuccess = true;
+        break;
 
-            case 'conditionNode':
-              const conditionResponse = await this.executeConditionNode(currentNode, context);
-              nodeSuccess = conditionResponse.success;
-              conditionResult = conditionResponse.success;
-              console.log(`[Automation] Condition result: ${conditionResult}`);
-              break;
+      case 'conditionNode':
+        const conditionResponse = await this.executeConditionNode(currentNode, context);
+        nodeSuccess = conditionResponse.success;
+        conditionResult = conditionResponse.success;
+        console.log(`[Automation] Condition result: ${conditionResult}`);
+        break;
 
-            case 'triggerNode':
-              // Trigger node doesn't need execution, just continue
-              console.log(`[Automation] ⚡ Trigger node: ${currentNode.data?.label || 'Trigger'}`);
-              nodeSuccess = true;
-              break;
+      case 'triggerNode':
+        // Trigger node doesn't need execution, just continue
+        console.log(`[Automation] ⚡ Trigger node: ${currentNode.data?.label || 'Trigger'}`);
+        nodeSuccess = true;
+        break;
 
-            default:
-              console.log(`[Automation] ⚠️ Unknown node type: ${currentNode.type}`);
-              nodeSuccess = true;
-          }
-        } catch (error: any) {
-          nodeError = error.message;
-          console.error(`[Automation] ❌ Error in node ${currentNode.id}:`, error);
-        }
+      default:
+        console.log(`[Automation] ⚠️ Unknown node type: ${currentNode.type}`);
+        nodeSuccess = true;
+    }
+  } catch (error: any) {
+    nodeError = error.message;
+    console.error(`[Automation] ❌ Error in node ${currentNode.id}:`, error);
+  }
 
-        nodeExecutions.push({
-          nodeId: currentNode.id,
-          nodeType: currentNode.type,
-          success: nodeSuccess,
-          error: nodeError,
-          duration: Date.now() - nodeStartTime,
-          timestamp: new Date(),
-          conditionResult,
-        });
+  nodeExecutions.push({
+    nodeId: currentNode.id,
+    nodeType: currentNode.type,
+    success: nodeSuccess,
+    error: nodeError,
+    duration: Date.now() - nodeStartTime,
+    timestamp: new Date(),
+    conditionResult,
+    keywordResult, // Add this
+  });
 
-        // Determine next node based on edges
-        const outgoingEdges = edgeMap.get(currentNode.id) || [];
+  // Determine next node based on edges
+  const outgoingEdges = edgeMap.get(currentNode.id) || [];
 
-        if (outgoingEdges.length === 0) {
-          console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, execution complete`);
-          break;
-        }
+  if (outgoingEdges.length === 0) {
+    console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, execution complete`);
+    break;
+  }
 
-        // Handle condition node branching
-        if (currentNode.type === 'conditionNode') {
-          const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
-          const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+  // Handle keyword action node branching (DIFFERENT from condition node!)
+  if (currentNode.type === 'keywordActionNode') {
+    const matchEdge = outgoingEdges.find(e => e.sourceHandle === 'match');
+    const noMatchEdge = outgoingEdges.find(e => e.sourceHandle === 'no-match');
 
-          let nextEdge;
-          if (conditionResult === true && trueEdge) {
-            nextEdge = trueEdge;
-            console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
-          } else if (conditionResult === false && falseEdge) {
-            nextEdge = falseEdge;
-            console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
-          } else {
-            // Fallback: follow first edge
-            nextEdge = outgoingEdges[0];
-            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
-          }
+    let nextEdge;
+    if (keywordResult === true && matchEdge) {
+      nextEdge = matchEdge;
+      console.log(`[Automation] ↪️ Keyword MATCH, following match branch to ${matchEdge.target}`);
+    } else if (keywordResult === false && noMatchEdge) {
+      nextEdge = noMatchEdge;
+      console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
+    } else {
+      // Fallback: follow first edge
+      nextEdge = outgoingEdges[0];
+      console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+    }
 
-          if (nextEdge) {
-            currentNode = nodeMap.get(nextEdge.target);
-            continue;
-          }
-        }
+    if (nextEdge) {
+      currentNode = nodeMap.get(nextEdge.target);
+      continue;
+    }
+  }
 
-        // For regular nodes, follow the first outgoing edge
-        if (outgoingEdges.length > 0) {
-          const nextEdge = outgoingEdges[0];
-          currentNode = nodeMap.get(nextEdge.target);
-        } else {
-          currentNode = null;
-        }
-      }
+  // Handle condition node branching
+  if (currentNode.type === 'conditionNode') {
+    const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
+    const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+
+    let nextEdge;
+    if (conditionResult === true && trueEdge) {
+      nextEdge = trueEdge;
+      console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
+    } else if (conditionResult === false && falseEdge) {
+      nextEdge = falseEdge;
+      console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
+    } else {
+      // Fallback: follow first edge
+      nextEdge = outgoingEdges[0];
+      console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+    }
+
+    if (nextEdge) {
+      currentNode = nodeMap.get(nextEdge.target);
+      continue;
+    }
+  }
+
+  // For regular nodes, follow the first outgoing edge
+  if (outgoingEdges.length > 0) {
+    const nextEdge = outgoingEdges[0];
+    currentNode = nodeMap.get(nextEdge.target);
+  } else {
+    currentNode = null;
+  }
+}
 
       if (executionCount >= maxExecutions) {
         console.warn(`[Automation] ⚠️ Execution stopped: reached maximum execution limit (${maxExecutions} nodes)`);
@@ -410,110 +443,110 @@ export class AutomationExecutionService {
   }
 
   private async executeQuickRepliesNode(node: any, context: ExecutionContext): Promise<void> {
-  const nodeData = node.data || {};
-  const quickReplyId = nodeData.quickReplyId;
-  
-  console.log(`[Automation] ⚡ Quick Reply node: ${node.id}`);
-  
-  if (!quickReplyId) {
-    console.error(`[Automation] ❌ No quick reply selected for node ${node.id}`);
-    throw new Error('Quick reply not selected');
+    const nodeData = node.data || {};
+    const quickReplyId = nodeData.quickReplyId;
+
+    console.log(`[Automation] ⚡ Quick Reply node: ${node.id}`);
+
+    if (!quickReplyId) {
+      console.error(`[Automation] ❌ No quick reply selected for node ${node.id}`);
+      throw new Error('Quick reply not selected');
+    }
+
+    const db = getDb();
+
+    // 1. Get quick reply
+    const [quickReply] = await db.select()
+      .from(quickReplies)
+      .where(and(
+        eq(quickReplies.id, quickReplyId),
+        eq(quickReplies.userId, context.userData.id),
+        eq(quickReplies.isActive, true)
+      ))
+      .limit(1);
+
+    if (!quickReply) {
+      console.error(`[Automation] ❌ Quick reply ${quickReplyId} not found or inactive`);
+      throw new Error('Quick reply not found');
+    }
+
+    // 2. Get media attachments if any
+    let mediaAttachmentsList: any[] = [];
+    if (quickReply.mediaAttachmentIds && quickReply.mediaAttachmentIds.length > 0) {
+      mediaAttachmentsList = await db.select()
+        .from(mediaAttachments)
+        .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
+
+      console.log(`[Automation] 📦 Quick reply has ${mediaAttachmentsList.length} media attachments`);
+    }
+
+    // 3. Personalize message
+    const allVariables = VariableService.getAvailableVariables(
+      context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+      context.currentData.contact,
+      context.currentData.user
+    );
+
+    const personalizedMessage = VariableService.replaceVariables(quickReply.message, allVariables);
+
+    // 4. Format attachments for MessageService
+    const formattedAttachments = mediaAttachmentsList.map((media: any) => ({
+      id: media.id,
+      url: media.secureUrl || media.thumbnailUrl,
+      secureUrl: media.secureUrl || media.thumbnailUrl,
+      mimeType: media.mimeType,
+      originalFilename: media.originalFilename,
+      filename: media.originalFilename,
+      fileSize: media.fileSize,
+      width: media.width,
+      height: media.height,
+      duration: media.duration,
+      caption: personalizedMessage,
+    }));
+
+    // 5. Send message via WhatsApp
+    if (formattedAttachments.length > 0) {
+      // Send with media attachments
+      await messageService.sendMessage({
+        conversationId: context.currentData.conversation?.id,
+        contactId: context.contactId,
+        userId: context.userData.id,
+        body: personalizedMessage,
+        attachments: formattedAttachments,
+        direction: 'outgoing',
+        metadata: {
+          automation: true,
+          automationId: context.workflowId,
+          automationName: 'Automation',
+          nodeId: node.id,
+          executionId: context.executionId,
+          quickReplyId: quickReply.id,
+          quickReplyName: quickReply.name,
+        },
+      });
+    } else {
+      // Send as text-only message
+      await messageService.sendMessage({
+        conversationId: context.currentData.conversation?.id,
+        contactId: context.contactId,
+        userId: context.userData.id,
+        body: personalizedMessage,
+        attachments: [],
+        direction: 'outgoing',
+        metadata: {
+          automation: true,
+          automationId: context.workflowId,
+          automationName: 'Automation',
+          nodeId: node.id,
+          executionId: context.executionId,
+          quickReplyId: quickReply.id,
+          quickReplyName: quickReply.name,
+        },
+      });
+    }
+
+    console.log(`[Automation] ✅ Quick reply "${quickReply.name}" sent successfully`);
   }
-
-  const db = getDb();
-  
-  // 1. Get quick reply
-  const [quickReply] = await db.select()
-    .from(quickReplies)
-    .where(and(
-      eq(quickReplies.id, quickReplyId),
-      eq(quickReplies.userId, context.userData.id),
-      eq(quickReplies.isActive, true)
-    ))
-    .limit(1);
-
-  if (!quickReply) {
-    console.error(`[Automation] ❌ Quick reply ${quickReplyId} not found or inactive`);
-    throw new Error('Quick reply not found');
-  }
-
-  // 2. Get media attachments if any
-  let mediaAttachmentsList: any[] = [];
-  if (quickReply.mediaAttachmentIds && quickReply.mediaAttachmentIds.length > 0) {
-    mediaAttachmentsList = await db.select()
-      .from(mediaAttachments)
-      .where(inArray(mediaAttachments.id, quickReply.mediaAttachmentIds));
-    
-    console.log(`[Automation] 📦 Quick reply has ${mediaAttachmentsList.length} media attachments`);
-  }
-
-  // 3. Personalize message
-  const allVariables = VariableService.getAvailableVariables(
-    context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
-    context.currentData.contact,
-    context.currentData.user
-  );
-  
-  const personalizedMessage = VariableService.replaceVariables(quickReply.message, allVariables);
-  
-  // 4. Format attachments for MessageService
-  const formattedAttachments = mediaAttachmentsList.map((media: any) => ({
-    id: media.id,
-    url: media.secureUrl || media.thumbnailUrl,
-    secureUrl: media.secureUrl || media.thumbnailUrl,
-    mimeType: media.mimeType,
-    originalFilename: media.originalFilename,
-    filename: media.originalFilename,
-    fileSize: media.fileSize,
-    width: media.width,
-    height: media.height,
-    duration: media.duration,
-    caption: personalizedMessage,
-  }));
-
-  // 5. Send message via WhatsApp
-  if (formattedAttachments.length > 0) {
-    // Send with media attachments
-    await messageService.sendMessage({
-      conversationId: context.currentData.conversation?.id,
-      contactId: context.contactId,
-      userId: context.userData.id,
-      body: personalizedMessage,
-      attachments: formattedAttachments,
-      direction: 'outgoing',
-      metadata: {
-        automation: true,
-        automationId: context.workflowId,
-        automationName: 'Automation',
-        nodeId: node.id,
-        executionId: context.executionId,
-        quickReplyId: quickReply.id,
-        quickReplyName: quickReply.name,
-      },
-    });
-  } else {
-    // Send as text-only message
-    await messageService.sendMessage({
-      conversationId: context.currentData.conversation?.id,
-      contactId: context.contactId,
-      userId: context.userData.id,
-      body: personalizedMessage,
-      attachments: [],
-      direction: 'outgoing',
-      metadata: {
-        automation: true,
-        automationId: context.workflowId,
-        automationName: 'Automation',
-        nodeId: node.id,
-        executionId: context.executionId,
-        quickReplyId: quickReply.id,
-        quickReplyName: quickReply.name,
-      },
-    });
-  }
-  
-  console.log(`[Automation] ✅ Quick reply "${quickReply.name}" sent successfully`);
-}
 
   /**
    * Execute tag node - FIXED array handling
@@ -1106,6 +1139,96 @@ export class AutomationExecutionService {
 
     return current;
   }
+
+  /**
+   * 
+    * Execute keyword action node
+  **/
+private async executeKeywordActionNode(node: any, context: ExecutionContext): Promise<{ success: boolean; matched: boolean }> {
+  const nodeData = node.data || {};
+  const keywords = nodeData.keywords || [];
+  const matchType = nodeData.matchType || 'contains';
+  const caseSensitive = nodeData.caseSensitive || false;
+  const matchAll = nodeData.matchAll || false;
+  
+  console.log(`[Automation] 🔤 Keyword action node: ${node.id}`);
+  console.log(`[Automation] Keywords: ${keywords.length}, Match type: ${matchType}, Case: ${caseSensitive}, Logic: ${matchAll ? 'ALL' : 'ANY'}`);
+  
+  if (keywords.length === 0) {
+    console.log(`[Automation] ⚠️ No keywords configured, skipping`);
+    return { success: true, matched: false };
+  }
+  
+  // Get the last message from the contact
+  const db = getDb();
+  const lastMessage = await db.select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.contactId, context.contactId),
+        eq(messages.direction, 'incoming')
+      )
+    )
+    .orderBy(desc(messages.timestamp))
+    .limit(1);
+  
+  if (lastMessage.length === 0) {
+    console.log(`[Automation] ⚠️ No incoming messages found for keyword check`);
+    return { success: true, matched: false };
+  }
+  
+  const messageText = lastMessage[0].body || '';
+  
+  // Use the same matching logic
+  const matched = this.evaluateKeywords(
+    messageText, 
+    keywords, 
+    matchType, 
+    caseSensitive, 
+    matchAll
+  );
+  
+  console.log(`[Automation] Keyword check on message: "${messageText.substring(0, 50)}..."`);
+  console.log(`[Automation] Result: ${matched ? '✅ MATCH' : '❌ NO MATCH'}`);
+  
+  return { success: true, matched };
+}
+
+/**
+ * Evaluate keywords against a message
+ */
+private evaluateKeywords(
+  message: string, 
+  keywords: string[], 
+  matchType: string, 
+  caseSensitive: boolean,
+  matchAll: boolean = false
+): boolean {
+  if (keywords.length === 0) return false;
+  
+  const normalizedMessage = caseSensitive ? message : message.toLowerCase();
+  
+  const matches = keywords.map(keyword => {
+    const normalizedKeyword = caseSensitive ? keyword : keyword.toLowerCase();
+    
+    switch (matchType) {
+      case 'exact':
+        return normalizedMessage === normalizedKeyword;
+      case 'contains':
+        return normalizedMessage.includes(normalizedKeyword);
+      case 'startsWith':
+        return normalizedMessage.startsWith(normalizedKeyword);
+      case 'endsWith':
+        return normalizedMessage.endsWith(normalizedKeyword);
+      default:
+        return normalizedMessage.includes(normalizedKeyword);
+    }
+  });
+  
+  return matchAll 
+    ? matches.every(match => match === true)
+    : matches.some(match => match === true);
+}
 
   /**
    * Parse comparison value (handle variables, dates, etc.)

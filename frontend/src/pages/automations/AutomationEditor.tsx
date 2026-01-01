@@ -15,6 +15,7 @@ import {
   MarkerType,
   useReactFlow,
   ReactFlowInstance,
+  EdgeSelectionChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -56,6 +57,9 @@ import { api } from "@/lib/api";
 import ConditionPanel from "@/components/automations/panels/ConditionPanel";
 import MediaMessagePanel from "@/components/automations/panels/MediaMessagePanel";
 import QuickRepliesPanel from "@/components/automations/panels/QuickRepliesPanel";
+import { KeyboardIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import KeywordActionPanel from "@/components/automations/panels/KeywordActionPanel";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -72,6 +76,13 @@ const defaultEdgeOptions = {
   },
 };
 
+// Custom edge styles for selected state
+const selectedEdgeStyle = {
+  strokeWidth: 3,
+  stroke: "#f59e0b", // Amber color for selected edges
+  strokeDasharray: "5,5", // Optional: dashed line for selected edges
+};
+
 function AutomationEditorInner() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -81,6 +92,7 @@ function AutomationEditorInner() {
   const [nodeId, setNodeId] = useState(2);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null); // Add selected edge state
   const [expandedSections, setExpandedSections] = useState({
     messages: true,
     logic: true,
@@ -232,9 +244,39 @@ function AutomationEditorInner() {
 
       setNodes((nds) => nds.filter((node) => node.id !== nodeId));
       setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+      
+      // Clear selection if the selected node was deleted
+      if (selectedNode && selectedNode.id === nodeId) {
+        setSelectedNode(null);
+      }
     },
-    [setNodes, setEdges],
+    [setNodes, setEdges, selectedNode],
   );
+
+  // Delete edge function
+  const deleteEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
+      
+      // Clear selection if the selected edge was deleted
+      if (selectedEdge && selectedEdge.id === edgeId) {
+        setSelectedEdge(null);
+      }
+      
+      toast({
+        title: "Connection removed",
+        description: "The connection between nodes has been removed",
+      });
+    },
+    [setEdges, selectedEdge],
+  );
+
+  // Delete selected edge function
+  const deleteSelectedEdge = useCallback(() => {
+    if (selectedEdge) {
+      deleteEdge(selectedEdge.id);
+    }
+  }, [selectedEdge, deleteEdge]);
 
   // Update node function
   const updateNode = useCallback(
@@ -265,6 +307,18 @@ function AutomationEditorInner() {
       ),
     [setEdges],
   );
+
+  // Handle edge click
+  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    setSelectedEdge(edge);
+    setSelectedNode(null); // Clear node selection when edge is selected
+  }, []);
+
+  // Handle pane click (clear selections)
+  const onPaneClick = useCallback(() => {
+    setSelectedEdge(null);
+    setSelectedNode(null);
+  }, []);
 
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, connectionState: any) => {
     if (!connectionState.isValid && connectionState.fromNode) {
@@ -303,6 +357,12 @@ function AutomationEditorInner() {
       delayNode: { duration: 0, unit: "minutes" },
       tagNode: { action: "add", tagNames: [] },
       mediaMessageNode: { media: { type: "image" }, caption: "" },
+      keywordActionNode: {
+        keywords: [],
+        matchType: "contains",
+        caseSensitive: false,
+        matchAll: false
+      },
     };
 
     const newNode: Node = {
@@ -333,6 +393,7 @@ function AutomationEditorInner() {
       delayNode: `Delay`,
       tagNode: `Tag`,
       mediaMessageNode: `Send Media`,
+      keywordActionNode: `Check Keywords`,
     };
 
     const newNode = createNode(type, flowPosition, labels[type as keyof typeof labels]);
@@ -396,13 +457,16 @@ function AutomationEditorInner() {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setConnectionPopup({ show: false, position: { x: 0, y: 0 }, sourceNodeId: null, sourceHandleId: null });
+        setSelectedEdge(null);
+        setSelectedNode(null);
       }
     };
 
     if (connectionPopup.show) {
       document.addEventListener("mousedown", handleClickOutside);
-      document.addEventListener("keydown", handleEscape);
     }
+    
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
@@ -414,6 +478,7 @@ function AutomationEditorInner() {
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     if (node.type !== "triggerNode") {
       setSelectedNode(node);
+      setSelectedEdge(null); // Clear edge selection when node is selected
     }
   }, []);
 
@@ -669,6 +734,8 @@ function AutomationEditorInner() {
       setNodes([newTriggerNode]);
     }
     setEdges([]);
+    setSelectedEdge(null);
+    setSelectedNode(null);
     setNodeId(2);
     toast({
       title: "Flow reset",
@@ -718,6 +785,18 @@ function AutomationEditorInner() {
             />
           </div>
           <div className="flex items-center gap-3">
+            {/* Delete edge button - only shown when an edge is selected */}
+            {selectedEdge && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="gap-2"
+                onClick={deleteSelectedEdge}
+              >
+                <TrashIcon className="h-4 w-4" />
+                Delete Connection
+              </Button>
+            )}
             <Button
               variant={workflowStatus === 'active' ? "default" : "outline"}
               size="sm"
@@ -820,11 +899,11 @@ function AutomationEditorInner() {
                           Quick Replies
                         </button>
                         <button
-                          onClick={() => addNode("listMessageNode")}
+                          onClick={() => addNode("keywordActionNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
                         >
-                          <Squares2X2Icon className="h-4 w-4 text-green-500" />
-                          List Message
+                          <HugeiconsIcon icon={KeyboardIcon} size={16} className="text-amber-500" />
+                          Check Keywords
                         </button>
                       </div>
                     )}
@@ -909,11 +988,18 @@ function AutomationEditorInner() {
           <div className="flex-1 relative">
             <ReactFlow
               nodes={nodes}
-              edges={edges}
+              edges={edges.map(edge => ({
+                ...edge,
+                style: selectedEdge?.id === edge.id 
+                  ? { ...edge.style, ...selectedEdgeStyle }
+                  : edge.style,
+              }))}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onConnectEnd={onConnectEnd}
+              onEdgeClick={onEdgeClick}
+              onPaneClick={onPaneClick}
               nodeTypes={{
                 ...nodeTypes,
                 triggerNode: (props) => {
@@ -967,10 +1053,27 @@ function AutomationEditorInner() {
                     />
                   );
                 },
-                quickRepliesNode: (props) => { // Add this
+                quickRepliesNode: (props) => {
                   const QuickRepliesNodeComponent = nodeTypes.quickRepliesNode;
                   return (
                     <QuickRepliesNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                keywordActionNode: (props) => {
+                  const KeywordActionNodeComponent = nodeTypes.keywordActionNode;
+                  return (
+                    <KeywordActionNodeComponent
                       {...props}
                       data={{
                         ...props.data,
@@ -1066,11 +1169,11 @@ function AutomationEditorInner() {
                         Quick Replies
                       </button>
                       <button
-                        onClick={() => handleCreateNode("listMessageNode")}
+                        onClick={() => handleCreateNode("keywordActionNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                       >
-                        <Squares2X2Icon className="h-4 w-4 text-green-500" />
-                        List Message
+                        <HugeiconsIcon icon={KeyboardIcon} size={16} className="text-amber-500" />
+                        Check Keywords
                       </button>
                     </div>
 
@@ -1127,19 +1230,25 @@ function AutomationEditorInner() {
               onClose={closePanel}
               onUpdate={updateNode}
             />
-          ) : selectedNode && selectedNode.type === 'mediaMessageNode' ? ( // Add this
+          ) : selectedNode && selectedNode.type === 'mediaMessageNode' ? (
             <MediaMessagePanel
               node={selectedNode}
               onClose={closePanel}
               onUpdate={updateNode}
             />
-          ) : selectedNode && selectedNode.type === 'quickRepliesNode' ? ( // Add this condition
+          ) : selectedNode && selectedNode.type === 'quickRepliesNode' ? (
             <QuickRepliesPanel
               node={selectedNode}
               onClose={closePanel}
               onUpdate={updateNode}
             />) : selectedNode && selectedNode.type === 'conditionNode' ? (
               <ConditionPanel
+                node={selectedNode}
+                onClose={closePanel}
+                onUpdate={updateNode}
+              />
+            ) : selectedNode && selectedNode.type === 'keywordActionNode' ? (
+              <KeywordActionPanel
                 node={selectedNode}
                 onClose={closePanel}
                 onUpdate={updateNode}
