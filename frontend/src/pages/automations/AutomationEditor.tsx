@@ -55,6 +55,7 @@ import {
 import { api } from "@/lib/api";
 import ConditionPanel from "@/components/automations/panels/ConditionPanel";
 import MediaMessagePanel from "@/components/automations/panels/MediaMessagePanel";
+import QuickRepliesPanel from "@/components/automations/panels/QuickRepliesPanel";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -296,12 +297,12 @@ function AutomationEditorInner() {
     const nodeDataMap: Record<string, any> = {
       triggerNode: { triggerType: "new_conversation", config: {} },
       textMessageNode: { message: "" },
-      quickRepliesNode: { body: "", buttons: [] },
+      quickRepliesNode: { quickReplyId: null, quickReply: null },
       listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
       conditionNode: { rules: [] },
       delayNode: { duration: 0, unit: "minutes" },
       tagNode: { action: "add", tagNames: [] },
-        mediaMessageNode: { media: { type: "image" }, caption: "" },
+      mediaMessageNode: { media: { type: "image" }, caption: "" },
     };
 
     const newNode: Node = {
@@ -326,7 +327,7 @@ function AutomationEditorInner() {
     const labels = {
       triggerNode: `Trigger`,
       textMessageNode: `Send Message`,
-      quickRepliesNode: `Quick Replies`,
+      quickRepliesNode: `Send Quick Reply`,
       listMessageNode: `List Message`,
       conditionNode: `Condition`,
       delayNode: `Delay`,
@@ -517,6 +518,34 @@ function AutomationEditorInner() {
 
             if (node.data.hasVariables !== undefined) {
               cleanData.hasVariables = node.data.hasVariables;
+            }
+          }
+
+          if (node.type === 'quickRepliesNode') {
+            // Make sure quickReplyId is included
+            if (node.data.quickReplyId !== undefined) {
+              cleanData.quickReplyId = node.data.quickReplyId;
+            }
+
+            // Include quickReply object but clean it
+            if (node.data.quickReply && typeof node.data.quickReply === 'object') {
+              try {
+                cleanData.quickReply = {
+                  id: node.data.quickReply.id,
+                  name: node.data.quickReply.name,
+                  message: node.data.quickReply.message,
+                  topics: node.data.quickReply.topics,
+                  mediaAttachmentIds: node.data.quickReply.mediaAttachmentIds,
+                  isActive: node.data.quickReply.isActive,
+                };
+              } catch {
+                cleanData.quickReply = null;
+              }
+            }
+
+            // Make sure label is included
+            if (node.data.label !== undefined) {
+              cleanData.label = node.data.label;
             }
           }
 
@@ -777,12 +806,12 @@ function AutomationEditorInner() {
                           Send Message
                         </button>
                         <button
-  onClick={() => addNode("mediaMessageNode")}
-  className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
->
-  <PaperClipIcon className="h-4 w-4 text-purple-500" />
-  Send Media
-</button>
+                          onClick={() => addNode("mediaMessageNode")}
+                          className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
+                        >
+                          <PaperClipIcon className="h-4 w-4 text-purple-500" />
+                          Send Media
+                        </button>
                         <button
                           onClick={() => addNode("quickRepliesNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
@@ -885,77 +914,94 @@ function AutomationEditorInner() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onConnectEnd={onConnectEnd}
-             nodeTypes={{
-  ...nodeTypes,
-  triggerNode: (props) => {
-    const TriggerNodeComponent = nodeTypes.triggerNode;
-    return (
-      <TriggerNodeComponent
-        {...props}
-        data={{
-          ...props.data,
-          onSelect: (nodeId: string) => {
-            const node = nodes.find(n => n.id === nodeId);
-            if (node) {
-              setSelectedNode(node);
-            }
-          },
-        }}
-      />
-    );
-  },
-  textMessageNode: (props) => {
-    const MessageNodeComponent = nodeTypes.textMessageNode;
-    return (
-      <MessageNodeComponent
-        {...props}
-        data={{
-          ...props.data,
-          onSelect: (nodeId: string) => {
-            const node = nodes.find(n => n.id === nodeId);
-            if (node) {
-              setSelectedNode(node);
-            }
-          },
-        }}
-      />
-    );
-  },
-   mediaMessageNode: (props) => {
-    const MediaNodeComponent = nodeTypes.mediaMessageNode;
-    return (
-      <MediaNodeComponent
-        {...props}
-        data={{
-          ...props.data,
-          onSelect: (nodeId: string) => {
-            const node = nodes.find(n => n.id === nodeId);
-            if (node) {
-              setSelectedNode(node);
-            }
-          },
-        }}
-      />
-    );
-  },
-  tagNode: (props) => {
-    const TagNodeComponent = nodeTypes.tagNode;
-    return (
-      <TagNodeComponent
-        {...props}
-        data={{
-          ...props.data,
-          onSelect: (nodeId: string) => {
-            const node = nodes.find(n => n.id === nodeId);
-            if (node) {
-              setSelectedNode(node);
-            }
-          },
-        }}
-      />
-    );
-  },
-}}
+              nodeTypes={{
+                ...nodeTypes,
+                triggerNode: (props) => {
+                  const TriggerNodeComponent = nodeTypes.triggerNode;
+                  return (
+                    <TriggerNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                textMessageNode: (props) => {
+                  const MessageNodeComponent = nodeTypes.textMessageNode;
+                  return (
+                    <MessageNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                mediaMessageNode: (props) => {
+                  const MediaNodeComponent = nodeTypes.mediaMessageNode;
+                  return (
+                    <MediaNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                quickRepliesNode: (props) => { // Add this
+                  const QuickRepliesNodeComponent = nodeTypes.quickRepliesNode;
+                  return (
+                    <QuickRepliesNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                tagNode: (props) => {
+                  const TagNodeComponent = nodeTypes.tagNode;
+                  return (
+                    <TagNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+              }}
               defaultEdgeOptions={defaultEdgeOptions}
               onNodeClick={onNodeClick}
               onInit={setReactFlowInstance}
@@ -1006,12 +1052,12 @@ function AutomationEditorInner() {
                         Send Message
                       </button>
                       <button
-  onClick={() => handleCreateNode("mediaMessageNode")}
-  className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
->
-  <PaperClipIcon className="h-4 w-4 text-purple-500" />
-  Send Media
-</button>
+                        onClick={() => handleCreateNode("mediaMessageNode")}
+                        className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <PaperClipIcon className="h-4 w-4 text-purple-500" />
+                        Send Media
+                      </button>
                       <button
                         onClick={() => handleCreateNode("quickRepliesNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
@@ -1081,49 +1127,54 @@ function AutomationEditorInner() {
               onClose={closePanel}
               onUpdate={updateNode}
             />
-          ): selectedNode && selectedNode.type === 'mediaMessageNode' ? ( // Add this
-  <MediaMessagePanel
-    node={selectedNode}
-    onClose={closePanel}
-    onUpdate={updateNode}
-  />
-           ) : selectedNode && selectedNode.type === 'conditionNode' ? (
-  <ConditionPanel
-    node={selectedNode}
-    onClose={closePanel}
-    onUpdate={updateNode}
-  />
-) : selectedNode && (
-            <div className="w-96 bg-card border-l border-border flex flex-col shadow-lg">
-              <div className="p-4 border-b border-border flex items-center justify-between">
-                <h3 className="font-semibold text-foreground">
-                  Configure {selectedNode.type?.replace('Node', '').replace(/([A-Z])/g, ' $1').trim()}
-                </h3>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closePanel}>
-                  <XMarkIcon className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-foreground mb-2 block">
-                      Node Label
-                    </label>
-                    <Input
-                      value={selectedNode.data?.label || ""}
-                      onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
-                      placeholder="Enter node label..."
-                    />
-                  </div>
+          ) : selectedNode && selectedNode.type === 'mediaMessageNode' ? ( // Add this
+            <MediaMessagePanel
+              node={selectedNode}
+              onClose={closePanel}
+              onUpdate={updateNode}
+            />
+          ) : selectedNode && selectedNode.type === 'quickRepliesNode' ? ( // Add this condition
+            <QuickRepliesPanel
+              node={selectedNode}
+              onClose={closePanel}
+              onUpdate={updateNode}
+            />) : selectedNode && selectedNode.type === 'conditionNode' ? (
+              <ConditionPanel
+                node={selectedNode}
+                onClose={closePanel}
+                onUpdate={updateNode}
+              />
+            ) : selectedNode && (
+              <div className="w-96 bg-card border-l border-border flex flex-col shadow-lg">
+                <div className="p-4 border-b border-border flex items-center justify-between">
+                  <h3 className="font-semibold text-foreground">
+                    Configure {selectedNode.type?.replace('Node', '').replace(/([A-Z])/g, ' $1').trim()}
+                  </h3>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closePanel}>
+                    <XMarkIcon className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-foreground mb-2 block">
+                        Node Label
+                      </label>
+                      <Input
+                        value={selectedNode.data?.label || ""}
+                        onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
+                        placeholder="Enter node label..."
+                      />
+                    </div>
 
-                  {/* Node-specific configuration would go here */}
-                  <div className="text-sm text-muted-foreground">
-                    Configure this {selectedNode.type?.replace('Node', '')} node...
+                    {/* Node-specific configuration would go here */}
+                    <div className="text-sm text-muted-foreground">
+                      Configure this {selectedNode.type?.replace('Node', '')} node...
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       </div>
     </MainLayout>

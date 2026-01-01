@@ -1,3 +1,4 @@
+// frontend/src/components/settings/CreateSnippetDialog.tsx
 import React, { useState, useRef } from 'react';
 import { 
   PaperClipIcon,

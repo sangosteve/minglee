@@ -1,5 +1,5 @@
+// frontend/src/components/automations/nodes/index.tsx
 import { NodeTypes } from '@xyflow/react';
-import { memo } from 'react';
 import TextMessageNode from './TextMessageNode';
 import QuickRepliesNode from './QuickRepliesNode';
 import ConditionNode from './ConditionNode';

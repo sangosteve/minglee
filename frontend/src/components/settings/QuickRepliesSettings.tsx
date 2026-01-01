@@ -1,3 +1,5 @@
+
+// frontend/src/components/settings/QuickRepliesSettings.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   PlusIcon, 
