@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, apiKeys, messages, mediaAttachments, contacts, conversations, refreshTokens, tags, quickReplies } from "./schema";
+import { users, apiKeys, mediaAttachments, contacts, conversations, refreshTokens, messages, tags } from "./schema";
 
 export const apiKeysRelations = relations(apiKeys, ({one}) => ({
 	user: one(users, {
@@ -20,49 +20,14 @@ export const usersRelations = relations(users, ({many}) => ({
 	refreshTokens: many(refreshTokens),
 	tags: many(tags),
 	contacts: many(contacts),
-	quickReplies: many(quickReplies),
 }));
 
 export const mediaAttachmentsRelations = relations(mediaAttachments, ({one, many}) => ({
-	message_messageId: one(messages, {
-		fields: [mediaAttachments.messageId],
-		references: [messages.id],
-		relationName: "mediaAttachments_messageId_messages_id"
-	}),
 	user: one(users, {
 		fields: [mediaAttachments.uploadedByUserId],
 		references: [users.id]
 	}),
-	message_messageId: one(messages, {
-		fields: [mediaAttachments.messageId],
-		references: [messages.id],
-		relationName: "mediaAttachments_messageId_messages_id"
-	}),
-	messages: many(messages, {
-		relationName: "messages_mediaAttachmentId_mediaAttachments_id"
-	}),
-}));
-
-export const messagesRelations = relations(messages, ({one, many}) => ({
-	mediaAttachments_messageId: many(mediaAttachments, {
-		relationName: "mediaAttachments_messageId_messages_id"
-	}),
-	mediaAttachments_messageId: many(mediaAttachments, {
-		relationName: "mediaAttachments_messageId_messages_id"
-	}),
-	contact: one(contacts, {
-		fields: [messages.contactId],
-		references: [contacts.id]
-	}),
-	conversation: one(conversations, {
-		fields: [messages.conversationId],
-		references: [conversations.id]
-	}),
-	mediaAttachment: one(mediaAttachments, {
-		fields: [messages.mediaAttachmentId],
-		references: [mediaAttachments.id],
-		relationName: "messages_mediaAttachmentId_mediaAttachments_id"
-	}),
+	messages: many(messages),
 }));
 
 export const conversationsRelations = relations(conversations, ({one, many}) => ({
@@ -99,16 +64,24 @@ export const refreshTokensRelations = relations(refreshTokens, ({one}) => ({
 	}),
 }));
 
-export const tagsRelations = relations(tags, ({one}) => ({
-	user: one(users, {
-		fields: [tags.userId],
-		references: [users.id]
+export const messagesRelations = relations(messages, ({one}) => ({
+	contact: one(contacts, {
+		fields: [messages.contactId],
+		references: [contacts.id]
+	}),
+	conversation: one(conversations, {
+		fields: [messages.conversationId],
+		references: [conversations.id]
+	}),
+	mediaAttachment: one(mediaAttachments, {
+		fields: [messages.mediaAttachmentId],
+		references: [mediaAttachments.id]
 	}),
 }));
 
-export const quickRepliesRelations = relations(quickReplies, ({one}) => ({
+export const tagsRelations = relations(tags, ({one}) => ({
 	user: one(users, {
-		fields: [quickReplies.userId],
+		fields: [tags.userId],
 		references: [users.id]
 	}),
 }));

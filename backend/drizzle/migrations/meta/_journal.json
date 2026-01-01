@@ -64,6 +64,20 @@
       "when": 1766390947566,
       "tag": "0008_elite_falcon",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1767294974765,
+      "tag": "0009_whole_nextwave",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1767295764989,
+      "tag": "0010_chubby_doctor_spectrum",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,9 @@
+// frontend/src/pages/Settings.tsx
 import React, { useState } from 'react';
 import { SettingsSidebar, SettingsSection } from '@/components/settings/SettingsSidebar';
 import { TagsSettings } from '@/components/settings/TagsSettings';
 import { QuickRepliesSettings } from '@/components/settings/QuickRepliesSettings';
-
+import { TeamSettings } from '@/components/settings/TeamSettings';
 
 export default function Settings() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('quick-replies');
@@ -13,6 +14,8 @@ export default function Settings() {
         return <TagsSettings />;
       case 'quick-replies':
         return <QuickRepliesSettings />;
+      case 'team-settings':
+        return <TeamSettings />;
       default:
         return (
           <div className="flex-1 flex items-center justify-center">

@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 
 dotenv.config();
 
+// Import routes
 import testRoute from "./routes/test";
 import contactsRoute from "./routes/contacts";
 import authRoutes from "./routes/auth.routes";
@@ -17,6 +18,7 @@ import tagRoutes from "./routes/tags.routes";
 import quickRepliesRoutes from './routes/quick-replies.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import automationRoutes from './routes/automation.routes';
+import teamRoutes from './routes/team.routes';
 
 const app = express();
 
@@ -28,32 +30,17 @@ app.use(cors({
 
 app.use(cookieParser());
 
-// 2. URL encoded for form submissions
+// 2. Global JSON parsing middleware - Apply to all routes
+app.use(express.json({ limit: '50mb' }));
+
+// 3. URL encoded for form submissions
 app.use(express.urlencoded({ 
   limit: '50mb', 
   extended: true,
   parameterLimit: 50000
 }));
 
-
-// 3. Add JSON parsing ONLY to routes that don't use FormData
-// Apply JSON parsing to specific route prefixes
-app.use([
-  "/api/contacts",
-  "/api/auth", 
-  "/api/conversations",
-  "/api/whatsapp/send",
-  "/api/whatsapp/config",
-  "/api/whatsapp/conversations",
-  "/api/automations",
-  "/api/whatsapp/webhook", 
-  "/api/users",
-  "/api/tags",
-  "/api/whatsapp/health",
-  "/api/quick-replies",
-  "/api/analytics"
-], express.json({ limit: '50mb' }));
-
+// Debug middleware
 app.use((req, res, next) => {
   console.log("➡️", req.method, req.url, "BODY:", req.body);
   next();
@@ -71,8 +58,7 @@ app.use("/api/tags", tagRoutes);
 app.use('/api/quick-replies', quickRepliesRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/automations', automationRoutes);
-
-
+app.use('/api/teams', teamRoutes);
 
 // 5. Health checks
 app.get("/health", (_req, res) => {
@@ -91,17 +77,53 @@ app.get("/api/test", (_req, res) => {
   });
 });
 
-// Temporary debug route to test analytics service directly
-import { getContactsOverview } from './services/analytics.service';
-app.get('/internal-debug/analytics/:userId', async (req, res) => {
+// Debug route for invitation testing
+import { getDb } from './db/client';
+app.get('/debug/invitation/:token', async (req, res) => {
   try {
-    const userId = req.params.userId;
-    console.log('DEBUG: calling getContactsOverview for', userId);
-    const result = await getContactsOverview(userId);
-    res.json({ success: true, result });
-  } catch (err: any) {
-    console.error('DEBUG: analytics service error:', err?.message || err, err?.stack || '');
-    res.status(500).json({ success: false, error: err?.message || 'failed' });
+    const db = getDb();
+    const { teamInvitations, teams, users } = await import('./db/schema');
+    const { eq, and } = await import('drizzle-orm');
+    
+    const [invitation] = await db.select({
+      invitation: teamInvitations,
+      team: teams,
+      inviter: {
+        id: users.id,
+        name: users.name,
+        email: users.email,
+      }
+    })
+    .from(teamInvitations)
+    .where(
+      and(
+        eq(teamInvitations.token, req.params.token),
+        eq(teamInvitations.status, 'pending')
+      )
+    )
+    .innerJoin(teams, eq(teams.id, teamInvitations.teamId))
+    .innerJoin(users, eq(users.id, teamInvitations.invitedByUserId))
+    .limit(1);
+    
+    if (!invitation) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Invitation not found or expired',
+        debug: {
+          token: req.params.token,
+          tableExists: true // Assuming table exists
+        }
+      });
+    }
+    
+    res.json({ success: true, ...invitation });
+  } catch (error: any) {
+    console.error('Debug invitation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      stack: error.stack
+    });
   }
 });
 

@@ -1,3 +1,4 @@
+// frontend/src/components/settings/SettingsSidebar.tsx
 import React from 'react';
 import { 
   InformationCircleIcon, 
@@ -71,7 +72,7 @@ const settingsGroups: SettingsGroup[] = [
     title: 'User role settings',
     items: [
       { id: 'user-settings', label: 'User settings', icon: UserIcon, disabled: true },
-      { id: 'team-settings', label: 'Team settings', icon: UsersIcon, disabled: true },
+      { id: 'team-settings', label: 'Team settings', icon: UsersIcon },
     ],
   },
   {

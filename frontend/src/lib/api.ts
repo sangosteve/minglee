@@ -6,6 +6,35 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 class ApiClient {
   private refreshPromise: Promise<void> | null = null;
 
+  teams = {
+  // Teams
+  getAll: () => this.get<any>('/teams'),
+  getById: (id: string) => this.get<any>(`/teams/${id}`),
+  create: (data: any) => this.post<any>('/teams', data),
+  update: (id: string, data: any) => this.put<any>(`/teams/${id}`, data),
+  delete: (id: string) => this.delete<any>(`/teams/${id}`),
+  
+  // Team members
+  inviteMember: (teamId: string, data: any) => 
+    this.post<any>(`/teams/${teamId}/invite`, data),
+  removeMember: (teamId: string, memberId: string) => 
+    this.delete<any>(`/teams/${teamId}/members/${memberId}`),
+  updateMemberRole: (teamId: string, memberId: string, data: any) => 
+    this.put<any>(`/teams/${teamId}/members/${memberId}/role`, data),
+  leaveTeam: (teamId: string) => 
+    this.post<any>(`/teams/${teamId}/leave`, {}),
+  
+  // Invitations
+  getInvitation: (token: string) => 
+    this.get<any>(`/teams/invitation/${token}`),
+  acceptInvitation: (token: string) => 
+    this.post<any>(`/teams/invitation/${token}/accept`, {}),
+  getTeamInvitations: (teamId: string) => 
+    this.get<any>(`/teams/${teamId}/invitations`),
+  revokeInvitation: (invitationId: string) => 
+    this.delete<any>(`/teams/invitation/${invitationId}`),
+};
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
@@ -207,5 +236,7 @@ class ApiClient {
     delete: (id: string) => this.delete<any>(`/contacts/${id}`),
   };
 }
+
+
 
 export const api = new ApiClient();

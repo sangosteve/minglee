@@ -28,6 +28,7 @@ import Settings from "./pages/Settings";
 // Add these imports to your existing imports:
 import AutomationBuilder from "./pages/automations/AutomationBuilder";
 import AutomationEditor from "./pages/automations/AutomationEditor";
+import { TeamInvitationPage } from "./pages/TeamInvitationPage";
 
 const queryClient = new QueryClient();
 
@@ -173,6 +174,8 @@ const AppContent = () => {
           </MainLayout>
         </ProtectedRoute>
       } />
+
+      <Route path="/teams/invitation/:token" element={<TeamInvitationPage />} />
       
       <Route path="/tags" element={
         <ProtectedRoute>
