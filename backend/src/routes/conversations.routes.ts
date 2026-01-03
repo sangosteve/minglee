@@ -494,17 +494,71 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
 router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { userId: assignedToUserId } = req.body;
+    const { assignedToUserId } = req.body; // Changed from userId to assignedToUserId
     const db = getDb();
+    
+    console.log('📝 Assignment request:', {
+      conversationId: id,
+      assignedToUserId,
+      body: req.body,
+      currentUser: req.user?.userId
+    });
 
+    // Get the conversation first to ensure it exists
+    const [conversation] = await db.select()
+      .from(conversations)
+      .where(eq(conversations.id, id))
+      .limit(1);
+
+    if (!conversation) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Conversation not found' 
+      });
+    }
+
+    // Update the assignment
     await db.update(conversations)
-      .set({ assignedToUserId, updatedAt: new Date() })
+      .set({ 
+        assignedToUserId: assignedToUserId || null, // Allow null to unassign
+        updatedAt: new Date() 
+      })
       .where(eq(conversations.id, id));
 
-    res.json({ success: true });
+    // Get the updated conversation with assigned user info
+    const [updatedConversation] = await db.select({
+      conversation: conversations,
+      assignedUser: users,
+    })
+    .from(conversations)
+    .leftJoin(users, eq(conversations.assignedToUserId, users.id))
+    .where(eq(conversations.id, id))
+    .limit(1);
+
+    console.log('✅ Assignment updated:', {
+      conversationId: id,
+      assignedToUserId,
+      assignedUser: updatedConversation.assignedUser ? {
+        id: updatedConversation.assignedUser.id,
+        name: updatedConversation.assignedUser.name
+      } : null
+    });
+
+    res.json({ 
+      success: true, 
+      conversation: updatedConversation.conversation,
+      assignedUser: updatedConversation.assignedUser ? {
+        name: updatedConversation.assignedUser.name,
+        email: updatedConversation.assignedUser.email
+      } : undefined
+    });
   } catch (error: any) {
     console.error('❌ Error assigning conversation:', error);
-    res.status(500).json({ success: false, error: 'Failed to assign conversation', details: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to assign conversation', 
+      details: error.message 
+    });
   }
 });
 
