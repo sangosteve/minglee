@@ -149,30 +149,86 @@ async function processWebhookEvent(event: WhatsAppWebhookEvent) {
 function getLastMessageText(message: any): string {
   const messageType = message.type;
   
+  console.log(`🔍 Getting last message text for type: ${messageType}`);
+  
+  // Text message
   if (message.text?.body) {
-    return message.text.body.substring(0, 100);
+    const text = message.text.body.trim();
+    return text.substring(0, 100) + (text.length > 100 ? '...' : '');
   }
   
+  // Interactive messages
+  if (message.interactive) {
+    const interactiveType = message.interactive.type;
+    
+    if (interactiveType === 'list_reply' && message.interactive.list_reply?.title) {
+      return `Selected: ${message.interactive.list_reply.title}`;
+    }
+    
+    if (interactiveType === 'button_reply' && message.interactive.button_reply?.title) {
+      return `Clicked: ${message.interactive.button_reply.title}`;
+    }
+    
+    if (interactiveType === 'nfm_reply' && message.interactive.nfm_reply) {
+      return 'Flow message received';
+    }
+    
+    return 'Interactive message';
+  }
+  
+  // Button message
+  if (message.button) {
+    return `Button: ${message.button.text || 'Button message'}`;
+  }
+  
+  // Location message
+  if (messageType === 'location' && message.location) {
+    return `📍 Location: ${message.location.name || message.location.address || 'Shared location'}`;
+  }
+  
+  // Contacts message
+  if (messageType === 'contacts' && message.contacts) {
+    const count = Array.isArray(message.contacts) ? message.contacts.length : 1;
+    return `👥 ${count} contact${count !== 1 ? 's' : ''} shared`;
+  }
+  
+  // Media messages with caption
   if (message[messageType]?.caption) {
-    return `${messageType}: ${message[messageType].caption.substring(0, 50)}`;
+    const caption = message[messageType].caption.trim();
+    return `${messageType}: ${caption.substring(0, 50)}${caption.length > 50 ? '...' : ''}`;
   }
   
-  if (messageType === 'document' && message.document?.filename) {
-    return `Document: ${message.document.filename}`;
+  // Media messages with filename
+  if (message[messageType]?.filename) {
+    return `${messageType}: ${message[messageType].filename}`;
   }
   
-  if (messageType === 'location' && message.location?.name) {
-    return `Location: ${message.location.name}`;
+  // Document with filename
+  if (messageType === 'document' && message.document) {
+    return `📄 ${message.document.filename || 'Document'}`;
   }
   
-  if (message.interactive?.list_reply?.title) {
-    return `Selected: ${message.interactive.list_reply.title}`;
+  // Sticker
+  if (messageType === 'sticker') {
+    return '🩹 Sticker';
   }
   
-  if (message.interactive?.button_reply?.title) {
-    return `Clicked: ${message.interactive.button_reply.title}`;
+  // Audio
+  if (messageType === 'audio') {
+    return '🎵 Audio message';
   }
   
+  // Video
+  if (messageType === 'video') {
+    return '🎬 Video message';
+  }
+  
+  // Image
+  if (messageType === 'image') {
+    return '📷 Image';
+  }
+  
+  // Default fallbacks for all types
   const typeLabels: Record<string, string> = {
     'image': '📷 Image',
     'video': '🎬 Video',
@@ -183,9 +239,14 @@ function getLastMessageText(message: any): string {
     'interactive': '🔄 Interactive',
     'button': '🔘 Button',
     'location': '📍 Location',
+    'reaction': '👍 Reaction',
+    'order': '🛒 Order',
+    'system': '⚙️ System',
+    'unsupported': '❌ Unsupported',
+    'unknown': '❓ Unknown',
   };
   
-  return typeLabels[messageType] || 'Message';
+  return typeLabels[messageType] || `${messageType} message`;
 }
 
 /**
@@ -409,33 +470,127 @@ async function processIncomingMessage(
     console.log(`📨 Is first message from contact: ${isFirstMessage}`);
     
     // 5. Prepare message body and metadata
-    let messageBody = '';
-    let messageMetadata: any = {
-      type: message.type,
-      whatsappMessageId: message.id,
-      sender: message.from,
-      timestamp: message.timestamp,
-      isFirstMessage,
-    };
+let messageBody = '';
+let messageMetadata: any = {
+  type: message.type,
+  whatsappMessageId: message.id,
+  sender: message.from,
+  timestamp: message.timestamp,
+  isFirstMessage,
+  receivedAt: new Date().toISOString(),
+};
     
-    if (message.text?.body) {
-      messageBody = message.text.body;
-      messageMetadata.text = message.text;
-    } else if (message.type === 'location' && message.location) {
-      messageBody = message.location.name || 'Location shared';
-      messageMetadata.location = message.location;
-    } else if (message.interactive) {
-      messageBody = message.interactive[message.interactive.type]?.title || 'Interactive message';
-      messageMetadata.interactive = message.interactive;
-    } else if (message.button) {
-      messageBody = message.button.text || 'Button message';
-      messageMetadata.button = message.button;
-    } else if (message.contacts) {
-      messageBody = 'Contact shared';
-      messageMetadata.contacts = message.contacts;
+switch (message.type) {
+  case 'text':
+    messageBody = message.text?.body || '';
+    messageMetadata.text = message.text;
+    console.log(`📝 Text message: "${messageBody.substring(0, 100)}${messageBody.length > 100 ? '...' : ''}"`);
+    break;
+    
+  case 'location':
+    messageBody = message.location?.name || message.location?.address || 'Location shared';
+    messageMetadata.location = message.location;
+    console.log(`📍 Location: ${messageBody}`);
+    break;
+    
+  case 'interactive':
+    const interactiveType = message.interactive?.type;
+    if (interactiveType === 'list_reply') {
+      messageBody = message.interactive.list_reply?.title || 'List selection';
+      messageMetadata.interactive = {
+        type: 'list_reply',
+        data: message.interactive.list_reply,
+      };
+      console.log(`🔄 List reply: ${messageBody}`);
+    } else if (interactiveType === 'button_reply') {
+      messageBody = message.interactive.button_reply?.title || 'Button clicked';
+      messageMetadata.interactive = {
+        type: 'button_reply',
+        data: message.interactive.button_reply,
+      };
+      console.log(`🔘 Button reply: ${messageBody}`);
+    } else if (interactiveType === 'nfm_reply') {
+      messageBody = 'Flow response';
+      messageMetadata.interactive = {
+        type: 'nfm_reply',
+        data: message.interactive.nfm_reply,
+      };
+      console.log(`🌊 Flow reply`);
     } else {
-      messageBody = `${message.type} message`;
+      messageBody = 'Interactive message';
+      messageMetadata.interactive = message.interactive;
+      console.log(`🔄 Interactive: ${interactiveType}`);
     }
+    break;
+    
+  case 'button':
+    messageBody = message.button?.text || 'Button message';
+    messageMetadata.button = message.button;
+    console.log(`🔘 Button: ${messageBody}`);
+    break;
+    
+  case 'contacts':
+    const contactCount = Array.isArray(message.contacts) ? message.contacts.length : 1;
+    messageBody = `Shared ${contactCount} contact(s)`;
+    messageMetadata.contacts = message.contacts;
+    console.log(`👥 Contacts: ${contactCount} contact(s)`);
+    break;
+    
+  case 'reaction':
+    messageBody = message.reaction?.emoji || 'Reaction';
+    messageMetadata.reaction = message.reaction;
+    console.log(`👍 Reaction: ${messageBody}`);
+    break;
+    
+  case 'order':
+    messageBody = 'Order details';
+    messageMetadata.order = message.order;
+    console.log(`🛒 Order`);
+    break;
+    
+  case 'system':
+    messageBody = message.system?.body || 'System message';
+    messageMetadata.system = message.system;
+    console.log(`⚙️ System: ${messageBody}`);
+    break;
+    
+  // Media types
+  case 'image':
+  case 'video':
+  case 'audio':
+  case 'document':
+  case 'sticker':
+    // For media messages, use caption or filename as body
+    const mediaData = message[message.type];
+    messageBody = mediaData?.caption || mediaData?.filename || `${message.type} message`;
+    messageMetadata[message.type] = mediaData;
+    
+    // Add media-specific metadata
+    if (mediaData) {
+      messageMetadata.media = {
+        id: mediaData.id,
+        mime_type: mediaData.mime_type,
+        sha256: mediaData.sha256,
+        caption: mediaData.caption,
+        filename: mediaData.filename,
+      };
+    }
+    console.log(`📁 ${message.type}: ${messageBody}`);
+    break;
+    
+  default:
+    // For any unknown/unsupported types
+    console.warn(`⚠️ Unhandled message type: ${message.type}`, JSON.stringify(message, null, 2));
+    messageBody = `[${message.type.toUpperCase()}] message`;
+    messageMetadata.raw = message;
+    break;
+}
+
+// Ensure messageBody is never empty
+if (!messageBody.trim()) {
+  messageBody = getLastMessageText(message);
+  console.log(`🔄 Using fallback message body: ${messageBody}`);
+}
     
     // 6. Handle media messages
     const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];

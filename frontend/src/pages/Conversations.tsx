@@ -128,8 +128,49 @@ const formatFileSize = (bytes?: number): string => {
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 };
 
+const getMediaType = (message: Message): string => {
+  const metadata = message.metadata || {};
+  const messageType = message.messageType?.toLowerCase();
+
+  // Return the actual message type if it's a known type
+  if (['image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts'].includes(messageType)) {
+    return messageType;
+  }
+
+  // Check for interactive messages
+  if (messageType === 'interactive' || metadata.interactive) {
+    return 'interactive';
+  }
+
+  // Check for button messages
+  if (messageType === 'button' || metadata.button) {
+    return 'button';
+  }
+
+  // Check metadata for type
+  if (metadata.image || metadata.mediaType === 'image') return 'image';
+  if (metadata.video || metadata.mediaType === 'video') return 'video';
+  if (metadata.audio || metadata.mediaType === 'audio') return 'audio';
+  if (metadata.document || metadata.mediaType === 'document') return 'document';
+  if (metadata.sticker) return 'sticker';
+  if (metadata.location) return 'location';
+  if (metadata.contacts) return 'contacts';
+
+  // Default to text
+  return 'text';
+};
+
 const hasMediaContent = (message: Message): boolean => {
   const metadata = message.metadata || {};
+  const messageType = message.messageType?.toLowerCase();
+
+  // Check for media types
+  const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
+  if (mediaTypes.includes(messageType)) {
+    return true;
+  }
+
+  // Check for media in metadata
   return !!(
     metadata.mediaAttachmentId ||
     metadata.cloudinaryUrl ||
@@ -139,24 +180,11 @@ const hasMediaContent = (message: Message): boolean => {
     metadata.video ||
     metadata.audio ||
     metadata.document ||
-    metadata.location ||
-    message.messageType !== 'text'
+    metadata.media
   );
 };
 
-const getMediaType = (message: Message): string => {
-  const metadata = message.metadata || {};
 
-  if (message.messageType === 'image' || metadata.image || metadata.mediaType === 'image') return 'image';
-  if (message.messageType === 'video' || metadata.video || metadata.mediaType === 'video') return 'video';
-  if (message.messageType === 'audio' || metadata.audio || metadata.mediaType === 'audio') return 'audio';
-  if (message.messageType === 'document' || metadata.document || metadata.mediaType === 'document') return 'document';
-  if (message.messageType === 'sticker' || metadata.sticker) return 'sticker';
-  if (message.messageType === 'location' || metadata.location) return 'location';
-  if (message.messageType === 'contacts' || metadata.contacts) return 'contacts';
-
-  return 'text';
-};
 
 const getMediaUrl = (message: Message): string | undefined => {
   const metadata = message.metadata || {};
@@ -180,7 +208,7 @@ const getFilename = (message: Message): string => {
 
 const getMessageStatusIcon = (status: string) => {
   const normalizedStatus = normalizeMessageStatus(status);
-  
+
   switch (normalizedStatus) {
     case "read":
       // Double green ticks for read messages
@@ -241,7 +269,7 @@ const normalizeMessageStatus = (status: string): string => {
     'undelivered': 'failed',
     'error': 'failed'
   };
-  
+
   return statusMap[status.toLowerCase()] || 'sent';
 };
 
@@ -545,7 +573,7 @@ const Conversations = () => {
         setQuickReplyMediaAttachments([]);
         setCaption("");
         setMessageInput("");
-        
+
       } else if (attachments.length > 0) {
         // Send local media files
         const formData = new FormData();
@@ -977,6 +1005,19 @@ const Conversations = () => {
                       const mediaUrl = getMediaUrl(message);
                       const filename = getFilename(message);
 
+                      // Check for special message types
+                      const isInteractive = mediaType === 'interactive';
+                      const isButton = mediaType === 'button';
+                      const isLocation = mediaType === 'location';
+                      const isContacts = mediaType === 'contacts';
+
+                      // Determine if we should show the media content section
+                      const shouldShowMediaSection = hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+                      // Determine if we should show text content
+                      const shouldShowText = message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+                      // Determine if we should show fallback
+                      const shouldShowFallback = !message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+
                       return (
                         <div
                           key={message.id}
@@ -988,14 +1029,156 @@ const Conversations = () => {
                           <div
                             className={cn(
                               "max-w-[280px] rounded-2xl overflow-hidden",
-                              hasMedia ? "p-0" : "px-4 py-2.5",
+                              (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "p-0" : "px-4 py-2.5",
                               isOutgoing
                                 ? "bg-primary text-primary-foreground rounded-br-md"
                                 : "bg-card border border-border text-foreground rounded-bl-md"
                             )}
                           >
-                            {hasMedia && (
+                            {/* Interactive Messages */}
+                            {isInteractive && (
+                              <div className={cn(
+                                "w-full p-4",
+                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                              )}>
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                    🔄
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className={cn(
+                                      "text-sm font-medium",
+                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                    )}>
+                                      Interactive Message
+                                    </p>
+                                    <p className={cn(
+                                      "text-xs truncate",
+                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                    )}>
+                                      {message.metadata?.interactive?.type === 'list_reply' &&
+                                        `Selected: ${message.metadata.interactive.data?.title || 'Option'}`}
+                                      {message.metadata?.interactive?.type === 'button_reply' &&
+                                        `Clicked: ${message.metadata.interactive.data?.title || 'Button'}`}
+                                      {message.metadata?.interactive?.type === 'nfm_reply' &&
+                                        'Flow response'}
+                                      {!message.metadata?.interactive?.type && 'Interactive content'}
+                                    </p>
+                                  </div>
+                                </div>
+                                {message.body && message.body !== 'Interactive message' && (
+                                  <p className={cn(
+                                    "text-sm mt-2",
+                                    isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                  )}>
+                                    {message.body}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Button Messages */}
+                            {isButton && (
+                              <div className={cn(
+                                "w-full p-4",
+                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                              )}>
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                                    🔘
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className={cn(
+                                      "text-sm font-medium",
+                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                    )}>
+                                      Button Message
+                                    </p>
+                                    <p className={cn(
+                                      "text-xs truncate",
+                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                    )}>
+                                      {message.metadata?.button?.text || message.body || 'Button action'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Location Messages */}
+                            {isLocation && (
+                              <div className={cn(
+                                "w-full p-3",
+                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                              )}>
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                    📍
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className={cn(
+                                      "text-sm font-medium",
+                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                    )}>
+                                      Location Shared
+                                    </p>
+                                    <p className={cn(
+                                      "text-xs truncate",
+                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                    )}>
+                                      {message.metadata?.location?.name || message.metadata?.location?.address || message.body || 'Shared location'}
+                                    </p>
+                                  </div>
+                                </div>
+                                {message.metadata?.location && (
+                                  <a
+                                    href={`https://maps.google.com/?q=${message.metadata.location.latitude},${message.metadata.location.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={cn(
+                                      "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors text-center block",
+                                      isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
+                                        : "bg-primary/10 text-primary hover:bg-primary/20"
+                                    )}
+                                  >
+                                    View on Map
+                                  </a>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Contacts Messages */}
+                            {isContacts && (
+                              <div className={cn(
+                                "w-full p-4",
+                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                              )}>
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                                    👥
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className={cn(
+                                      "text-sm font-medium",
+                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                    )}>
+                                      Contact Shared
+                                    </p>
+                                    <p className={cn(
+                                      "text-xs truncate",
+                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                    )}>
+                                      {message.body || 'Contact information'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Media Messages (images, videos, audio, documents, stickers) */}
+                            {shouldShowMediaSection && (
                               <div className="relative">
+                                {/* KEEP YOUR EXISTING MEDIA RENDERING CODE HERE - DON'T CHANGE THIS PART */}
                                 {mediaType === "image" && mediaUrl && (
                                   <div className="relative">
                                     <img
@@ -1177,50 +1360,8 @@ const Conversations = () => {
                                   </div>
                                 )}
 
-                                {mediaType === "location" && (
-                                  <div className={cn(
-                                    "w-full p-3",
-                                    isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                  )}>
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                        📍
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <p className={cn(
-                                          "text-sm font-medium",
-                                          isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                        )}>
-                                          Location Shared
-                                        </p>
-                                        <p className={cn(
-                                          "text-xs truncate",
-                                          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                        )}>
-                                          {message.metadata?.location?.name || message.metadata?.location?.address || message.body || 'Shared location'}
-                                        </p>
-                                      </div>
-                                    </div>
-                                    {message.metadata?.location && (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button className={cn(
-                                            "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors",
-                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
-                                              : "bg-primary/10 text-primary hover:bg-primary/20"
-                                          )}>
-                                            View on Map
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p>Open location in maps</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    )}
-                                  </div>
-                                )}
-
-                                {message.body && hasMedia && (
+                                {/* Show caption for media messages */}
+                                {message.body && mediaType !== "audio" && mediaType !== "document" && mediaType !== "sticker" && (
                                   <div className="px-3 py-2">
                                     <p className={cn(
                                       "text-sm",
@@ -1230,16 +1371,37 @@ const Conversations = () => {
                                     </p>
                                   </div>
                                 )}
+
+                                {/* REMOVE OR COMMENT OUT THE DEBUG INFO */}
+                                {/* {process.env.NODE_ENV === 'development' && (
+              <div className="text-xs p-2 bg-black/20 text-white">
+                Type: {mediaType} | Has body: {!!message.body}
+              </div>
+            )} */}
                               </div>
                             )}
 
-                            {message.body && !hasMedia && (
+                            {/* Text Messages (no media) */}
+                            {shouldShowText && (
                               <p className="text-sm whitespace-pre-wrap">{message.body}</p>
                             )}
 
+                            {/* Show fallback for empty messages */}
+                            {shouldShowFallback && (
+                              <div className="px-4 py-2.5">
+                                <p className="text-sm text-muted-foreground italic">Message</p>
+                                {process.env.NODE_ENV === 'development' && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    ID: {message.id} | Type: {message.messageType}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Message timestamp and status */}
                             <div className={cn(
                               "flex items-center gap-1 px-3 pb-2",
-                              hasMedia ? "" : "px-0 pb-0 mt-1",
+                              (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "" : "px-0 pb-0 mt-1",
                               isOutgoing ? "justify-end" : "justify-start"
                             )}>
                               <span className={cn(
@@ -1352,9 +1514,9 @@ const Conversations = () => {
                     <div className="flex flex-wrap gap-2 mb-3">
                       {attachments.map((attachment, index) => {
                         const Icon = attachment.type === "image" ? PhotoIcon :
-                                   attachment.type === "video" ? FilmIcon :
-                                   attachment.type === "audio" ? MusicalNoteIcon :
-                                   attachment.type === "compressed" ? ArchiveBoxIcon : DocumentIcon;
+                          attachment.type === "video" ? FilmIcon :
+                            attachment.type === "audio" ? MusicalNoteIcon :
+                              attachment.type === "compressed" ? ArchiveBoxIcon : DocumentIcon;
 
                         return (
                           <div key={index} className="relative group">
@@ -1437,7 +1599,7 @@ const Conversations = () => {
                     user={user}
                     conversation={selectedConversation}
                   />
-                
+
                   <DropdownMenu>
                     <Tooltip>
                       <TooltipTrigger asChild>
