@@ -97,6 +97,13 @@ export const automationsApi = {
     return await api.delete(`/automations/${id}`);
   },
 
+  triggerAutomation: async (automationId: string, data: {
+    contactId: string;
+    triggerData?: any;
+  }): Promise<{ success: boolean; message?: string; error?: string }> => {
+    return await api.post(`/automations/${automationId}/trigger`, data);
+  },
+
   // Get automation stats
   getStats: async (): Promise<{ success: boolean; stats: AutomationStats }> => {
     return await api.get('/automations/stats');

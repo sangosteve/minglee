@@ -34,11 +34,21 @@ import {
   FilmIcon,
   ChatBubbleLeftRightIcon,
   ExclamationCircleIcon,
+  SparklesIcon,
+  ClockIcon,
 } from "@heroicons/react/24/outline";
 import {
   CheckCircleIcon as CheckCircleSolid,
   CheckIcon as CheckSolid,
 } from "@heroicons/react/24/solid";
+
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  Tick01Icon,
+  TickDouble01Icon,
+  AlertCircleIcon,
+} from '@hugeicons/core-free-icons';
+
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -169,17 +179,73 @@ const getFilename = (message: Message): string => {
 };
 
 const getMessageStatusIcon = (status: string) => {
-  switch (status) {
+  const normalizedStatus = normalizeMessageStatus(status);
+  
+  switch (normalizedStatus) {
     case "read":
-      return <CheckCircleIcon className="w-3.5 h-3.5 text-primary-foreground/70" />;
+      // Double green ticks for read messages
+      return (
+        <HugeiconsIcon
+          icon={TickDouble01Icon}
+          size={14}
+          color="#22c55e" // Green-500 color
+          strokeWidth={2}
+          title="Read"
+        />
+      );
     case "delivered":
-      return <CheckCircleSolid className="w-3.5 h-3.5 text-primary-foreground/70" />;
+      // Double gray ticks for delivered but unread
+      return (
+        <HugeiconsIcon
+          icon={TickDouble01Icon}
+          size={14}
+          color="rgba(var(--primary-foreground), 0.7)" // Using CSS variable for consistency
+          strokeWidth={2}
+          title="Delivered"
+        />
+      );
     case "sent":
-      return <CheckSolid className="w-3.5 h-3.5 text-primary-foreground/70" />;
+      // Single tick for sent/undelivered
+      return (
+        <HugeiconsIcon
+          icon={Tick01Icon}
+          size={14}
+          color="rgba(var(--primary-foreground), 0.7)"
+          strokeWidth={2}
+          title="Sent"
+        />
+      );
     default:
-      return <ExclamationCircleIcon className="w-3.5 h-3.5 text-primary-foreground/70" />;
+      // Error icon for failed messages
+      return (
+        <HugeiconsIcon
+          icon={AlertCircleIcon}
+          size={14}
+          color="hsl(var(--destructive))"
+          strokeWidth={2}
+          title="Failed to send"
+        />
+      );
   }
 };
+
+// Keep the normalizeMessageStatus function
+const normalizeMessageStatus = (status: string): string => {
+  const statusMap: Record<string, string> = {
+    'read': 'read',
+    'seen': 'read',
+    'delivered': 'delivered',
+    'sent': 'sent',
+    'pending': 'sent',
+    'failed': 'failed',
+    'undelivered': 'failed',
+    'error': 'failed'
+  };
+  
+  return statusMap[status.toLowerCase()] || 'sent';
+};
+
+
 
 const getStatusIndicator = (status: string) => {
   const statusMap: Record<string, string> = {
@@ -322,16 +388,15 @@ const Conversations = () => {
   const messages = conversationData?.messages || [];
   const contact = conversationData?.contact;
 
-
-  //Sort Messages:
+  // Sort Messages:
   const sortedMessages = useMemo(() => {
-  if (!messages) return [];
-  return [...messages].sort((a, b) => {
-    const timeA = new Date(a.timestamp).getTime();
-    const timeB = new Date(b.timestamp).getTime();
-    return timeA - timeB; // Ascending order (oldest first)
-  });
-}, [messages]);
+    if (!messages) return [];
+    return [...messages].sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeA - timeB; // Ascending order (oldest first)
+    });
+  }, [messages]);
 
   // Calculate counts for sidebar
   const getInboxCounts = useMemo(() => {
@@ -415,130 +480,114 @@ const Conversations = () => {
     setCaption("");
   };
 
+  const handleSendMessage = async () => {
+    if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0)) return;
 
-const handleSendMessage = async () => {
-  if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0)) return;
+    try {
+      let finalMessage = messageInput.trim();
+      let captionForMedia = caption.trim();
 
-  try {
-    let finalMessage = messageInput.trim();
-    let captionForMedia = caption.trim();
+      // Check if message contains variables that need personalization
+      if (messageInput.includes('{{') && contact && user) {
+        // Personalize variables on client-side before sending
+        const personalizedMessage = VariableService.replaceVariables(
+          messageInput,
+          { contact, user, conversation: selectedConversation }
+        );
 
-    // Check if message contains variables that need personalization
-    if (messageInput.includes('{{') && contact && user) {
-      // Personalize variables on client-side before sending
-      const personalizedMessage = VariableService.replaceVariables(
-        messageInput,
-        { contact, user, conversation: selectedConversation }
-      );
+        finalMessage = personalizedMessage.trim();
 
-      finalMessage = personalizedMessage.trim();
-
-      // Update input field to show what's being sent
-      if (messageInput !== finalMessage) {
-        setMessageInput(finalMessage);
+        // Update input field to show what's being sent
+        if (messageInput !== finalMessage) {
+          setMessageInput(finalMessage);
+        }
       }
-    }
 
-    // Also personalize caption if it has variables
-    if (caption.includes('{{') && contact && user) {
-      const personalizedCaption = VariableService.replaceVariables(
-        caption,
-        { contact, user, conversation: selectedConversation }
-      );
+      // Also personalize caption if it has variables
+      if (caption.includes('{{') && contact && user) {
+        const personalizedCaption = VariableService.replaceVariables(
+          caption,
+          { contact, user, conversation: selectedConversation }
+        );
 
-      captionForMedia = personalizedCaption.trim();
+        captionForMedia = personalizedCaption.trim();
 
-      if (caption !== captionForMedia) {
-        setCaption(captionForMedia);
+        if (caption !== captionForMedia) {
+          setCaption(captionForMedia);
+        }
       }
-    }
 
-    // Priority: Quick reply media attachments > local attachments
-    if (quickReplyMediaAttachments.length > 0) {
-      // CRITICAL FIX: For quick reply media, we need to send both the media AND the caption properly
-      // The caption should contain the message text
-      
-      // Format quick reply media attachments for backend
-      const formattedAttachments = quickReplyMediaAttachments.map((media, index) => ({
-        id: media.id,
-        secureUrl: media.secureUrl || media.url, // IMPORTANT: Send the URL
-        url: media.secureUrl || media.url, // Fallback
-        mimeType: media.mimeType,
-        originalFilename: media.originalFilename || media.filename,
-        filename: media.filename || media.originalFilename,
-        fileSize: media.fileSize,
-        width: media.width,
-        height: media.height,
-        duration: media.duration,
-        caption: captionForMedia, // Use the caption as caption for ALL media (or could be first only)
-        // For WhatsApp, typically only the first media gets a caption
-        // But we'll send it for all and let backend handle
-      }));
+      // Priority: Quick reply media attachments > local attachments
+      if (quickReplyMediaAttachments.length > 0) {
+        // Format quick reply media attachments for backend
+        const formattedAttachments = quickReplyMediaAttachments.map((media, index) => ({
+          id: media.id,
+          secureUrl: media.secureUrl || media.url,
+          url: media.secureUrl || media.url,
+          mimeType: media.mimeType,
+          originalFilename: media.originalFilename || media.filename,
+          filename: media.filename || media.originalFilename,
+          fileSize: media.fileSize,
+          width: media.width,
+          height: media.height,
+          duration: media.duration,
+          caption: captionForMedia,
+        }));
 
-      console.log('📤 Sending quick reply with media:', {
-        conversationId: selectedConversationId,
-        message: captionForMedia || 'Media caption',
-        attachments: formattedAttachments.map(att => ({
-          id: att.id,
-          url: att.url ? 'Present' : 'Missing',
-          caption: att.caption,
-        }))
-      });
-
-      // Send quick reply with pre-uploaded media
-      await sendMessage.mutateAsync({
-        conversationId: selectedConversationId,
-        message: captionForMedia, // This is important for backend to know it's a media message
-        attachments: formattedAttachments,
-      });
-
-      // Clear quick reply media and caption
-      setQuickReplyMediaAttachments([]);
-      setCaption(""); // Clear caption after sending
-      setMessageInput(""); // Also clear main input if any
-      
-    } else if (attachments.length > 0) {
-      // Send local media files (existing logic)
-      const formData = new FormData();
-
-      if (!contact?.phone) {
-        toast({
-          title: "Cannot send message",
-          description: "Contact phone number is missing",
-          variant: "destructive",
+        // Send quick reply with pre-uploaded media
+        await sendMessage.mutateAsync({
+          conversationId: selectedConversationId,
+          message: captionForMedia,
+          attachments: formattedAttachments,
         });
-        return;
+
+        // Clear quick reply media and caption
+        setQuickReplyMediaAttachments([]);
+        setCaption("");
+        setMessageInput("");
+        
+      } else if (attachments.length > 0) {
+        // Send local media files
+        const formData = new FormData();
+
+        if (!contact?.phone) {
+          toast({
+            title: "Cannot send message",
+            description: "Contact phone number is missing",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        formData.append('phoneNumber', contact.phone);
+        formData.append('caption', captionForMedia || '');
+
+        if (attachments[0]) {
+          formData.append('file', attachments[0].file);
+        }
+
+        await sendMediaMessage.mutateAsync(formData);
+        handleClearAllAttachments();
+      } else {
+        // Plain text message (no media)
+        await sendMessage.mutateAsync({
+          conversationId: selectedConversationId,
+          message: finalMessage,
+          attachments: [],
+        });
       }
 
-      formData.append('phoneNumber', contact.phone);
-      formData.append('caption', captionForMedia || '');
-
-      if (attachments[0]) {
-        formData.append('file', attachments[0].file);
-      }
-
-      await sendMediaMessage.mutateAsync(formData);
-      handleClearAllAttachments();
-    } else {
-      // Plain text message (no media)
-      await sendMessage.mutateAsync({
-        conversationId: selectedConversationId,
-        message: finalMessage,
-        attachments: [], // Empty array for text-only
+      setMessageInput("");
+      setCaption("");
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        title: "Failed to send message",
+        description: "Please try again",
+        variant: "destructive",
       });
     }
-
-    setMessageInput("");
-    setCaption("");
-  } catch (error) {
-    console.error('Error sending message:', error);
-    toast({
-      title: "Failed to send message",
-      description: "Please try again",
-      variant: "destructive",
-    });
-  }
-};
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -994,7 +1043,7 @@ const handleSendMessage = async () => {
                                       controls
                                       className="w-full h-full object-contain"
                                       preload="metadata"
-                                      onClick={(e) => e.stopPropagation()} // Prevent parent click handlers
+                                      onClick={(e) => e.stopPropagation()}
                                     >
                                       Your browser does not support the video tag.
                                     </video>
@@ -1301,89 +1350,39 @@ const handleSendMessage = async () => {
                     </div>
 
                     <div className="flex flex-wrap gap-2 mb-3">
-                      {attachments.map((attachment, index) => (
-                        <div className="p-4 pb-0">
-                          <div className="bg-secondary rounded-xl p-3 border-2 border-primary/20">
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-2">
-                                <Badge variant="default" className="text-xs">
-                                  <BoltIcon className="w-3 h-3 mr-1" />
-                                  Quick Reply Media
-                                </Badge>
-                                <span className="text-sm font-medium text-foreground">
-                                  {quickReplyMediaAttachments.length} file{quickReplyMediaAttachments.length > 1 ? "s" : ""} from quick reply
-                                </span>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs text-destructive hover:text-destructive/80 transition-colors"
-                                onClick={() => {
-                                  setQuickReplyMediaAttachments([]);
-                                  setCaption(""); // Also clear caption when clearing media
-                                }}
+                      {attachments.map((attachment, index) => {
+                        const Icon = attachment.type === "image" ? PhotoIcon :
+                                   attachment.type === "video" ? FilmIcon :
+                                   attachment.type === "audio" ? MusicalNoteIcon :
+                                   attachment.type === "compressed" ? ArchiveBoxIcon : DocumentIcon;
+
+                        return (
+                          <div key={index} className="relative group">
+                            <div className="w-20 h-20 bg-primary/5 rounded-lg overflow-hidden">
+                              {attachment.type === "image" && attachment.previewUrl ? (
+                                <img
+                                  src={attachment.previewUrl}
+                                  alt={attachment.file.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-2">
+                                  <Icon className="w-8 h-8 text-primary/60" />
+                                  <span className="text-[10px] text-muted-foreground mt-1 truncate w-full text-center">
+                                    {attachment.file.name.slice(0, 12)}...
+                                  </span>
+                                </div>
+                              )}
+                              <button
+                                onClick={() => handleRemoveAttachment(index)}
+                                className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
                               >
-                                Clear all
-                              </Button>
+                                ×
+                              </button>
                             </div>
-
-                            <div className="flex flex-wrap gap-2 mb-3">
-                              {quickReplyMediaAttachments.map((attachment, index) => {
-                                const getIcon = (mimeType: string) => {
-                                  if (mimeType?.startsWith('image/')) return PhotoIcon;
-                                  if (mimeType?.startsWith('video/')) return FilmIcon;
-                                  if (mimeType?.startsWith('audio/')) return MusicalNoteIcon;
-                                  if (mimeType?.includes('zip') || mimeType?.includes('rar')) return ArchiveBoxIcon;
-                                  return DocumentIcon;
-                                };
-
-                                const Icon = getIcon(attachment.mimeType);
-                                const filename = attachment.originalFilename || attachment.filename || `Media ${index + 1}`;
-
-                                return (
-                                  <div key={index} className="relative group">
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <div className="w-16 h-16 bg-primary/10 rounded-lg flex flex-col items-center justify-center p-1 cursor-help">
-                                          <Icon className="w-5 h-5 text-primary" />
-                                          <span className="text-[8px] text-muted-foreground mt-1 truncate w-full text-center">
-                                            {filename.slice(0, 8)}...
-                                          </span>
-                                          {index === 0 && caption && (
-                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full flex items-center justify-center">
-                                              <span className="text-[6px] text-white">C</span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>{filename}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                          {attachment.mimeType || 'Unknown type'}
-                                        </p>
-                                        {index === 0 && caption && (
-                                          <p className="text-xs text-primary mt-1">
-                                            Will have caption
-                                          </p>
-                                        )}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            {/* Caption input for quick reply media */}
-                            <Input
-                              type="text"
-                              placeholder="Caption for media files..."
-                              value={caption}
-                              onChange={(e) => setCaption(e.target.value)}
-                              className="w-full mt-2"
-                            />
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
 
                     <Input
@@ -1405,10 +1404,10 @@ const handleSendMessage = async () => {
                     onInsertIntoInput={(message, mediaAttachments = []) => {
                       if (mediaAttachments.length > 0) {
                         // When quick reply has media, put text in CAPTION field
-                        setCaption(message); // Set the message as caption
-                        setMessageInput(""); // Clear main input
+                        setCaption(message);
+                        setMessageInput("");
                         setQuickReplyMediaAttachments(mediaAttachments);
-                        setAttachments([]); // Clear any local attachments
+                        setAttachments([]);
 
                         toast({
                           title: "Quick reply inserted",
@@ -1417,7 +1416,7 @@ const handleSendMessage = async () => {
                       } else {
                         // When quick reply has NO media, put text in MAIN input field
                         setMessageInput(message);
-                        setCaption(""); // Clear caption
+                        setCaption("");
 
                         // Focus on the input field after a short delay
                         setTimeout(() => {
@@ -1438,6 +1437,7 @@ const handleSendMessage = async () => {
                     user={user}
                     conversation={selectedConversation}
                   />
+                
                   <DropdownMenu>
                     <Tooltip>
                       <TooltipTrigger asChild>

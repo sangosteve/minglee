@@ -1,3 +1,4 @@
+// This file defines the database schema using Drizzle ORM for a messaging application.
 import { pgTable, uuid, varchar, text, timestamp, unique, boolean, foreignKey, integer, jsonb, index, doublePrecision, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
