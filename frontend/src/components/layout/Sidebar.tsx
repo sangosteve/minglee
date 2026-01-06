@@ -30,19 +30,15 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth.store";
 import { toast } from "sonner";
-
-const navigation = [
-  { name: "Dashboard", href: "/", icon: HomeIcon },
-  { name: "Conversations", href: "/conversations", icon: ChatBubbleLeftRightIcon, badge: 12 },
-  { name: "Contacts", href: "/contacts", icon: UsersIcon },
-  { name: "Automations", href: "/automations", icon: SparklesIcon },
-  { name: "Analytics", href: "/analytics", icon: ChartBarIcon },
-];
+import { useUnreadCount } from "@/lib/api/conversations"; // Import the hook
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(true);
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  
+  // Get the actual unread count
+  const { data: unreadCount = 0, isLoading: isLoadingUnread } = useUnreadCount();
 
   const handleLogout = async () => {
     try {
@@ -70,6 +66,20 @@ export function Sidebar() {
     return user.role.charAt(0).toUpperCase() + user.role.slice(1);
   };
 
+  // Navigation with dynamic unread count
+  const navigation = [
+    { name: "Dashboard", href: "/", icon: HomeIcon },
+    { 
+      name: "Conversations", 
+      href: "/conversations", 
+      icon: ChatBubbleLeftRightIcon, 
+      badge: unreadCount > 0 ? unreadCount : undefined 
+    },
+    { name: "Contacts", href: "/contacts", icon: UsersIcon },
+    { name: "Automations", href: "/automations", icon: SparklesIcon },
+    { name: "Analytics", href: "/analytics", icon: ChartBarIcon },
+  ];
+
   return (
     <aside
       className={cn(
@@ -94,8 +104,7 @@ export function Sidebar() {
           onClick={() => setCollapsed(!collapsed)}
           className={cn(
             "p-1.5 rounded-lg hover:bg-sidebar-accent transition-colors shrink-0",
-            "focus:outline-none focus:ring-2 focus:ring-sidebar-foreground/30",
-            collapsed ? "" : ""
+            "focus:outline-none focus:ring-2 focus:ring-sidebar-foreground/30"
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
@@ -133,7 +142,7 @@ export function Sidebar() {
                   >
                     <div className="relative">
                       <item.icon className="w-5 h-5 flex-shrink-0" />
-                      {item.badge && (
+                      {item.badge && !isLoadingUnread && (
                         <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 flex items-center justify-center px-1 rounded-full">
                           {item.badge > 9 ? "9+" : item.badge}
                         </span>
@@ -143,7 +152,7 @@ export function Sidebar() {
                   {/* Tooltip */}
                   <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
                     {item.name}
-                    {item.badge && (
+                    {item.badge && !isLoadingUnread && (
                       <span className="ml-2 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 inline-flex items-center justify-center px-1 rounded-full">
                         {item.badge > 9 ? "9+" : item.badge}
                       </span>
@@ -166,13 +175,18 @@ export function Sidebar() {
                 >
                   <div className="relative shrink-0">
                     <item.icon className="w-5 h-5" />
-                    {item.badge && (
+                    {item.badge && !isLoadingUnread && (
                       <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 flex items-center justify-center px-1 rounded-full">
                         {item.badge > 9 ? "9+" : item.badge}
                       </span>
                     )}
                   </div>
                   <span className="flex-1 truncate">{item.name}</span>
+                  {item.badge && !isLoadingUnread && (
+                    <span className="text-xs font-medium text-destructive">
+                      {item.badge > 9 ? "9+" : item.badge}
+                    </span>
+                  )}
                 </NavLink>
               )}
             </li>
