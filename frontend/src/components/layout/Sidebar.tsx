@@ -37,7 +37,6 @@ const navigation = [
   { name: "Contacts", href: "/contacts", icon: UsersIcon },
   { name: "Automations", href: "/automations", icon: SparklesIcon },
   { name: "Analytics", href: "/analytics", icon: ChartBarIcon },
-  
 ];
 
 export function Sidebar() {
@@ -78,26 +77,34 @@ export function Sidebar() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Logo */}
-      <div className="flex h-16 items-center justify-between px-4 border-b border-sidebar-border shrink-0">
+      {/* Logo Section - Fixed centering */}
+      <div className={cn(
+        "flex h-16 items-center border-b border-sidebar-border shrink-0",
+        collapsed ? "justify-center" : "justify-between px-4"
+      )}>
         {!collapsed && (
           <div className="flex items-center gap-2 animate-fade-in">
-            <div className="w-8 h-8 rounded-lg bg-sidebar-foreground/20 flex items-center justify-center">
-              <ChatBubbleLeftRightIcon className="w-5 h-5 text-sidebar-foreground" />
-            </div>
+            <img src="/MingleeLogo.svg" alt="Logo" className="w-8 h-8 object-contain" />
             <span className="font-semibold text-lg text-sidebar-foreground">Minglee</span>
           </div>
         )}
+        
+        {/* Collapse/Expand Button */}
         <button
           onClick={() => setCollapsed(!collapsed)}
           className={cn(
             "p-1.5 rounded-lg hover:bg-sidebar-accent transition-colors shrink-0",
-            collapsed ? "mx-auto" : ""
+            "focus:outline-none focus:ring-2 focus:ring-sidebar-foreground/30",
+            collapsed ? "" : ""
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (
-            <ChevronRightIcon className="w-4 h-4 text-sidebar-foreground" />
+            <img 
+              src="/MingleeLogo.svg" 
+              alt="Logo" 
+              className="w-8 h-8 object-contain"
+            />
           ) : (
             <ChevronLeftIcon className="w-4 h-4 text-sidebar-foreground" />
           )}
@@ -136,6 +143,11 @@ export function Sidebar() {
                   {/* Tooltip */}
                   <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-nowrap z-50 shadow-lg pointer-events-none">
                     {item.name}
+                    {item.badge && (
+                      <span className="ml-2 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 inline-flex items-center justify-center px-1 rounded-full">
+                        {item.badge > 9 ? "9+" : item.badge}
+                      </span>
+                    )}
                     <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-y-4 border-l-0 border-r-4 border-r-gray-900 border-transparent"></div>
                   </div>
                 </div>
