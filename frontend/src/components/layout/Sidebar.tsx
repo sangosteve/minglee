@@ -1,24 +1,21 @@
 // frontend/src/components/layout/Sidebar.tsx
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  ChatBubbleLeftRightIcon,
-  HomeIcon,
-  UsersIcon,
-  MegaphoneIcon,
-  ChartBarIcon,
-  CogIcon,
-  SparklesIcon,
-  UserGroupIcon,
-  TagIcon,
-  RocketLaunchIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ArrowRightOnRectangleIcon,
+  Home07Icon,
+  ChatIcon,
+  Contact01Icon,
+  ChartDownIcon,
+  AlgorithmIcon,
+  Settings01Icon,
   UserIcon,
-  ShieldCheckIcon,
-  InformationCircleIcon,
-} from "@heroicons/react/24/outline";
+  CheckmarkBadge03Icon,
+  AlertCircleIcon,
+  Logout01Icon,
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+} from '@hugeicons/core-free-icons';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,7 +27,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth.store";
 import { toast } from "sonner";
-import { useUnreadCount } from "@/lib/api/conversations"; // Import the hook
+import { useUnreadCount } from "@/lib/api/conversations";
+import React from "react";
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(true);
@@ -66,18 +64,26 @@ export function Sidebar() {
     return user.role.charAt(0).toUpperCase() + user.role.slice(1);
   };
 
-  // Navigation with dynamic unread count
+  // Navigation with Hugeicons
   const navigation = [
-    { name: "Dashboard", href: "/", icon: HomeIcon },
+    { name: "Dashboard", href: "/dashboard", icon: Home07Icon },
     { 
       name: "Conversations", 
       href: "/conversations", 
-      icon: ChatBubbleLeftRightIcon, 
+      icon: ChatIcon, 
       badge: unreadCount > 0 ? unreadCount : undefined 
     },
-    { name: "Contacts", href: "/contacts", icon: UsersIcon },
-    { name: "Automations", href: "/automations", icon: SparklesIcon },
-    { name: "Analytics", href: "/analytics", icon: ChartBarIcon },
+    { name: "Contacts", href: "/contacts", icon: Contact01Icon },
+    { name: "Automations", href: "/automations", icon: AlgorithmIcon  },
+    { name: "Analytics", href: "/analytics", icon: ChartDownIcon },
+  ];
+
+  // User dropdown icons
+  const userDropdownIcons = [
+    { name: "My Profile", icon: UserIcon, onClick: () => navigate("/settings/profile") },
+    { name: "Account Settings", icon: Settings01Icon, onClick: () => navigate("/settings") },
+    { name: "Help & Support", icon: AlertCircleIcon, onClick: () => console.log("Help clicked") },
+    { name: "Logout", icon: Logout01Icon, onClick: handleLogout, destructive: true },
   ];
 
   return (
@@ -87,7 +93,7 @@ export function Sidebar() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Logo Section - Fixed centering */}
+      {/* Logo Section */}
       <div className={cn(
         "flex h-16 items-center border-b border-sidebar-border shrink-0",
         collapsed ? "justify-center" : "justify-between px-4"
@@ -115,7 +121,13 @@ export function Sidebar() {
               className="w-8 h-8 object-contain"
             />
           ) : (
-            <ChevronLeftIcon className="w-4 h-4 text-sidebar-foreground" />
+            <HugeiconsIcon 
+              icon={ArrowLeft01Icon} 
+              size={16}
+              color="currentColor"
+              strokeWidth={1.5}
+              className="text-sidebar-foreground"
+            />
           )}
         </button>
       </div>
@@ -141,7 +153,13 @@ export function Sidebar() {
                     title={item.name}
                   >
                     <div className="relative">
-                      <item.icon className="w-5 h-5 flex-shrink-0" />
+                      <HugeiconsIcon 
+                        icon={item.icon} 
+                        size={20}
+                        color="currentColor"
+                        strokeWidth={1.5}
+                        className="flex-shrink-0"
+                      />
                       {item.badge && !isLoadingUnread && (
                         <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 flex items-center justify-center px-1 rounded-full">
                           {item.badge > 9 ? "9+" : item.badge}
@@ -174,7 +192,12 @@ export function Sidebar() {
                   end={item.href === "/"}
                 >
                   <div className="relative shrink-0">
-                    <item.icon className="w-5 h-5" />
+                    <HugeiconsIcon 
+                      icon={item.icon} 
+                      size={20}
+                      color="currentColor"
+                      strokeWidth={1.5}
+                    />
                     {item.badge && !isLoadingUnread && (
                       <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-semibold h-4 min-w-4 flex items-center justify-center px-1 rounded-full">
                         {item.badge > 9 ? "9+" : item.badge}
@@ -214,9 +237,13 @@ export function Sidebar() {
                     className="w-full h-full rounded-full object-cover"
                   />
                 ) : (
-                  <span className="text-sm font-medium text-sidebar-foreground">
-                    {getUserInitials()}
-                  </span>
+                  <HugeiconsIcon 
+                    icon={UserIcon} 
+                    size={16}
+                    color="currentColor"
+                    strokeWidth={1.5}
+                    className="text-sidebar-foreground"
+                  />
                 )}
                 {/* Online indicator */}
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-sidebar-background"></div>
@@ -235,7 +262,13 @@ export function Sidebar() {
 
               {/* Chevron icon when sidebar is expanded */}
               {!collapsed && (
-                <ChevronRightIcon className="w-4 h-4 text-sidebar-muted flex-shrink-0" />
+                <HugeiconsIcon 
+                  icon={ArrowRight01Icon} 
+                  size={16}
+                  color="currentColor"
+                  strokeWidth={1.5}
+                  className="text-sidebar-muted flex-shrink-0"
+                />
               )}
             </button>
           </DropdownMenuTrigger>
@@ -259,7 +292,13 @@ export function Sidebar() {
                         className="w-full h-full rounded-full object-cover"
                       />
                     ) : (
-                      <UserIcon className="w-5 h-5 text-sidebar-foreground" />
+                      <HugeiconsIcon 
+                        icon={UserIcon} 
+                        size={20}
+                        color="currentColor"
+                        strokeWidth={1.5}
+                        className="text-sidebar-foreground"
+                      />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -271,7 +310,13 @@ export function Sidebar() {
                     </p>
                     {user?.role && (
                       <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-primary/10 rounded-full">
-                        <ShieldCheckIcon className="w-3 h-3 text-primary" />
+                        <HugeiconsIcon 
+                          icon={CheckmarkBadge03Icon} 
+                          size={12}
+                          color="currentColor"
+                          strokeWidth={1.5}
+                          className="text-primary"
+                        />
                         <span className="text-xs font-medium text-primary">
                           {getUserRole()}
                         </span>
@@ -284,45 +329,29 @@ export function Sidebar() {
 
             {/* Menu Items */}
             <div className="py-1">
-              <DropdownMenuItem
-                onClick={() => navigate("/settings/profile")}
-                className="cursor-pointer gap-3 px-4 py-2.5"
-              >
-                <UserIcon className="w-4 h-4" />
-                My Profile
-              </DropdownMenuItem>
-              
-              <DropdownMenuItem
-                onClick={() => navigate("/settings")}
-                className="cursor-pointer gap-3 px-4 py-2.5"
-              >
-                <CogIcon className="w-4 h-4" />
-                Account Settings
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator />
-
-              <DropdownMenuItem
-                onClick={() => {
-                  // Navigate to help/support page
-                  console.log("Help clicked");
-                }}
-                className="cursor-pointer gap-3 px-4 py-2.5"
-              >
-                <InformationCircleIcon className="w-4 h-4" />
-                Help & Support
-              </DropdownMenuItem>
-
-              <DropdownMenuSeparator />
-
-              {/* Logout Button */}
-              <DropdownMenuItem
-                onClick={handleLogout}
-                className="cursor-pointer gap-3 px-4 py-2.5 text-destructive focus:text-destructive focus:bg-destructive/10"
-              >
-                <ArrowRightOnRectangleIcon className="w-4 h-4" />
-                Logout
-              </DropdownMenuItem>
+              {userDropdownIcons.map((menuItem, index) => (
+                <React.Fragment key={menuItem.name}>
+                  {index === 2 && <DropdownMenuSeparator />}
+                  {index === 2 && <DropdownMenuSeparator />}
+                  
+                  <DropdownMenuItem
+                    onClick={menuItem.onClick}
+                    className={cn(
+                      "cursor-pointer gap-3 px-4 py-2.5",
+                      menuItem.destructive && "text-destructive focus:text-destructive focus:bg-destructive/10"
+                    )}
+                  >
+                    <HugeiconsIcon 
+                      icon={menuItem.icon} 
+                      size={16}
+                      color="currentColor"
+                      strokeWidth={1.5}
+                      className={menuItem.destructive ? "text-destructive" : ""}
+                    />
+                    {menuItem.name}
+                  </DropdownMenuItem>
+                </React.Fragment>
+              ))}
             </div>
 
             {/* Footer with version info */}

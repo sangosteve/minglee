@@ -29,6 +29,7 @@ import Settings from "./pages/Settings";
 import AutomationBuilder from "./pages/automations/AutomationBuilder";
 import AutomationEditor from "./pages/automations/AutomationEditor";
 import { TeamInvitationPage } from "./pages/TeamInvitationPage";
+import Dashboard from "./pages/Dashboard";
 
 const queryClient = new QueryClient();
 
@@ -103,6 +104,14 @@ const AppContent = () => {
       <Route path="/" element={
         <ProtectedRoute>
           <Index />
+        </ProtectedRoute>
+      } />
+
+        <Route path="/dashboard" element={
+        <ProtectedRoute>
+          <MainLayout title="Dashboard">
+            <Dashboard/>
+          </MainLayout>
         </ProtectedRoute>
       } />
       

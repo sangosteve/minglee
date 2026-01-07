@@ -33,7 +33,7 @@ export default function Login() {
     try {
       await login(formData.email, formData.password);
       toast.success("Login successful!");
-      navigate("/");
+      navigate("/dashboard");
     } catch (error: any) {
       toast.error(error.message || "Login failed");
     }
