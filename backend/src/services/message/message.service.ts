@@ -243,305 +243,393 @@ async handleIncomingMessage(
   /**
    * Send a message via WhatsApp and save to database
    */
-  async sendMessage(params: SendMessageParams) {
-    const db = getDb();
+async sendMessage(params: SendMessageParams) {
+  const db = getDb();
+  
+  try {
+    console.log('📤 Starting sendMessage with params:', {
+      userId: params.userId,
+      contactId: params.contactId,
+      direction: params.direction,
+      messageType: params.messageType,
+      hasAttachments: !!params.attachments?.length,
+      isInteractive: params.messageType === 'interactive',
+      bodyPreview: params.body?.substring(0, 50),
+    });
+
+    // 1. Get user
+    const [user] = await db.select()
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .limit(1);
     
-    try {
-      console.log('📤 Starting sendMessage with params:', {
-        userId: params.userId,
-        contactId: params.contactId,
-        direction: params.direction,
-        hasAttachments: !!params.attachments?.length,
-        bodyPreview: params.body?.substring(0, 50),
+    if (!user) throw new Error('User not found');
+    if (params.direction === 'outgoing' && (!user.whatsappPhoneNumberId || !user.whatsappAccessToken)) {
+      throw new Error('WhatsApp not configured for user');
+    }
+    
+    // 2. Get contact
+    const [contact] = await db.select()
+      .from(contacts)
+      .where(eq(contacts.id, params.contactId))
+      .limit(1);
+    
+    if (!contact) throw new Error('Contact not found');
+    if (!contact.phone) throw new Error('Contact has no phone number');
+    
+    // 3. Get or create conversation
+    let conversation;
+    if (params.conversationId) {
+      [conversation] = await db.select()
+        .from(conversations)
+        .where(eq(conversations.id, params.conversationId))
+        .limit(1);
+    }
+    
+    if (!conversation) {
+      conversation = await this.getOrCreateConversation(
+        contact.id,
+        user.id,
+        user.whatsappPhoneNumberId!
+      );
+    }
+
+    console.log('✅ Got conversation:', conversation.id);
+
+    // 4. Handle media attachments (only if not interactive message)
+    let mediaAttachmentId: string | null = null;
+    let mediaAttachmentData: any = null;
+    
+    if (params.attachments && params.attachments.length > 0 && params.messageType !== 'interactive') {
+      const attachment = params.attachments[0];
+      console.log('📎 Processing attachment:', {
+        hasId: !!attachment.id,
+        secureUrl: attachment.secureUrl?.substring(0, 50),
+        mimeType: attachment.mimeType,
       });
 
-      // 1. Get user
-      const [user] = await db.select()
-        .from(users)
-        .where(eq(users.id, params.userId))
-        .limit(1);
-      
-      if (!user) throw new Error('User not found');
-      if (params.direction === 'outgoing' && (!user.whatsappPhoneNumberId || !user.whatsappAccessToken)) {
-        throw new Error('WhatsApp not configured for user');
-      }
-      
-      // 2. Get contact
-      const [contact] = await db.select()
-        .from(contacts)
-        .where(eq(contacts.id, params.contactId))
-        .limit(1);
-      
-      if (!contact) throw new Error('Contact not found');
-      if (!contact.phone) throw new Error('Contact has no phone number');
-      
-      // 3. Get or create conversation
-      let conversation;
-      if (params.conversationId) {
-        [conversation] = await db.select()
-          .from(conversations)
-          .where(eq(conversations.id, params.conversationId))
+      if (attachment.id) {
+        // Use existing media attachment
+        mediaAttachmentId = attachment.id;
+        
+        const [existingMedia] = await db.select()
+          .from(mediaAttachments)
+          .where(eq(mediaAttachments.id, attachment.id))
           .limit(1);
-      }
-      
-      if (!conversation) {
-        conversation = await this.getOrCreateConversation(
-          contact.id,
-          user.id,
-          user.whatsappPhoneNumberId!
-        );
-      }
+          
+        if (!existingMedia) {
+          throw new Error(`Media attachment with ID ${attachment.id} not found`);
+        }
+        
+        mediaAttachmentData = existingMedia;
+        
+        // Update caption if needed
+        if (params.body && params.body !== existingMedia.caption) {
+          await db.update(mediaAttachments)
+            .set({ 
+              caption: params.body,
+              updatedAt: new Date(),
+            })
+            .where(eq(mediaAttachments.id, attachment.id));
+        }
 
-      console.log('✅ Got conversation:', conversation.id);
+        console.log('✅ Using existing media attachment:', mediaAttachmentId);
+      } else {
+        // Create new media attachment record
+        const newMediaId = uuidv4();
+        
+        let publicId = attachment.providerId || '';
+        if (!publicId && attachment.secureUrl) {
+          publicId = this.extractPublicIdFromCloudinaryUrl(attachment.secureUrl) || '';
+        }
+        if (!publicId) {
+          publicId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        }
 
-      // 4. Handle media attachments FIRST
-      let mediaAttachmentId: string | null = null;
-      let mediaAttachmentData: any = null;
-      
-      if (params.attachments && params.attachments.length > 0) {
-        const attachment = params.attachments[0];
-        console.log('📎 Processing attachment:', {
-          hasId: !!attachment.id,
-          secureUrl: attachment.secureUrl?.substring(0, 50),
-          mimeType: attachment.mimeType,
+        const version = `v${Date.now()}`;
+        
+        let format = '';
+        if (attachment.originalFilename) {
+          format = attachment.originalFilename.split('.').pop() || '';
+        } else if (attachment.filename) {
+          format = attachment.filename.split('.').pop() || '';
+        } else if (attachment.mimeType) {
+          format = attachment.mimeType.split('/').pop() || '';
+        }
+
+        console.log('📝 Creating new media attachment:', {
+          id: newMediaId,
+          publicId,
+          version,
+          format,
         });
 
-        // Check if we already have a media_attachment ID
-        if (attachment.id) {
-          // Use existing media attachment
-          mediaAttachmentId = attachment.id;
-          
-          // Verify it exists
-          const [existingMedia] = await db.select()
-            .from(mediaAttachments)
-            .where(eq(mediaAttachments.id, attachment.id))
-            .limit(1);
-            
-          if (!existingMedia) {
-            throw new Error(`Media attachment with ID ${attachment.id} not found`);
-          }
-          
-          mediaAttachmentData = existingMedia;
-          
-          // Update caption if needed
-          if (params.body && params.body !== existingMedia.caption) {
-            await db.update(mediaAttachments)
-              .set({ 
-                caption: params.body,
-                updatedAt: new Date(),
-              })
-              .where(eq(mediaAttachments.id, attachment.id));
-          }
+        const [newMediaAttachment] = await db.insert(mediaAttachments).values({
+          id: newMediaId,
+          uploadedByUserId: params.userId,
+          secureUrl: attachment.secureUrl || attachment.url || '',
+          thumbnailUrl: attachment.secureUrl || attachment.url || '',
+          originalFilename: attachment.originalFilename || attachment.filename || 'media',
+          filename: attachment.filename || attachment.originalFilename || 'media',
+          mimeType: attachment.mimeType || 'application/octet-stream',
+          fileSize: attachment.fileSize || 0,
+          width: attachment.width || null,
+          height: attachment.height || null,
+          duration: attachment.duration || null,
+          format: format || '',
+          resourceType: this.getResourceTypeFromMime(attachment.mimeType || 'application/octet-stream'),
+          publicId: publicId,
+          version: version,
+          provider: attachment.provider || 'cloudinary',
+          providerId: attachment.providerId || publicId,
+          tags: ['message', params.direction],
+          caption: params.body || attachment.caption || '',
+          status: 'active',
+          metadata: attachment.metadata || {},
+          uploadedAt: new Date(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).returning();
+        
+        mediaAttachmentId = newMediaAttachment.id;
+        mediaAttachmentData = newMediaAttachment;
 
-          console.log('✅ Using existing media attachment:', mediaAttachmentId);
-        } else {
-          // Create new media attachment record
-          const newMediaId = uuidv4();
-          
-          // Extract public_id from Cloudinary URL or generate one
-          let publicId = attachment.providerId || '';
-          if (!publicId && attachment.secureUrl) {
-            publicId = this.extractPublicIdFromCloudinaryUrl(attachment.secureUrl) || '';
-          }
-          if (!publicId) {
-            // Generate a unique public_id
-            publicId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          }
-
-          // Generate version
-          const version = `v${Date.now()}`;
-          
-          // Get format from filename or mime type
-          let format = '';
-          if (attachment.originalFilename) {
-            format = attachment.originalFilename.split('.').pop() || '';
-          } else if (attachment.filename) {
-            format = attachment.filename.split('.').pop() || '';
-          } else if (attachment.mimeType) {
-            format = attachment.mimeType.split('/').pop() || '';
-          }
-
-          console.log('📝 Creating new media attachment:', {
-            id: newMediaId,
-            publicId,
-            version,
-            format,
-          });
-
-          const [newMediaAttachment] = await db.insert(mediaAttachments).values({
-            id: newMediaId,
-            uploadedByUserId: params.userId,
-            secureUrl: attachment.secureUrl || attachment.url || '',
-            thumbnailUrl: attachment.secureUrl || attachment.url || '',
-            originalFilename: attachment.originalFilename || attachment.filename || 'media',
-            filename: attachment.filename || attachment.originalFilename || 'media',
-            mimeType: attachment.mimeType || 'application/octet-stream',
-            fileSize: attachment.fileSize || 0,
-            width: attachment.width || null,
-            height: attachment.height || null,
-            duration: attachment.duration || null,
-            format: format || '',
-            resourceType: this.getResourceTypeFromMime(attachment.mimeType || 'application/octet-stream'),
-            publicId: publicId,
-            version: version,
-            provider: attachment.provider || 'cloudinary',
-            providerId: attachment.providerId || publicId,
-            tags: ['message', params.direction],
-            caption: params.body || attachment.caption || '',
-            status: 'active',
-            metadata: attachment.metadata || {},
-            uploadedAt: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }).returning();
-          
-          mediaAttachmentId = newMediaAttachment.id;
-          mediaAttachmentData = newMediaAttachment;
-
-          console.log('✅ Created new media attachment:', mediaAttachmentId);
-        }
+        console.log('✅ Created new media attachment:', mediaAttachmentId);
       }
-      
-      // 5. Send via WhatsApp API if outgoing
-      let whatsappResponse: any = null;
-      let whatsappMessageId: string | undefined = undefined;
-      
-      if (params.direction === 'outgoing') {
-        try {
-          if (mediaAttachmentId && mediaAttachmentData) {
-            console.log('📤 Sending media message via WhatsApp');
-            const mediaType = this.getMediaTypeFromMime(mediaAttachmentData.mimeType);
-            
-            whatsappResponse = await WhatsAppService.sendMediaMessage(
-              user.whatsappPhoneNumberId!,
-              contact.phone!,
-              mediaAttachmentData.secureUrl,
-              mediaType,
-              params.body || mediaAttachmentData.caption,
-              mediaAttachmentData.originalFilename,
-              user.whatsappAccessToken!
-            );
-          } else {
-            console.log('📤 Sending text message via WhatsApp');
-            whatsappResponse = await WhatsAppService.sendTextMessage(
-              user.whatsappPhoneNumberId!,
-              contact.phone!,
-              params.body,
-              user.whatsappAccessToken!
-            );
-          }
-          
-          if (whatsappResponse?.messages?.[0]?.id) {
-            whatsappMessageId = whatsappResponse.messages[0].id;
-            console.log('✅ WhatsApp message sent, ID:', whatsappMessageId);
-          }
-          
-        } catch (error: any) {
-          console.error('❌ Error sending WhatsApp message:', error);
-          // We still save the message but with failed status
-        }
-      }
-      
-      // 6. Determine message type
-      const messageType = this.getMessageType({
-        attachments: params.attachments,
-        messageType: params.messageType,
-      });
-
-      // 7. Determine message status
-      const messageStatus = this.getMessageStatus(
-        params.direction, 
-        whatsappResponse, 
-        params.metadata?.whatsappMessageId
-      );
-
-      console.log('💾 Saving message to database:', {
-        conversationId: conversation.id,
-        messageType,
-        status: messageStatus,
-        hasMedia: !!mediaAttachmentId,
-      });
-      
-      // 8. Save message to database WITH media_attachment_id
-      const [savedMessage] = await db.insert(messages).values({
-        id: uuidv4(),
-        conversationId: conversation.id,
-        contactId: contact.id,
-        whatsappMessageId: whatsappMessageId || params.metadata?.whatsappMessageId,
-        direction: params.direction,
-        messageType: messageType,
-        body: params.body || '',
-        status: messageStatus,
-        mediaAttachmentId: mediaAttachmentId,
-        metadata: {
-          ...params.metadata,
-          whatsappResponse: whatsappResponse,
-          mediaAttachmentId: mediaAttachmentId,
-          secureUrl: mediaAttachmentData?.secureUrl,
-          originalFilename: mediaAttachmentData?.originalFilename,
-          mimeType: mediaAttachmentData?.mimeType,
-          fileSize: mediaAttachmentData?.fileSize,
-          width: mediaAttachmentData?.width,
-          height: mediaAttachmentData?.height,
-          duration: mediaAttachmentData?.duration,
-        },
-        timestamp: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }).returning();
-
-      console.log('✅ Message saved:', savedMessage.id);
-      
-      // 9. Update media attachment to link with message (if exists)
-      if (mediaAttachmentId) {
-        await db.update(mediaAttachments)
-          .set({ 
-            messageId: savedMessage.id,
-            updatedAt: new Date() 
-          })
-          .where(eq(mediaAttachments.id, mediaAttachmentId));
-        console.log('✅ Linked media attachment to message');
-      }
-      
-      // 10. Update conversation
-      const lastMessage = params.body?.substring(0, 100) || 
-                         (mediaAttachmentId ? `[${messageType}]` : 'Message');
-      
-      const updateData: any = {
-        lastMessage,
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      if (params.direction === 'incoming') {
-        updateData.unreadCount = (conversation.unreadCount || 0) + 1;
-      }
-      
-      await db.update(conversations)
-        .set(updateData)
-        .where(eq(conversations.id, conversation.id));
-
-      console.log('✅ Conversation updated');
-      
-      // 11. Return complete response
-      return {
-        success: true,
-        message: savedMessage,
-        conversation: {
-          ...conversation,
-          lastMessage,
-          lastMessageAt: new Date().toISOString(),
-          unreadCount: params.direction === 'incoming' ? (conversation.unreadCount || 0) + 1 : conversation.unreadCount,
-        },
-        mediaAttachmentId,
-        whatsappResponse,
-      };
-      
-    } catch (error: any) {
-      console.error('❌ Error in sendMessage:', error);
-      throw error;
     }
+    
+    // 5. Send via WhatsApp API if outgoing
+    let whatsappResponse: any = null;
+    let whatsappMessageId: string | undefined = undefined;
+    
+if (params.direction === 'outgoing') {
+  try {
+    // Handle interactive messages (both lists and buttons)
+    if (params.messageType === 'interactive') {
+      console.log('🎮 Sending WhatsApp interactive message');
+      
+      // Check for list data (list messages)
+      if (params.metadata?.listData) {
+        console.log('📋 Interactive type: LIST');
+        
+        whatsappResponse = await WhatsAppService.sendInteractiveMessage(
+          user.whatsappPhoneNumberId!,
+          contact.phone!,
+          params.metadata.listData,
+          user.whatsappAccessToken!
+        );
+        
+        console.log('📋 WhatsApp list message response:', {
+          success: !!whatsappResponse?.messages?.[0]?.id,
+          responseId: whatsappResponse?.messages?.[0]?.id,
+        });
+      }
+      // Check for interactive data (button messages)
+      else if (params.metadata?.interactiveData) {
+        console.log('🔘 Interactive type: BUTTONS/QUICK_REPLIES');
+        
+        whatsappResponse = await WhatsAppService.sendInteractiveMessage(
+          user.whatsappPhoneNumberId!,
+          contact.phone!,
+          params.metadata.interactiveData,
+          user.whatsappAccessToken!
+        );
+        
+        console.log('🔘 WhatsApp button message response:', {
+          success: !!whatsappResponse?.messages?.[0]?.id,
+          responseId: whatsappResponse?.messages?.[0]?.id,
+        });
+      } else {
+        console.error('❌ Interactive message missing data (listData or interactiveData)');
+        throw new Error('Interactive message missing data');
+      }
+      
+    } else if (mediaAttachmentId && mediaAttachmentData) {
+      // Send media message
+      console.log('📤 Sending media message via WhatsApp');
+      const mediaType = this.getMediaTypeFromMime(mediaAttachmentData.mimeType);
+      
+      whatsappResponse = await WhatsAppService.sendMediaMessage(
+        user.whatsappPhoneNumberId!,
+        contact.phone!,
+        mediaAttachmentData.secureUrl,
+        mediaType,
+        params.body || mediaAttachmentData.caption,
+        mediaAttachmentData.originalFilename,
+        user.whatsappAccessToken!
+      );
+    } else {
+      // Send text message
+      console.log('📤 Sending text message via WhatsApp');
+      whatsappResponse = await WhatsAppService.sendTextMessage(
+        user.whatsappPhoneNumberId!,
+        contact.phone!,
+        params.body,
+        user.whatsappAccessToken!
+      );
+    }
+    
+    if (whatsappResponse?.messages?.[0]?.id) {
+      whatsappMessageId = whatsappResponse.messages[0].id;
+      console.log('✅ WhatsApp message sent, ID:', whatsappMessageId);
+    }
+    
+  } catch (error: any) {
+    console.error('❌ Error sending WhatsApp message:', error);
+    console.error('❌ Error details:', error.response?.data || error.message);
+    // We still save the message but with failed status
   }
+}
+    
+    // 6. Determine message type
+    const messageType = this.getMessageType({
+      attachments: params.attachments,
+      messageType: params.messageType,
+    });
+
+    // 7. Determine message status
+    const messageStatus = this.getMessageStatus(
+      params.direction, 
+      whatsappResponse, 
+      params.metadata?.whatsappMessageId
+    );
+
+    console.log('💾 Saving message to database:', {
+      conversationId: conversation.id,
+      messageType,
+      status: messageStatus,
+      hasMedia: !!mediaAttachmentId,
+      isInteractive: params.messageType === 'interactive',
+      hasListData: !!params.metadata?.listData,
+    });
+    
+    // 8. Save message to database
+    const messageMetadata: any = {
+      ...params.metadata,
+      whatsappResponse: whatsappResponse,
+    };
+    
+    // Add media attachment data if exists
+    if (mediaAttachmentId) {
+      messageMetadata.mediaAttachmentId = mediaAttachmentId;
+      messageMetadata.secureUrl = mediaAttachmentData?.secureUrl;
+      messageMetadata.originalFilename = mediaAttachmentData?.originalFilename;
+      messageMetadata.mimeType = mediaAttachmentData?.mimeType;
+      messageMetadata.fileSize = mediaAttachmentData?.fileSize;
+      messageMetadata.width = mediaAttachmentData?.width;
+      messageMetadata.height = mediaAttachmentData?.height;
+      messageMetadata.duration = mediaAttachmentData?.duration;
+    }
+    
+// Add interactive message metadata
+if (params.messageType === 'interactive') {
+  // For list messages
+  if (params.metadata?.listData) {
+    messageMetadata.listData = params.metadata.listData;
+    messageMetadata.isInteractiveList = true;
+    
+    if (params.metadata.rowIds) {
+      messageMetadata.rowIds = params.metadata.rowIds;
+    }
+    
+    console.log('📋 Saving interactive list metadata:', {
+      hasListData: true,
+      rowCount: params.metadata.rowIds?.length || 0,
+    });
+  }
+  // For button/quick reply messages
+  else if (params.metadata?.interactiveData) {
+    messageMetadata.interactiveData = params.metadata.interactiveData;
+    messageMetadata.isInteractiveMessage = true;
+    
+    if (params.metadata.actionIds) {
+      messageMetadata.actions = params.metadata.actionIds;
+    }
+    
+    console.log('🔘 Saving interactive button metadata:', {
+      hasInteractiveData: true,
+      actionCount: params.metadata.actionIds?.length || 0,
+    });
+  }
+}
+    
+    const [savedMessage] = await db.insert(messages).values({
+      id: uuidv4(),
+      conversationId: conversation.id,
+      contactId: contact.id,
+      whatsappMessageId: whatsappMessageId || params.metadata?.whatsappMessageId,
+      direction: params.direction,
+      messageType: messageType,
+      body: params.body || '',
+      status: messageStatus,
+      mediaAttachmentId: mediaAttachmentId,
+      metadata: messageMetadata,
+      timestamp: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).returning();
+
+    console.log('✅ Message saved:', savedMessage.id);
+    
+    // 9. Update media attachment to link with message (if exists)
+    if (mediaAttachmentId) {
+      await db.update(mediaAttachments)
+        .set({ 
+          messageId: savedMessage.id,
+          updatedAt: new Date() 
+        })
+        .where(eq(mediaAttachments.id, mediaAttachmentId));
+      console.log('✅ Linked media attachment to message');
+    }
+    
+    // 10. Update conversation
+    let lastMessage = params.body?.substring(0, 100);
+    
+    if (!lastMessage) {
+      if (params.messageType === 'interactive') {
+        lastMessage = '[Interactive List]';
+      } else if (mediaAttachmentId) {
+        lastMessage = `[${messageType}]`;
+      } else {
+        lastMessage = 'Message';
+      }
+    }
+    
+    const updateData: any = {
+      lastMessage,
+      lastMessageAt: new Date(),
+      updatedAt: new Date(),
+    };
+    
+    if (params.direction === 'incoming') {
+      updateData.unreadCount = (conversation.unreadCount || 0) + 1;
+    }
+    
+    await db.update(conversations)
+      .set(updateData)
+      .where(eq(conversations.id, conversation.id));
+
+    console.log('✅ Conversation updated');
+    
+    // 11. Return complete response
+    return {
+      success: true,
+      message: savedMessage,
+      conversation: {
+        ...conversation,
+        lastMessage,
+        lastMessageAt: new Date().toISOString(),
+        unreadCount: params.direction === 'incoming' ? (conversation.unreadCount || 0) + 1 : conversation.unreadCount,
+      },
+      mediaAttachmentId,
+      whatsappResponse,
+    };
+    
+  } catch (error: any) {
+    console.error('❌ Error in sendMessage:', error);
+    throw error;
+  }
+}
 
   /**
    * Save a message to database (without sending)
@@ -624,22 +712,26 @@ async handleIncomingMessage(
   /**
    * Helper: Determine message type
    */
-  private getMessageType(params: {
-    attachments?: SendMessageParams['attachments'];
-    messageType?: string;
-  }): string {
-    if (params.messageType) return params.messageType;
-    
-    if (params.attachments && params.attachments.length > 0) {
-      const mimeType = params.attachments[0].mimeType || '';
-      if (mimeType.startsWith('image/')) return 'image';
-      if (mimeType.startsWith('video/')) return 'video';
-      if (mimeType.startsWith('audio/')) return 'audio';
-      return 'document';
-    }
-    
-    return 'text';
+private getMessageType(params: {
+  attachments?: SendMessageParams['attachments'];
+  messageType?: string;
+}): string {
+  // Use explicit message type if provided
+  if (params.messageType) {
+    return params.messageType;
   }
+  
+  // Default to text or media type based on attachments
+  if (params.attachments && params.attachments.length > 0) {
+    const mimeType = params.attachments[0].mimeType || '';
+    if (mimeType.startsWith('image/')) return 'image';
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    return 'document';
+  }
+  
+  return 'text';
+}
 
   /**
    * Helper: Determine message status

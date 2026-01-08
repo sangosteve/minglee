@@ -198,9 +198,58 @@ export class WhatsAppService {
   }
 
   /**
-   * Send a text message
+   * Send Interactive Message
    */
- 
+static async sendInteractiveMessage(
+  phoneNumberId: string,
+  to: string,
+  interactiveData: any,
+  accessToken: string
+): Promise<any> {
+  try {
+    const url = `${this.baseUrl}/${phoneNumberId}/messages`;
+    
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to,
+      type: "interactive",
+      interactive: interactiveData
+    };
+    
+    console.log('📋 Sending interactive message payload:', JSON.stringify(payload, null, 2));
+    
+    const response = await axios.post(url, payload, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 30000,
+    });
+    
+    console.log('✅ Interactive message sent successfully:', {
+      messageId: response.data?.messages?.[0]?.id,
+    });
+    
+    return response.data;
+  } catch (error: any) {
+    const errorData = error.response?.data?.error || {};
+    console.error('❌ Error sending interactive message:', {
+      error: errorData.message || error.message,
+      code: errorData.code,
+      type: errorData.type,
+      details: errorData.error_data?.details,
+      interactiveData: interactiveData,
+    });
+    
+    // Log the full response for debugging
+    if (error.response?.data) {
+      console.error('❌ WhatsApp API error response:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    throw error;
+  }
+}
 
   /**
    * Send a media message

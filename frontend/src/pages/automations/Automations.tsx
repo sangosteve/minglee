@@ -194,7 +194,7 @@ const Automations = () => {
   };
 
   const handleViewAutomation = (id: string) => {
-    navigate(`/automations/${id}`);
+    navigate(`/automations/}`);
   };
 
   const toggleAutomationStatus = async (id: string, currentStatus: string) => {

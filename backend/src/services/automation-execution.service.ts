@@ -27,7 +27,6 @@ export class AutomationExecutionService {
   /**
    * Execute an automation workflow for a specific contact
    */
-
   async executeWorkflow(
     automationId: string,
     contactId: string,
@@ -125,7 +124,37 @@ export class AutomationExecutionService {
         userData: user
       };
 
-      // 6. Execute flow data
+      // 6. Check if this is a continuation from an interactive message
+      const isContinuation = triggerData?.interactiveAction?.originalExecutionId === executionId ||
+        triggerData?.listSelection?.originalExecutionId === executionId;
+
+      let startingNodeId = null;
+      let selectedActionId = null;
+      let selectedRowId = null;
+
+      if (isContinuation) {
+        if (triggerData?.interactiveAction) {
+          console.log(`[Automation] ↪️ Continuing execution from interactive action`);
+          console.log(`[Automation] Selected action: ${triggerData.interactiveAction.actionId}`);
+
+          startingNodeId = triggerData.interactiveAction.nodeId;
+          selectedActionId = triggerData.interactiveAction.actionId;
+
+          // Store the action in context
+          context.currentData.interactiveAction = triggerData.interactiveAction;
+        } else if (triggerData?.listSelection) {
+          console.log(`[Automation] ↪️ Continuing execution from list selection`);
+          console.log(`[Automation] Selected row: ${triggerData.listSelection.selectedRowId}`);
+
+          startingNodeId = triggerData.listSelection.nodeId;
+          selectedRowId = triggerData.listSelection.selectedRowId;
+
+          // Store the selection in context
+          context.currentData.listSelection = triggerData.listSelection;
+        }
+      }
+
+      // 7. Execute flow data
       const flowData = automation.flowData as any;
       if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
         console.error(`[Automation] ❌ Invalid flow data`);
@@ -137,7 +166,7 @@ export class AutomationExecutionService {
       // Create a map of nodes by ID for quick lookup
       const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
 
-      // Create a map of edges by source node
+      // Create a map of edges by source node AND by sourceHandle for branching
       const edgeMap = new Map<string, any[]>();
       flowData.edges.forEach((edge: any) => {
         if (!edgeMap.has(edge.source)) {
@@ -149,178 +178,309 @@ export class AutomationExecutionService {
       // Track visited nodes to avoid infinite loops
       const visitedNodes = new Set<string>();
 
-      // Start from trigger node
-      let currentNode = flowData.nodes.find((n: any) => n.type === 'triggerNode');
+      // Start from trigger node OR from the interactive/list node if continuing
+      let currentNode = startingNodeId
+        ? flowData.nodes.find((n: any) => n.id === startingNodeId)
+        : flowData.nodes.find((n: any) => n.type === 'triggerNode');
 
       if (!currentNode) {
-        console.error(`[Automation] ❌ No trigger node found in flow`);
-        return { success: false, error: 'No trigger node found' };
+        console.error(`[Automation] ❌ No starting node found`);
+        return { success: false, error: 'No starting node found' };
       }
 
       let executionCount = 0;
       const maxExecutions = 100; // Safety limit
 
       // Execution loop
-while (currentNode && executionCount < maxExecutions) {
-  executionCount++;
+      while (currentNode && executionCount < maxExecutions) {
+        executionCount++;
 
-  // Skip if already visited (prevents loops)
-  if (visitedNodes.has(currentNode.id)) {
-    console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, skipping to avoid loop`);
-    break;
-  }
+        // Skip if already visited (prevents loops)
+        if (visitedNodes.has(currentNode.id)) {
+          console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, skipping to avoid loop`);
+          break;
+        }
 
-  visitedNodes.add(currentNode.id);
+        visitedNodes.add(currentNode.id);
 
-  console.log(`[Automation] ➡️ Processing node: ${currentNode.id} (${currentNode.type})`);
+        console.log(`[Automation] ➡️ Processing node: ${currentNode.id} (${currentNode.type})`);
 
-  const nodeStartTime = Date.now();
-  let nodeSuccess = false;
-  let nodeError = null;
-  let conditionResult = null;
-  let keywordResult = null; // Add this for keyword nodes
+        const nodeStartTime = Date.now();
+        let nodeSuccess = false;
+        let nodeError = null;
+        let conditionResult = null;
+        let keywordResult = null;
+        let listResult = null;
+        let interactiveResult = null;
 
-  try {
-    switch (currentNode.type) {
-      case 'textMessageNode':
-        await this.executeTextMessageNode(currentNode, context);
-        nodeSuccess = true;
-        break;
+        try {
+          switch (currentNode.type) {
+            case 'textMessageNode':
+              await this.executeTextMessageNode(currentNode, context);
+              nodeSuccess = true;
+              break;
 
-      case 'mediaMessageNode':
-        await this.executeMediaMessageNode(currentNode, context);
-        nodeSuccess = true;
-        break;
+            case 'mediaMessageNode':
+              await this.executeMediaMessageNode(currentNode, context);
+              nodeSuccess = true;
+              break;
 
-      case 'quickRepliesNode':
-        await this.executeQuickRepliesNode(currentNode, context);
-        nodeSuccess = true;
-        break;
+            case 'quickRepliesNode':
+              await this.executeQuickRepliesNode(currentNode, context);
+              nodeSuccess = true;
+              break;
 
-      case 'keywordActionNode':
-        const keywordResponse = await this.executeKeywordActionNode(currentNode, context);
-        nodeSuccess = keywordResponse.success;
-        keywordResult = keywordResponse.matched; // Store keyword result separately
-        console.log(`[Automation] Keyword check result: ${keywordResult ? 'MATCH' : 'NO MATCH'}`);
-        break;
+            case 'keywordActionNode':
+              const keywordResponse = await this.executeKeywordActionNode(currentNode, context);
+              nodeSuccess = keywordResponse.success;
+              keywordResult = keywordResponse.matched;
+              console.log(`[Automation] Keyword check result: ${keywordResult ? 'MATCH' : 'NO MATCH'}`);
+              break;
 
-      case 'tagNode':
-        await this.executeTagNode(currentNode, context);
-        nodeSuccess = true;
-        break;
+            case 'tagNode':
+              await this.executeTagNode(currentNode, context);
+              nodeSuccess = true;
+              break;
 
-      case 'delayNode':
-        await this.executeDelayNode(currentNode, context);
-        nodeSuccess = true;
-        break;
+            case 'delayNode':
+              await this.executeDelayNode(currentNode, context);
+              nodeSuccess = true;
+              break;
 
-      case 'conditionNode':
-        const conditionResponse = await this.executeConditionNode(currentNode, context);
-        nodeSuccess = conditionResponse.success;
-        conditionResult = conditionResponse.success;
-        console.log(`[Automation] Condition result: ${conditionResult}`);
-        break;
+            case 'conditionNode':
+              const conditionResponse = await this.executeConditionNode(currentNode, context);
+              nodeSuccess = conditionResponse.success;
+              conditionResult = conditionResponse.success;
+              console.log(`[Automation] Condition result: ${conditionResult}`);
+              break;
 
-      case 'triggerNode':
-        // Trigger node doesn't need execution, just continue
-        console.log(`[Automation] ⚡ Trigger node: ${currentNode.data?.label || 'Trigger'}`);
-        nodeSuccess = true;
-        break;
+            case 'triggerNode':
+              console.log(`[Automation] ⚡ Trigger node: ${currentNode.data?.label || 'Trigger'}`);
+              nodeSuccess = true;
+              break;
 
-      default:
-        console.log(`[Automation] ⚠️ Unknown node type: ${currentNode.type}`);
-        nodeSuccess = true;
-    }
-  } catch (error: any) {
-    nodeError = error.message;
-    console.error(`[Automation] ❌ Error in node ${currentNode.id}:`, error);
-  }
+            case 'listMessageNode':
+              const listResponse = await this.executeListMessageNode(currentNode, context);
+              nodeSuccess = listResponse.success;
 
-  nodeExecutions.push({
-    nodeId: currentNode.id,
-    nodeType: currentNode.type,
-    success: nodeSuccess,
-    error: nodeError,
-    duration: Date.now() - nodeStartTime,
-    timestamp: new Date(),
-    conditionResult,
-    keywordResult, // Add this
-  });
+              // If this is a continuation and we're at the list node, check for selection
+              if (isContinuation && startingNodeId === currentNode.id && selectedRowId) {
+                console.log(`[Automation] 🎯 Continuing from list selection: ${selectedRowId}`);
+                listResult = selectedRowId;
+              } else if (listResponse.pendingSelection) {
+                // Store pending selection for branching
+                context.currentData.pendingListSelection = listResponse.pendingSelection;
+                console.log(`[Automation] List message sent, waiting for user selection`);
 
-  // Determine next node based on edges
-  const outgoingEdges = edgeMap.get(currentNode.id) || [];
+                // Save execution record and PAUSE
+                nodeExecutions.push({
+                  nodeId: currentNode.id,
+                  nodeType: currentNode.type,
+                  success: nodeSuccess,
+                  error: nodeError,
+                  duration: Date.now() - nodeStartTime,
+                  timestamp: new Date(),
+                  pendingSelection: true,
+                  listMessageId: listResponse.sentMessageId,
+                });
 
-  if (outgoingEdges.length === 0) {
-    console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, execution complete`);
-    break;
-  }
+                // Update automation stats
+                const allNodesSuccessful = nodeExecutions.every(exec => exec.success);
+                await this.updateAutomationStats(automationId, allNodesSuccessful);
 
-  // Handle keyword action node branching (DIFFERENT from condition node!)
-  if (currentNode.type === 'keywordActionNode') {
-    const matchEdge = outgoingEdges.find(e => e.sourceHandle === 'match');
-    const noMatchEdge = outgoingEdges.find(e => e.sourceHandle === 'no-match');
+                // Save execution record
+                await this.saveExecutionRecord({
+                  automationId,
+                  contactId,
+                  userId,
+                  status: 'pending_selection',
+                  triggerData,
+                  nodeExecutions,
+                  executionData: context,
+                  startedAt: new Date(),
+                  completedAt: new Date(),
+                });
 
-    let nextEdge;
-    if (keywordResult === true && matchEdge) {
-      nextEdge = matchEdge;
-      console.log(`[Automation] ↪️ Keyword MATCH, following match branch to ${matchEdge.target}`);
-    } else if (keywordResult === false && noMatchEdge) {
-      nextEdge = noMatchEdge;
-      console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
-    } else {
-      // Fallback: follow first edge
-      nextEdge = outgoingEdges[0];
-      console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
-    }
+                console.log(`[Automation] ⏸️ Execution paused, waiting for user selection`);
+                return { success: true, executionId };
+              }
+              break;
 
-    if (nextEdge) {
-      currentNode = nodeMap.get(nextEdge.target);
-      continue;
-    }
-  }
+            case 'interactiveMessageNode':
+              const interactiveResponse = await this.executeInteractiveMessageNode(currentNode, context);
+              nodeSuccess = interactiveResponse.success;
 
-  // Handle condition node branching
-  if (currentNode.type === 'conditionNode') {
-    const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
-    const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+              // If this is a continuation and we're at the interactive node, check for action
+              if (isContinuation && startingNodeId === currentNode.id && selectedActionId) {
+                console.log(`[Automation] 🎯 Continuing from interactive action: ${selectedActionId}`);
+                interactiveResult = selectedActionId;
+              } else if (interactiveResponse.pendingAction) {
+                // Store pending action for branching
+                context.currentData.pendingInteractiveAction = interactiveResponse.pendingAction;
+                console.log(`[Automation] Interactive message sent, waiting for user action`);
 
-    let nextEdge;
-    if (conditionResult === true && trueEdge) {
-      nextEdge = trueEdge;
-      console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
-    } else if (conditionResult === false && falseEdge) {
-      nextEdge = falseEdge;
-      console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
-    } else {
-      // Fallback: follow first edge
-      nextEdge = outgoingEdges[0];
-      console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
-    }
+                // Save execution record and PAUSE
+                nodeExecutions.push({
+                  nodeId: currentNode.id,
+                  nodeType: currentNode.type,
+                  success: nodeSuccess,
+                  error: nodeError,
+                  duration: Date.now() - nodeStartTime,
+                  timestamp: new Date(),
+                  pendingAction: true,
+                  interactiveMessageId: interactiveResponse.sentMessageId,
+                });
 
-    if (nextEdge) {
-      currentNode = nodeMap.get(nextEdge.target);
-      continue;
-    }
-  }
+                // Update automation stats
+                const allNodesSuccessful = nodeExecutions.every(exec => exec.success);
+                await this.updateAutomationStats(automationId, allNodesSuccessful);
 
-  // For regular nodes, follow the first outgoing edge
-  if (outgoingEdges.length > 0) {
-    const nextEdge = outgoingEdges[0];
-    currentNode = nodeMap.get(nextEdge.target);
-  } else {
-    currentNode = null;
-  }
-}
+                // Save execution record
+                await this.saveExecutionRecord({
+                  automationId,
+                  contactId,
+                  userId,
+                  status: 'pending_action',
+                  triggerData,
+                  nodeExecutions,
+                  executionData: context,
+                  startedAt: new Date(),
+                  completedAt: new Date(),
+                });
+
+                console.log(`[Automation] ⏸️ Execution paused, waiting for user action`);
+                return { success: true, executionId };
+              }
+              break;
+
+            default:
+              console.log(`[Automation] ⚠️ Unknown node type: ${currentNode.type}`);
+              nodeSuccess = true;
+          }
+        } catch (error: any) {
+          nodeError = error.message;
+          console.error(`[Automation] ❌ Error in node ${currentNode.id}:`, error);
+        }
+
+        nodeExecutions.push({
+          nodeId: currentNode.id,
+          nodeType: currentNode.type,
+          success: nodeSuccess,
+          error: nodeError,
+          duration: Date.now() - nodeStartTime,
+          timestamp: new Date(),
+          conditionResult,
+          keywordResult,
+          listResult,
+          interactiveResult,
+        });
+
+        // Determine next node based on edges
+        const outgoingEdges = edgeMap.get(currentNode.id) || [];
+
+        if (outgoingEdges.length === 0) {
+          console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, execution complete`);
+          break;
+        }
+
+        // Handle keyword action node branching
+        if (currentNode.type === 'keywordActionNode') {
+          const matchEdge = outgoingEdges.find(e => e.sourceHandle === 'match');
+          const noMatchEdge = outgoingEdges.find(e => e.sourceHandle === 'no-match');
+
+          let nextEdge;
+          if (keywordResult === true && matchEdge) {
+            nextEdge = matchEdge;
+            console.log(`[Automation] ↪️ Keyword MATCH, following match branch to ${matchEdge.target}`);
+          } else if (keywordResult === false && noMatchEdge) {
+            nextEdge = noMatchEdge;
+            console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
+          } else {
+            // Fallback: follow first edge
+            nextEdge = outgoingEdges[0];
+            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          }
+
+          if (nextEdge) {
+            currentNode = nodeMap.get(nextEdge.target);
+            continue;
+          }
+        }
+
+        // Handle condition node branching
+        if (currentNode.type === 'conditionNode') {
+          const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
+          const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+
+          let nextEdge;
+          if (conditionResult === true && trueEdge) {
+            nextEdge = trueEdge;
+            console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
+          } else if (conditionResult === false && falseEdge) {
+            nextEdge = falseEdge;
+            console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
+          } else {
+            // Fallback: follow first edge
+            nextEdge = outgoingEdges[0];
+            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          }
+
+          if (nextEdge) {
+            currentNode = nodeMap.get(nextEdge.target);
+            continue;
+          }
+        }
+
+        // Handle list message node branching (when continuing from selection)
+        if (currentNode.type === 'listMessageNode' && listResult) {
+          console.log(`[Automation] 🎯 List selection made: ${listResult}`);
+
+          // Find the edge with sourceHandle matching the selected row ID
+          const selectedEdge = outgoingEdges.find(e => e.sourceHandle === listResult);
+
+          if (selectedEdge) {
+            currentNode = nodeMap.get(selectedEdge.target);
+            console.log(`[Automation] ↪️ Following selection branch to ${selectedEdge.target}`);
+            continue;
+          } else {
+            console.log(`[Automation] ⚠️ No edge found for selection ${listResult}, using first edge`);
+          }
+        }
+
+        // Handle interactive message node branching (when continuing from action)
+        if (currentNode.type === 'interactiveMessageNode' && interactiveResult) {
+          console.log(`[Automation] 🎯 Interactive action made: ${interactiveResult}`);
+
+          // Find the edge with sourceHandle matching the selected action ID
+          const selectedEdge = outgoingEdges.find(e => e.sourceHandle === interactiveResult);
+
+          if (selectedEdge) {
+            currentNode = nodeMap.get(selectedEdge.target);
+            console.log(`[Automation] ↪️ Following action branch to ${selectedEdge.target}`);
+            continue;
+          } else {
+            console.log(`[Automation] ⚠️ No edge found for action ${interactiveResult}, using first edge`);
+          }
+        }
+
+        // For regular nodes, follow the first outgoing edge
+        if (outgoingEdges.length > 0) {
+          const nextEdge = outgoingEdges[0];
+          currentNode = nodeMap.get(nextEdge.target);
+        } else {
+          currentNode = null;
+        }
+      }
 
       if (executionCount >= maxExecutions) {
         console.warn(`[Automation] ⚠️ Execution stopped: reached maximum execution limit (${maxExecutions} nodes)`);
       }
 
-      // 7. Update automation stats
+      // Update automation stats
       const allNodesSuccessful = nodeExecutions.every(exec => exec.success);
       await this.updateAutomationStats(automationId, allNodesSuccessful);
 
-      // 8. Save execution record
+      // Save execution record
       await this.saveExecutionRecord({
         automationId,
         contactId,
@@ -359,6 +519,1110 @@ while (currentNode && executionCount < maxExecutions) {
       }
 
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Execute Interactive Message Node
+   */
+private async executeInteractiveMessageNode(
+  node: any, 
+  context: ExecutionContext
+): Promise<{ 
+  success: boolean; 
+  pendingAction?: any;
+  sentMessageId?: string;
+}> {
+  const nodeData = node.data || {};
+  
+  console.log(`[Automation] 🎮 Interactive message node: ${node.id}`);
+  console.log(`[Automation] Type: ${nodeData.type}, Actions:`, nodeData.actions?.map((a: any) => ({
+    type: a.type,
+    title: a.title,
+    id: a.id
+  })));
+
+  // Personalize message with variables
+  let personalizedBody = nodeData.body || '';
+  let personalizedHeader = nodeData.header?.content || '';
+  let personalizedFooter = nodeData.footer || '';
+  
+  if (personalizedBody.includes('{{') || personalizedHeader.includes('{{') || personalizedFooter.includes('{{')) {
+    const allVariables = VariableService.getAvailableVariables(
+      context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+      context.currentData.contact,
+      context.currentData.user
+    );
+
+    personalizedBody = VariableService.replaceVariables(personalizedBody, allVariables);
+    personalizedHeader = VariableService.replaceVariables(personalizedHeader, allVariables);
+    personalizedFooter = VariableService.replaceVariables(personalizedFooter, allVariables);
+
+    console.log(`[Automation] Personalized interactive message`);
+  }
+
+  // Format interactive data for WhatsApp API
+  const interactiveData = this.formatInteractiveData(nodeData, personalizedBody, personalizedHeader, personalizedFooter);
+
+  console.log(`[Automation] Interactive data prepared:`, JSON.stringify(interactiveData, null, 2));
+
+  // Send via WhatsApp
+  try {
+    const result = await messageService.sendMessage({
+      contactId: context.contactId,
+      userId: context.userData.id,
+      conversationId: context.currentData.conversation?.id,
+      body: personalizedBody,
+      direction: 'outgoing',
+      messageType: 'interactive',
+      metadata: {
+        automation: true,
+        automationId: context.workflowId,
+        automationName: 'Automation',
+        nodeId: node.id,
+        executionId: context.executionId,
+        interactiveData: interactiveData,
+        // Store action IDs for later action tracking
+        actionIds: (nodeData.actions || []).map((action: any) => ({
+          id: action.id,
+          type: action.type,
+          title: action.title,  // Make sure title is included
+          payload: action.payload,
+          url: action.url,
+          phoneNumber: action.phoneNumber,
+        })),
+        isInteractive: true,
+        interactiveType: interactiveData.type,
+      },
+    });
+
+    console.log(`[Automation] ✅ Interactive message sent successfully`);
+    
+    // For CTA_URL messages, we don't need to pause (user clicks URL, not a reply)
+    // For REPLY buttons, we need to pause and wait for user response
+    if (interactiveData.type === 'button') {
+      return {
+        success: true,
+        pendingAction: {
+          nodeId: node.id,
+          actionIds: (nodeData.actions || [])
+            .filter((action: any) => action.type === 'reply')
+            .map((action: any) => ({
+              id: action.id,
+              type: action.type,
+              title: action.title,  // Include title here too
+              payload: action.payload,
+            })),
+          sentMessageId: result.message.id
+        },
+        sentMessageId: result.message.id
+      };
+    } else {
+      // For CTA_URL, no pause needed
+      return {
+        success: true,
+        sentMessageId: result.message.id
+      };
+    }
+
+  } catch (error: any) {
+    console.error(`[Automation] ❌ Error sending interactive message:`, error);
+    console.error(`[Automation] ❌ Error details:`, error.response?.data || error.message);
+    return { success: false };
+  }
+}
+
+  /**
+   * Format interactive data for WhatsApp API
+   */
+private formatInteractiveData(nodeData: any, body: string, header: string, footer: string): any {
+  const type = nodeData.type || 'reply_buttons';
+  
+  console.log("🚀 FORMAT INTERACTIVE DATA");
+  console.log("Type:", type);
+  console.log("Full nodeData received:", JSON.stringify({
+    type: nodeData.type,
+    body: nodeData.body?.substring(0, 50),
+    actions: nodeData.actions?.map((a: any, i: number) => ({
+      index: i,
+      type: a.type,
+      title: a.title || 'MISSING TITLE',
+      titleExists: !!a.title,
+      titleLength: a.title?.length || 0,
+      url: a.url,
+      phoneNumber: a.phoneNumber,
+      payload: a.payload
+    }))
+  }, null, 2));
+  
+  // Force check EVERY field
+  if (nodeData.actions) {
+    nodeData.actions.forEach((action: any, index: number) => {
+      console.log(`🔍 Action ${index} deep inspection:`, {
+        id: action.id,
+        type: action.type,
+        title: action.title,
+        'title === "Open Link"': action.title === 'Open Link',
+        'title === "Call Us"': action.title === 'Call Us',
+        'title === "Button 1"': action.title === 'Button 1',
+        'title?.includes("Open")': action.title?.includes('Open'),
+        'title?.includes("Call")': action.title?.includes('Call'),
+        'title?.includes("Button")': action.title?.includes('Button'),
+        url: action.url,
+        phoneNumber: action.phoneNumber,
+        payload: action.payload,
+        'ALL KEYS': Object.keys(action)
+      });
+    });
+  }
+  
+  const allActions = nodeData.actions || [];
+  const replyActions = allActions.filter((action: any) => action.type === 'reply');
+  const urlActions = allActions.filter((action: any) => action.type === 'url');
+  const callActions = allActions.filter((action: any) => action.type === 'call');
+  
+  console.log(`[Automation] Action breakdown:`, {
+    total: allActions.length,
+    reply: replyActions.length,
+    url: urlActions.length,
+    call: callActions.length
+  });
+
+  // Helper function to get button text from various possible fields
+  const getButtonText = (action: any, index: number, defaultPrefix: string = 'Button'): string => {
+    console.log(`🔍 Getting button text for action:`, {
+      id: action.id,
+      type: action.type,
+      title: action.title,
+      'title exists': !!action.title,
+      'title string': typeof action.title,
+      'title value': action.title
+    });
+    
+    // Priority 1: Use user's custom title if provided and valid
+    if (action.title !== undefined && action.title !== null && action.title.toString().trim() !== '') {
+      const titleStr = action.title.toString();
+      console.log(`✅ Using user's custom title: "${titleStr}"`);
+      return titleStr.substring(0, 20);
+    }
+    
+    // Priority 2: For reply actions, use payload if no title
+    if (action.type === 'reply' && action.payload && action.payload.toString().trim() !== '') {
+      const payloadStr = action.payload.toString();
+      console.log(`⚠️ No custom title, using payload: "${payloadStr}"`);
+      return payloadStr.substring(0, 20);
+    }
+    
+    // Priority 3: For URL actions, use URL hostname
+    if (action.type === 'url' && action.url) {
+      try {
+        const urlObj = new URL(action.url);
+        const hostname = urlObj.hostname.replace('www.', '');
+        console.log(`⚠️ No custom title, using hostname: "${hostname}"`);
+        return hostname.substring(0, 20);
+      } catch {
+        console.log(`⚠️ No custom title, using default: "${defaultPrefix} ${index + 1}"`);
+        return `${defaultPrefix} ${index + 1}`;
+      }
+    }
+    
+    // Priority 4: For call actions, use phone number
+    if (action.type === 'call' && action.phoneNumber) {
+      const phoneStr = action.phoneNumber.toString();
+      console.log(`⚠️ No custom title, using phone: "${phoneStr}"`);
+      return phoneStr.substring(0, 20);
+    }
+    
+    // Final fallback with better debugging
+    console.log(`⚠️ No usable text found for action:`, {
+      actionType: action.type,
+      hasTitle: !!action.title,
+      hasPayload: !!action.payload,
+      hasUrl: !!action.url,
+      hasPhone: !!action.phoneNumber,
+      usingDefault: `${defaultPrefix} ${index + 1}`
+    });
+    return `${defaultPrefix} ${index + 1}`;
+  };
+  
+  switch (type) {
+    case 'reply_buttons':
+      // Reply buttons message - up to 3 REPLY buttons
+      if (replyActions.length > 0) {
+        const buttons = replyActions.slice(0, 3).map((action: any, index: number) => {
+          const buttonTitle = getButtonText(action, index, 'Button');
+          console.log(`[Automation] Button ${index + 1}: "${buttonTitle}" (ID: ${action.id})`);
+          
+          return {
+            type: "reply",
+            reply: {
+              id: `btn_${action.id || `button_${index}`}`,
+              title: buttonTitle
+            }
+          };
+        });
+        
+        console.log(`[Automation] Creating REPLY buttons:`, buttons.map((b: any) => b.reply.title));
+        
+        return {
+          type: "button",
+          header: header ? {
+            type: "text",
+            text: header.substring(0, 60)
+          } : undefined,
+          body: {
+            text: body.substring(0, 1024)
+          },
+          footer: footer ? {
+            text: footer.substring(0, 60)
+          } : undefined,
+          action: {
+            buttons: buttons
+          }
+        };
+      } else {
+        // No reply actions - shouldn't happen if UI is working correctly
+        console.warn(`[Automation] No reply actions found for reply_buttons type`);
+        
+        return {
+          type: "button",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            buttons: [{
+              type: "reply",
+              reply: {
+                id: "btn_default",
+                title: "OK"
+              }
+            }]
+          }
+        };
+      }
+      
+    case 'quick_replies':
+      // Quick replies - only REPLY type
+      if (replyActions.length > 0) {
+        const quickReplyButtons = replyActions.slice(0, 10).map((action: any, index: number) => {
+          const buttonTitle = getButtonText(action, index, 'Reply');
+          console.log(`[Automation] Quick Reply ${index + 1}: "${buttonTitle}"`);
+          
+          return {
+            type: "reply",
+            reply: {
+              id: `qr_${action.id || `reply_${index}`}`,
+              title: buttonTitle
+            }
+          };
+        });
+        
+        return {
+          type: "button",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            buttons: quickReplyButtons
+          }
+        };
+      } else {
+        console.warn(`[Automation] No reply actions found for quick_replies type`);
+        
+        return {
+          type: "button",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            buttons: [{
+              type: "reply",
+              reply: {
+                id: "qr_default",
+                title: "OK"
+              }
+            }]
+          }
+        };
+      }
+      
+    case 'list':
+      // List messages - include all actions as list items
+      if (allActions.length > 0) {
+        const listRows = allActions.slice(0, 10).map((action: any, index: number) => {
+          let description = '';
+          
+          if (action.type === 'url') {
+            description = `🔗 ${action.url?.substring(0, 70) || 'Open link'}`;
+          } else if (action.type === 'call') {
+            description = `📞 ${action.phoneNumber || 'Call'}`;
+          } else if (action.type === 'reply') {
+            description = action.payload?.substring(0, 72) || '';
+          }
+          
+          // Use the same getButtonText helper for list item titles
+          const rowTitle = getButtonText(action, index, 'Option');
+          console.log(`[Automation] List Row ${index + 1}: "${rowTitle}" (Type: ${action.type})`);
+          
+          return {
+            id: `list_${action.id || `option_${index}`}`,
+            title: rowTitle,
+            description: description
+          };
+        });
+        
+        return {
+          type: "list",
+          header: header ? {
+            type: "text",
+            text: header.substring(0, 60)
+          } : undefined,
+          body: {
+            text: body.substring(0, 1024)
+          },
+          footer: footer ? {
+            text: footer.substring(0, 60)
+          } : undefined,
+          action: {
+            button: nodeData.buttonText?.substring(0, 20) || "Options",
+            sections: [{
+              title: "Options",
+              rows: listRows
+            }]
+          }
+        };
+      } else {
+        console.warn(`[Automation] No actions found for list type`);
+        
+        return {
+          type: "list",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            button: "Options",
+            sections: [{
+              title: "Options",
+              rows: [{
+                id: "list_default",
+                title: "Default Option",
+                description: "No options configured"
+              }]
+            }]
+          }
+        };
+      }
+      
+    case 'url_button':
+      // Single URL button (CTA)
+      if (urlActions.length > 0) {
+        const urlAction = urlActions[0];
+        const buttonTitle = getButtonText(urlAction, 0, 'Open Link');
+        const buttonUrl = urlAction.url || "https://example.com";
+        
+        console.log(`[Automation] URL Button: "${buttonTitle}" -> ${buttonUrl}`);
+        
+        return {
+          type: "cta_url",
+          header: header ? {
+            type: "text",
+            text: header.substring(0, 60)
+          } : undefined,
+          body: {
+            text: body.substring(0, 1024)
+          },
+          footer: footer ? {
+            text: footer.substring(0, 60)
+          } : undefined,
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: buttonTitle,
+              url: buttonUrl
+            }
+          }
+        };
+      } else {
+        console.warn(`[Automation] No URL action found for url_button type`);
+        
+        return {
+          type: "cta_url",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: "Open Link",
+              url: "https://example.com"
+            }
+          }
+        };
+      }
+      
+    case 'call_button':
+      // Single Call button (CTA)
+      if (callActions.length > 0) {
+        const callAction = callActions[0];
+        const buttonTitle = getButtonText(callAction, 0, 'Call Us');
+        const phoneNumber = callAction.phoneNumber || "+1234567890";
+        
+        console.log(`[Automation] Call Button: "${buttonTitle}" -> ${phoneNumber}`);
+        
+        // Note: WhatsApp doesn't have a direct "cta_call" type
+        // We'll send as a regular text message with phone number
+        // Or use URL with tel: protocol
+        return {
+          type: "cta_url",
+          header: header ? {
+            type: "text",
+            text: header.substring(0, 60)
+          } : undefined,
+          body: {
+            text: body.substring(0, 1024)
+          },
+          footer: footer ? {
+            text: footer.substring(0, 60)
+          } : undefined,
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: buttonTitle,
+              url: `tel:${phoneNumber.replace(/\D/g, '')}`
+            }
+          }
+        };
+      } else {
+        console.warn(`[Automation] No call action found for call_button type`);
+        
+        return {
+          type: "cta_url",
+          body: {
+            text: body.substring(0, 1024)
+          },
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: "Call Us",
+              url: "tel:+1234567890"
+            }
+          }
+        };
+      }
+      
+    default:
+      console.warn(`[Automation] Unknown interactive type: ${type}, defaulting to button`);
+      
+      return {
+        type: "button",
+        body: {
+          text: body.substring(0, 1024)
+        },
+        action: {
+          buttons: [{
+            type: "reply",
+            reply: {
+              id: "btn_default",
+              title: "OK"
+            }
+          }]
+        }
+      };
+  }
+}
+
+  /**
+   * Continue execution from an interactive action
+   */
+  async continueFromInteractiveAction(
+    automationId: string,
+    contactId: string,
+    userId: string,
+    interactiveAction: {
+      nodeId: string;
+      actionId: string;
+      originalExecutionId: string;
+      messageId?: string;
+    }
+  ): Promise<{ success: boolean; executionId?: string; error?: string }> {
+    console.log(`[Automation] 🔄 Continuing execution from interactive action`);
+    console.log(`[Automation] Node: ${interactiveAction.nodeId}, Action: ${interactiveAction.actionId}`);
+
+    // First, get the automation flow data
+    const db = getDb();
+    const [automation] = await db.select({
+      id: automations.id,
+      name: automations.name,
+      flowData: automations.flowData,
+      userId: automations.userId
+    })
+      .from(automations)
+      .where(eq(automations.id, automationId))
+      .limit(1);
+
+    if (!automation) {
+      console.error(`[Automation] ❌ Automation not found: ${automationId}`);
+      return { success: false, error: 'Automation not found' };
+    }
+
+    // Get the flow data
+    const flowData = automation.flowData as any;
+    if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
+      console.error(`[Automation] ❌ Invalid flow data`);
+      return { success: false, error: 'Invalid flow data' };
+    }
+
+    // Find the interactive message node
+    const interactiveNode = flowData.nodes.find((n: any) => n.id === interactiveAction.nodeId);
+    if (!interactiveNode) {
+      console.error(`[Automation] ❌ Interactive message node not found: ${interactiveAction.nodeId}`);
+      return { success: false, error: 'Interactive message node not found' };
+    }
+
+    console.log(`[Automation] Found interactive node: ${interactiveNode.id}, edges: ${flowData.edges?.length || 0}`);
+
+    // Find edges connected FROM the interactive node
+    const edgesFromNode = flowData.edges.filter((edge: any) => edge.source === interactiveAction.nodeId);
+    console.log(`[Automation] Edges from interactive node:`, edgesFromNode.map((e: any) => ({
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      actionId: e.sourceHandle
+    })));
+
+    // Find the edge with sourceHandle matching the selected action
+    let selectedEdge = null;
+
+    // Try exact match first
+    selectedEdge = edgesFromNode.find((edge: any) =>
+      edge.sourceHandle === interactiveAction.actionId
+    );
+
+    // If not found, try matching by action ID pattern
+    if (!selectedEdge) {
+      console.log(`[Automation] No exact match for ${interactiveAction.actionId}, trying pattern match...`);
+
+      // Look for edges with sourceHandle containing the action ID
+      selectedEdge = edgesFromNode.find((edge: any) => {
+        if (!edge.sourceHandle) return false;
+
+        // Handle different edge ID patterns
+        const sourceHandle = edge.sourceHandle.toLowerCase();
+        const actionId = interactiveAction.actionId.toLowerCase();
+
+        return sourceHandle.includes(actionId) ||
+          sourceHandle.includes(`action-${actionId}`) ||
+          sourceHandle.includes(`action_${actionId}`);
+      });
+    }
+
+    if (!selectedEdge) {
+      console.error(`[Automation] ❌ No edge found for selected action: ${interactiveAction.actionId}`);
+      console.error(`[Automation] Available edges:`, edgesFromNode.map((e: any) => e.sourceHandle));
+      return { success: false, error: 'No branch found for selected action' };
+    }
+
+    console.log(`[Automation] ✅ Found edge for action:`, {
+      sourceHandle: selectedEdge.sourceHandle,
+      target: selectedEdge.target,
+      targetNodeType: flowData.nodes.find((n: any) => n.id === selectedEdge.target)?.type
+    });
+
+    // Create a new execution ID for the continuation
+    const continuationExecutionId = `exec-continue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Get user
+    const [user] = await db.select({
+      id: users.id,
+      email: users.email,
+      whatsappPhoneNumberId: users.whatsappPhoneNumberId,
+      whatsappAccessToken: users.whatsappAccessToken,
+    })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      console.error(`[Automation] ❌ User not found: ${userId}`);
+      return { success: false, error: 'User not found' };
+    }
+
+    // Get contact
+    const [contact] = await db.select({
+      id: contacts.id,
+      phone: contacts.phone,
+      name: contacts.name,
+      email: contacts.email,
+      tagIds: contacts.tagIds
+    })
+      .from(contacts)
+      .where(eq(contacts.id, contactId))
+      .limit(1);
+
+    if (!contact) {
+      console.error(`[Automation] ❌ Contact not found: ${contactId}`);
+      return { success: false, error: 'Contact not found' };
+    }
+
+    // Get conversation from the original message
+    let conversation = null;
+    if (interactiveAction.messageId) {
+      const [message] = await db.select({
+        conversationId: messages.conversationId
+      })
+        .from(messages)
+        .where(eq(messages.id, interactiveAction.messageId))
+        .limit(1);
+
+      if (message) {
+        const [convo] = await db.select()
+          .from(conversations)
+          .where(eq(conversations.id, message.conversationId))
+          .limit(1);
+        conversation = convo;
+      }
+    }
+
+    // Create execution context for continuation
+    const context: ExecutionContext = {
+      contactId: contact.id,
+      workflowId: automation.id,
+      executionId: continuationExecutionId,
+      currentData: {
+        contact,
+        user,
+        conversation,
+        triggerData: {
+          interactiveAction: interactiveAction,
+          isContinuation: true,
+        },
+        variables: {},
+        // Store the action info
+        interactiveAction: {
+          selectedActionId: interactiveAction.actionId,
+          originalNodeId: interactiveAction.nodeId,
+        }
+      },
+      userData: user
+    };
+
+    // Now execute starting from the TARGET node of the selected edge
+    const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
+    const edgeMap = new Map<string, any[]>();
+
+    flowData.edges.forEach((edge: any) => {
+      if (!edgeMap.has(edge.source)) {
+        edgeMap.set(edge.source, []);
+      }
+      edgeMap.get(edge.source)!.push(edge);
+    });
+
+    // Start execution from the TARGET node of the selected edge
+    let currentNode = nodeMap.get(selectedEdge.target);
+
+    if (!currentNode) {
+      console.error(`[Automation] ❌ Target node not found: ${selectedEdge.target}`);
+      return { success: false, error: 'Target node not found' };
+    }
+
+    console.log(`[Automation] 🚀 Starting continuation from node: ${currentNode.id} (${currentNode.type})`);
+
+    let executionCount = 0;
+    const maxExecutions = 50; // Safety limit for continuation
+    const nodeExecutions: any[] = [];
+    const visitedNodes = new Set<string>();
+
+    // Track that we came from an interactive action
+    visitedNodes.add(interactiveAction.nodeId);
+
+    // Execution loop for continuation
+    while (currentNode && executionCount < maxExecutions) {
+      executionCount++;
+
+      // Skip if already visited (prevents loops)
+      if (visitedNodes.has(currentNode.id)) {
+        console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, stopping continuation`);
+        break;
+      }
+
+      visitedNodes.add(currentNode.id);
+
+      console.log(`[Automation] ➡️ Processing continuation node: ${currentNode.id} (${currentNode.type})`);
+
+      const nodeStartTime = Date.now();
+      let nodeSuccess = false;
+      let nodeError = null;
+      let conditionResult = null;
+      let keywordResult = null;
+
+      try {
+        switch (currentNode.type) {
+          case 'textMessageNode':
+            await this.executeTextMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'mediaMessageNode':
+            await this.executeMediaMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'quickRepliesNode':
+            await this.executeQuickRepliesNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'keywordActionNode':
+            const keywordResponse = await this.executeKeywordActionNode(currentNode, context);
+            nodeSuccess = keywordResponse.success;
+            keywordResult = keywordResponse.matched;
+            console.log(`[Automation] Keyword check result: ${keywordResult ? 'MATCH' : 'NO MATCH'}`);
+            break;
+
+          case 'tagNode':
+            await this.executeTagNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'delayNode':
+            await this.executeDelayNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'conditionNode':
+            const conditionResponse = await this.executeConditionNode(currentNode, context);
+            nodeSuccess = conditionResponse.success;
+            conditionResult = conditionResponse.success;
+            console.log(`[Automation] Condition result: ${conditionResult}`);
+            break;
+
+          case 'listMessageNode':
+            console.log(`[Automation] 📋 Executing list message node`);
+            const listResponse = await this.executeListMessageNode(currentNode, context);
+            nodeSuccess = listResponse.success;
+
+            // If we're sending a NEW list message, check if we need to pause
+            if (listResponse.pendingSelection) {
+              // Store pending selection and pause execution
+              context.currentData.pendingListSelection = listResponse.pendingSelection;
+              console.log(`[Automation] List message sent, waiting for user selection`);
+
+              // Save execution record and PAUSE
+              nodeExecutions.push({
+                nodeId: currentNode.id,
+                nodeType: currentNode.type,
+                success: nodeSuccess,
+                error: nodeError,
+                duration: Date.now() - nodeStartTime,
+                timestamp: new Date(),
+                pendingSelection: true,
+                listMessageId: listResponse.sentMessageId,
+              });
+
+              // Save and pause execution
+              await this.saveExecutionRecord({
+                automationId,
+                contactId,
+                userId,
+                status: 'pending_selection',
+                triggerData: {
+                  interactiveAction: interactiveAction,
+                  isContinuation: true,
+                },
+                nodeExecutions,
+                executionData: context,
+                startedAt: new Date(),
+                completedAt: new Date(),
+              });
+
+              console.log(`[Automation] ⏸️ Execution paused, waiting for user selection`);
+              return { success: true, executionId: continuationExecutionId };
+            }
+            break;
+
+          case 'interactiveMessageNode':
+            console.log(`[Automation] 🎮 Executing interactive message node`);
+            const interactiveResponse = await this.executeInteractiveMessageNode(currentNode, context);
+            nodeSuccess = interactiveResponse.success;
+
+            // If we're sending an interactive message, check if we need to pause
+            if (interactiveResponse.pendingAction) {
+              // Store pending action and pause execution
+              context.currentData.pendingInteractiveAction = interactiveResponse.pendingAction;
+              console.log(`[Automation] Interactive message sent, waiting for user action`);
+
+              // Save execution record and PAUSE
+              nodeExecutions.push({
+                nodeId: currentNode.id,
+                nodeType: currentNode.type,
+                success: nodeSuccess,
+                error: nodeError,
+                duration: Date.now() - nodeStartTime,
+                timestamp: new Date(),
+                pendingAction: true,
+                interactiveMessageId: interactiveResponse.sentMessageId,
+              });
+
+              // Save and pause execution
+              await this.saveExecutionRecord({
+                automationId,
+                contactId,
+                userId,
+                status: 'pending_action',
+                triggerData: {
+                  interactiveAction: interactiveAction,
+                  isContinuation: true,
+                },
+                nodeExecutions,
+                executionData: context,
+                startedAt: new Date(),
+                completedAt: new Date(),
+              });
+
+              console.log(`[Automation] ⏸️ Execution paused, waiting for user action`);
+              return { success: true, executionId: continuationExecutionId };
+            }
+            break;
+          default:
+            console.log(`[Automation] ⚠️ Unknown node type in continuation: ${currentNode.type}`);
+            nodeSuccess = true;
+        }
+      } catch (error: any) {
+        nodeError = error.message;
+        console.error(`[Automation] ❌ Error in continuation node ${currentNode.id}:`, error);
+      }
+
+      nodeExecutions.push({
+        nodeId: currentNode.id,
+        nodeType: currentNode.type,
+        success: nodeSuccess,
+        error: nodeError,
+        duration: Date.now() - nodeStartTime,
+        timestamp: new Date(),
+        conditionResult,
+        keywordResult,
+      });
+
+      // Determine next node based on edges
+      const outgoingEdges = edgeMap.get(currentNode.id) || [];
+
+      if (outgoingEdges.length === 0) {
+        console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, continuation complete`);
+        break;
+      }
+
+      // Handle keyword action node branching
+      if (currentNode.type === 'keywordActionNode') {
+        const matchEdge = outgoingEdges.find(e => e.sourceHandle === 'match');
+        const noMatchEdge = outgoingEdges.find(e => e.sourceHandle === 'no-match');
+
+        let nextEdge;
+        if (keywordResult === true && matchEdge) {
+          nextEdge = matchEdge;
+          console.log(`[Automation] ↪️ Keyword MATCH, following match branch to ${matchEdge.target}`);
+        } else if (keywordResult === false && noMatchEdge) {
+          nextEdge = noMatchEdge;
+          console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
+        } else {
+          nextEdge = outgoingEdges[0];
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+        }
+
+        if (nextEdge) {
+          currentNode = nodeMap.get(nextEdge.target);
+          continue;
+        }
+      }
+
+      // Handle condition node branching
+      if (currentNode.type === 'conditionNode') {
+        const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
+        const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+
+        let nextEdge;
+        if (conditionResult === true && trueEdge) {
+          nextEdge = trueEdge;
+          console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
+        } else if (conditionResult === false && falseEdge) {
+          nextEdge = falseEdge;
+          console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
+        } else {
+          nextEdge = outgoingEdges[0];
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+        }
+
+        if (nextEdge) {
+          currentNode = nodeMap.get(nextEdge.target);
+          continue;
+        }
+      }
+
+      // For regular nodes, follow the first outgoing edge
+      if (outgoingEdges.length > 0) {
+        const nextEdge = outgoingEdges[0];
+        currentNode = nodeMap.get(nextEdge.target);
+      } else {
+        currentNode = null;
+      }
+    }
+
+    if (executionCount >= maxExecutions) {
+      console.warn(`[Automation] ⚠️ Continuation stopped: reached maximum execution limit (${maxExecutions} nodes)`);
+    }
+
+    // Save continuation execution record
+    await this.saveExecutionRecord({
+      automationId,
+      contactId,
+      userId,
+      status: 'completed',
+      triggerData: {
+        interactiveAction: interactiveAction,
+        isContinuation: true,
+      },
+      nodeExecutions: [
+        {
+          nodeId: interactiveAction.nodeId,
+          nodeType: 'interactiveMessageNode',
+          success: true,
+          duration: 0,
+          timestamp: new Date(),
+          interactiveAction: interactiveAction.actionId,
+        },
+        ...nodeExecutions
+      ],
+      executionData: context,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    console.log(`[Automation] ✅ Continuation completed: ${continuationExecutionId}`);
+    console.log(`[Automation] Processed ${executionCount} continuation nodes`);
+
+    return { success: true, executionId: continuationExecutionId };
+  }
+
+  /**
+   * Handle incoming interactive action from webhook
+   */
+  async handleInteractiveAction(
+    messageId: string,
+    actionId: string,
+    contactId: string,
+    userId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const db = getDb();
+
+      // Get the original message that this action is responding to
+      const [originalMessage] = await db.select()
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1);
+
+      if (!originalMessage) {
+        console.error(`[Automation] ❌ Original message not found: ${messageId}`);
+        return { success: false, error: 'Original message not found' };
+      }
+
+      // Check if this message is from an automation with interactive data
+      const metadata = originalMessage.metadata as any;
+      if (!metadata?.automation || !metadata?.automationId) {
+        console.log(`[Automation] Message is not from an automation`);
+        return { success: false, error: 'Not an automation message' };
+      }
+
+      const automationId = metadata.automationId;
+      const nodeId = metadata.nodeId;
+      const originalExecutionId = metadata.executionId;
+      const actionIds = metadata.actionIds || [];
+
+      console.log(`[Automation] Handling interactive action for automation:`, {
+        automationId,
+        nodeId,
+        actionId,
+        actionIds: actionIds.length,
+      });
+
+      // Find the matching action
+      const matchedAction = actionIds.find((action: any) => {
+        // Check for various ID formats
+        return action.id === actionId ||
+          `btn_${action.id}` === actionId ||
+          `qr_${action.id}` === actionId ||
+          `list_${action.id}` === actionId;
+      });
+
+      if (!matchedAction) {
+        console.warn(`[Automation] ⚠️ Action ${actionId} not found in action list`);
+        // Try to use the actionId directly
+      }
+
+      // Continue the automation execution
+      const result = await this.continueFromInteractiveAction(
+        automationId,
+        contactId,
+        userId,
+        {
+          nodeId: nodeId,
+          actionId: matchedAction?.id || actionId,
+          originalExecutionId: originalExecutionId,
+          messageId: messageId,
+        }
+      );
+
+      if (result.success) {
+        console.log(`[Automation] ✅ Automation continued from interactive action`);
+      } else {
+        console.error(`[Automation] ❌ Failed to continue automation: ${result.error}`);
+      }
+
+      return result;
+
+    } catch (error: any) {
+      console.error(`[Automation] ❌ Error handling interactive action:`, error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Execute text message node
+   */
+  private async executeTextMessageNode(node: any, context: ExecutionContext): Promise<void> {
+    const nodeData = node.data || {};
+    let message = nodeData.message || '';
+
+    console.log(`[Automation] 💬 Text message node: ${node.id}`);
+
+    if (message.includes('{{')) {
+      // Replace variables
+      const allVariables = VariableService.getAvailableVariables(
+        context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+        context.currentData.contact,
+        context.currentData.user
+      );
+
+      message = VariableService.replaceVariables(message, allVariables);
+      console.log(`[Automation] Personalized message: ${message}`);
+    }
+
+    if (message.trim()) {
+      await messageService.sendMessage({
+        contactId: context.contactId,
+        userId: context.userData.id,
+        conversationId: context.currentData.conversation?.id,
+        body: message,
+        direction: 'outgoing',
+        messageType: 'text',
+        metadata: {
+          automation: true,
+          automationId: context.workflowId,
+          automationName: 'Automation',
+          nodeId: node.id,
+          executionId: context.executionId,
+        },
+      });
+
+      console.log(`[Automation] ✅ Message sent successfully`);
     }
   }
 
@@ -442,6 +1706,9 @@ while (currentNode && executionCount < maxExecutions) {
     console.log(`[Automation] ✅ Media message sent successfully`);
   }
 
+  /**
+   * Execute quick replies node
+   */
   private async executeQuickRepliesNode(node: any, context: ExecutionContext): Promise<void> {
     const nodeData = node.data || {};
     const quickReplyId = nodeData.quickReplyId;
@@ -549,7 +1816,7 @@ while (currentNode && executionCount < maxExecutions) {
   }
 
   /**
-   * Execute tag node - FIXED array handling
+   * Execute tag node
    */
   private async executeTagNode(node: any, context: ExecutionContext): Promise<void> {
     const db = getDb();
@@ -711,29 +1978,10 @@ while (currentNode && executionCount < maxExecutions) {
       return;
     }
 
-    // FIX: Use proper array handling for the ANY operator
-    // Option 1: Convert to array literal format that PostgreSQL understands
-    const arrayLiteral = `{${validTagIds.map(id => `"${id}"`).join(',')}}`;
-
-    console.log(`[Automation] Array literal: ${arrayLiteral}`);
-
-    // Verify all tag IDs belong to the user using array contains operator
+    // Verify all tag IDs belong to the user
     let userTags;
 
-    // Option 1A: Using array contains with proper formatting
     try {
-      userTags = await db.select()
-        .from(tags)
-        .where(
-          and(
-            eq(tags.userId, userId),
-            sql`${tags.id} = ANY(ARRAY[${sql.join(validTagIds.map(id => sql`${id}`), sql`, `)}]::uuid[])`
-          )
-        );
-    } catch (error) {
-      console.warn('[Automation] Array method 1 failed, trying alternative...');
-
-      // Option 1B: Alternative method - simpler query
       userTags = await db.select()
         .from(tags)
         .where(
@@ -742,6 +1990,9 @@ while (currentNode && executionCount < maxExecutions) {
             sql`${tags.id} IN (${sql.join(validTagIds.map(id => sql`${id}`), sql`, `)})`
           )
         );
+    } catch (error) {
+      console.warn('[Automation] Array method failed, trying alternative...');
+      userTags = [];
     }
 
     const verifiedTagIds = userTags.map(tag => tag.id);
@@ -749,9 +2000,6 @@ while (currentNode && executionCount < maxExecutions) {
     if (verifiedTagIds.length !== validTagIds.length) {
       const missingIds = validTagIds.filter((id: string) => !verifiedTagIds.includes(id));
       console.warn(`[Automation] ⚠️ Some tags not found for user:`, missingIds);
-
-      // If some tags are missing, we'll only process the ones we found
-      console.log(`[Automation] Will process only ${verifiedTagIds.length} verified tags`);
     }
 
     if (verifiedTagIds.length === 0) {
@@ -900,52 +2148,6 @@ while (currentNode && executionCount < maxExecutions) {
 
     // Update context for subsequent nodes
     context.currentData.contact.tagIds = newTagIds;
-
-
-  }
-
-
-
-  /**
-   * Execute text message node
-   */
-  private async executeTextMessageNode(node: any, context: ExecutionContext): Promise<void> {
-    const nodeData = node.data || {};
-    let message = nodeData.message || '';
-
-    console.log(`[Automation] 💬 Text message node: ${node.id}`);
-
-    if (message.includes('{{')) {
-      // Replace variables
-      const allVariables = VariableService.getAvailableVariables(
-        context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
-        context.currentData.contact,
-        context.currentData.user
-      );
-
-      message = VariableService.replaceVariables(message, allVariables);
-      console.log(`[Automation] Personalized message: ${message}`);
-    }
-
-    if (message.trim()) {
-      await messageService.sendMessage({
-        contactId: context.contactId,
-        userId: context.userData.id,
-        conversationId: context.currentData.conversation?.id,
-        body: message,
-        direction: 'outgoing',
-        messageType: 'text',
-        metadata: {
-          automation: true,
-          automationId: context.workflowId,
-          automationName: 'Automation',
-          nodeId: node.id,
-          executionId: context.executionId,
-        },
-      });
-
-      console.log(`[Automation] ✅ Message sent successfully`);
-    }
   }
 
   /**
@@ -1060,6 +2262,214 @@ while (currentNode && executionCount < maxExecutions) {
   }
 
   /**
+   * Execute List Option Node
+   */
+  private async executeListMessageNode(node: any, context: ExecutionContext): Promise<{
+    success: boolean;
+    pendingSelection?: any;
+    sentMessageId?: string;
+  }> {
+    const nodeData = node.data || {};
+
+    console.log(`[Automation] 📋 List message node: ${node.id}`);
+    console.log(`[Automation] Sections: ${nodeData.sections?.length || 0}, Options: ${nodeData.sections?.reduce((total: number, sec: any) => total + (sec.rows?.length || 0), 0) || 0}`);
+
+    // Personalize message with variables
+    let personalizedBody = nodeData.body || '';
+    let personalizedHeader = nodeData.header || '';
+    let personalizedFooter = nodeData.footer || '';
+
+    if (personalizedBody.includes('{{') || personalizedHeader.includes('{{') || personalizedFooter.includes('{{')) {
+      const allVariables = VariableService.getAvailableVariables(
+        context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+        context.currentData.contact,
+        context.currentData.user
+      );
+
+      personalizedBody = VariableService.replaceVariables(personalizedBody, allVariables);
+      personalizedHeader = VariableService.replaceVariables(personalizedHeader, allVariables);
+      personalizedFooter = VariableService.replaceVariables(personalizedFooter, allVariables);
+
+      console.log(`[Automation] Personalized list message`);
+    }
+
+    // Format list data for WhatsApp API
+    const interactiveData = {
+      type: "list",
+      header: personalizedHeader ? {
+        type: "text",
+        text: personalizedHeader.substring(0, 60)
+      } : undefined,
+      body: {
+        text: personalizedBody.substring(0, 1024)
+      },
+      footer: personalizedFooter ? {
+        text: personalizedFooter.substring(0, 60)
+      } : undefined,
+      action: {
+        button: nodeData.buttonText?.substring(0, 20) || "Options",
+        sections: (nodeData.sections || []).map((section: any) => {
+          return {
+            title: section.title?.substring(0, 24) || "Section",
+            rows: (section.rows || []).map((row: any, index: number) => {
+              const rowId = `row_${row.id || `option_${Date.now()}_${index}`}`;
+
+              return {
+                id: rowId,
+                title: row.title?.substring(0, 24) || `Option ${index + 1}`,
+                description: row.description?.substring(0, 72)
+              };
+            }).slice(0, 10)
+          };
+        }).slice(0, 10)
+      }
+    };
+
+    console.log(`[Automation] Interactive data prepared:`, JSON.stringify(interactiveData, null, 2));
+
+    // Send via WhatsApp
+    try {
+      const result = await messageService.sendMessage({
+        contactId: context.contactId,
+        userId: context.userData.id,
+        conversationId: context.currentData.conversation?.id,
+        body: personalizedBody,
+        direction: 'outgoing',
+        messageType: 'interactive',
+        metadata: {
+          automation: true,
+          automationId: context.workflowId,
+          automationName: 'Automation',
+          nodeId: node.id,
+          executionId: context.executionId,
+          listData: interactiveData,
+          // Store row IDs for later selection tracking
+          rowIds: (nodeData.sections || []).flatMap((section: any) =>
+            (section.rows || []).map((row: any, index: number) => ({
+              originalId: row.id,
+              whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
+              title: row.title
+            }))
+          ),
+          isInteractiveList: true,
+        },
+      });
+
+      console.log(`[Automation] ✅ List message sent successfully`);
+
+      // Return pending selection to pause execution
+      return {
+        success: true,
+        pendingSelection: {
+          nodeId: node.id,
+          rowIds: (nodeData.sections || []).flatMap((section: any) =>
+            (section.rows || []).map((row: any, index: number) => ({
+              originalId: row.id,
+              whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
+              title: row.title
+            }))
+          ),
+          sentMessageId: result.message.id
+        },
+        sentMessageId: result.message.id
+      };
+
+    } catch (error: any) {
+      console.error(`[Automation] ❌ Error sending list message:`, error);
+      return { success: false };
+    }
+  }
+
+  /**
+   * Execute keyword action node
+   */
+  private async executeKeywordActionNode(node: any, context: ExecutionContext): Promise<{ success: boolean; matched: boolean }> {
+    const nodeData = node.data || {};
+    const keywords = nodeData.keywords || [];
+    const matchType = nodeData.matchType || 'contains';
+    const caseSensitive = nodeData.caseSensitive || false;
+    const matchAll = nodeData.matchAll || false;
+
+    console.log(`[Automation] 🔤 Keyword action node: ${node.id}`);
+    console.log(`[Automation] Keywords: ${keywords.length}, Match type: ${matchType}, Case: ${caseSensitive}, Logic: ${matchAll ? 'ALL' : 'ANY'}`);
+
+    if (keywords.length === 0) {
+      console.log(`[Automation] ⚠️ No keywords configured, skipping`);
+      return { success: true, matched: false };
+    }
+
+    // Get the last message from the contact
+    const db = getDb();
+    const lastMessage = await db.select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.contactId, context.contactId),
+          eq(messages.direction, 'incoming')
+        )
+      )
+      .orderBy(desc(messages.timestamp))
+      .limit(1);
+
+    if (lastMessage.length === 0) {
+      console.log(`[Automation] ⚠️ No incoming messages found for keyword check`);
+      return { success: true, matched: false };
+    }
+
+    const messageText = lastMessage[0].body || '';
+
+    // Use the same matching logic
+    const matched = this.evaluateKeywords(
+      messageText,
+      keywords,
+      matchType,
+      caseSensitive,
+      matchAll
+    );
+
+    console.log(`[Automation] Keyword check on message: "${messageText.substring(0, 50)}..."`);
+    console.log(`[Automation] Result: ${matched ? '✅ MATCH' : '❌ NO MATCH'}`);
+
+    return { success: true, matched };
+  }
+
+  /**
+   * Evaluate keywords against a message
+   */
+  private evaluateKeywords(
+    message: string,
+    keywords: string[],
+    matchType: string,
+    caseSensitive: boolean,
+    matchAll: boolean = false
+  ): boolean {
+    if (keywords.length === 0) return false;
+
+    const normalizedMessage = caseSensitive ? message : message.toLowerCase();
+
+    const matches = keywords.map(keyword => {
+      const normalizedKeyword = caseSensitive ? keyword : keyword.toLowerCase();
+
+      switch (matchType) {
+        case 'exact':
+          return normalizedMessage === normalizedKeyword;
+        case 'contains':
+          return normalizedMessage.includes(normalizedKeyword);
+        case 'startsWith':
+          return normalizedMessage.startsWith(normalizedKeyword);
+        case 'endsWith':
+          return normalizedMessage.endsWith(normalizedKeyword);
+        default:
+          return normalizedMessage.includes(normalizedKeyword);
+      }
+    });
+
+    return matchAll
+      ? matches.every(match => match === true)
+      : matches.some(match => match === true);
+  }
+
+  /**
    * Evaluate a single rule
    */
   private evaluateRule(rule: any, context: any): boolean {
@@ -1139,96 +2549,6 @@ while (currentNode && executionCount < maxExecutions) {
 
     return current;
   }
-
-  /**
-   * 
-    * Execute keyword action node
-  **/
-private async executeKeywordActionNode(node: any, context: ExecutionContext): Promise<{ success: boolean; matched: boolean }> {
-  const nodeData = node.data || {};
-  const keywords = nodeData.keywords || [];
-  const matchType = nodeData.matchType || 'contains';
-  const caseSensitive = nodeData.caseSensitive || false;
-  const matchAll = nodeData.matchAll || false;
-  
-  console.log(`[Automation] 🔤 Keyword action node: ${node.id}`);
-  console.log(`[Automation] Keywords: ${keywords.length}, Match type: ${matchType}, Case: ${caseSensitive}, Logic: ${matchAll ? 'ALL' : 'ANY'}`);
-  
-  if (keywords.length === 0) {
-    console.log(`[Automation] ⚠️ No keywords configured, skipping`);
-    return { success: true, matched: false };
-  }
-  
-  // Get the last message from the contact
-  const db = getDb();
-  const lastMessage = await db.select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.contactId, context.contactId),
-        eq(messages.direction, 'incoming')
-      )
-    )
-    .orderBy(desc(messages.timestamp))
-    .limit(1);
-  
-  if (lastMessage.length === 0) {
-    console.log(`[Automation] ⚠️ No incoming messages found for keyword check`);
-    return { success: true, matched: false };
-  }
-  
-  const messageText = lastMessage[0].body || '';
-  
-  // Use the same matching logic
-  const matched = this.evaluateKeywords(
-    messageText, 
-    keywords, 
-    matchType, 
-    caseSensitive, 
-    matchAll
-  );
-  
-  console.log(`[Automation] Keyword check on message: "${messageText.substring(0, 50)}..."`);
-  console.log(`[Automation] Result: ${matched ? '✅ MATCH' : '❌ NO MATCH'}`);
-  
-  return { success: true, matched };
-}
-
-/**
- * Evaluate keywords against a message
- */
-private evaluateKeywords(
-  message: string, 
-  keywords: string[], 
-  matchType: string, 
-  caseSensitive: boolean,
-  matchAll: boolean = false
-): boolean {
-  if (keywords.length === 0) return false;
-  
-  const normalizedMessage = caseSensitive ? message : message.toLowerCase();
-  
-  const matches = keywords.map(keyword => {
-    const normalizedKeyword = caseSensitive ? keyword : keyword.toLowerCase();
-    
-    switch (matchType) {
-      case 'exact':
-        return normalizedMessage === normalizedKeyword;
-      case 'contains':
-        return normalizedMessage.includes(normalizedKeyword);
-      case 'startsWith':
-        return normalizedMessage.startsWith(normalizedKeyword);
-      case 'endsWith':
-        return normalizedMessage.endsWith(normalizedKeyword);
-      default:
-        return normalizedMessage.includes(normalizedKeyword);
-    }
-  });
-  
-  return matchAll 
-    ? matches.every(match => match === true)
-    : matches.some(match => match === true);
-}
 
   /**
    * Parse comparison value (handle variables, dates, etc.)
@@ -1528,6 +2848,477 @@ private evaluateKeywords(
     triggerData?: any
   ): Promise<{ success: boolean; executionId?: string; error?: string }> {
     return this.executeWorkflow(automationId, contactId, userId, triggerData);
+  }
+
+  /**
+   * Continue execution from a list message selection
+   */
+  async continueFromListSelection(
+    automationId: string,
+    contactId: string,
+    userId: string,
+    listSelection: {
+      nodeId: string;
+      selectedRowId: string;
+      originalExecutionId: string;
+      messageId?: string;
+    }
+  ): Promise<{ success: boolean; executionId?: string; error?: string }> {
+    console.log(`[Automation] 🔄 Continuing execution from list selection`);
+    console.log(`[Automation] Node: ${listSelection.nodeId}, Row: ${listSelection.selectedRowId}`);
+
+    // First, get the automation flow data
+    const db = getDb();
+    const [automation] = await db.select({
+      id: automations.id,
+      name: automations.name,
+      flowData: automations.flowData,
+      userId: automations.userId
+    })
+      .from(automations)
+      .where(eq(automations.id, automationId))
+      .limit(1);
+
+    if (!automation) {
+      console.error(`[Automation] ❌ Automation not found: ${automationId}`);
+      return { success: false, error: 'Automation not found' };
+    }
+
+    // Get the flow data
+    const flowData = automation.flowData as any;
+    if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
+      console.error(`[Automation] ❌ Invalid flow data`);
+      return { success: false, error: 'Invalid flow data' };
+    }
+
+    // Find the list message node
+    const listNode = flowData.nodes.find((n: any) => n.id === listSelection.nodeId);
+    if (!listNode) {
+      console.error(`[Automation] ❌ List message node not found: ${listSelection.nodeId}`);
+      return { success: false, error: 'List message node not found' };
+    }
+
+    console.log(`[Automation] Found list node: ${listNode.id}, edges: ${flowData.edges?.length || 0}`);
+
+    // Find edges connected FROM the list node
+    const edgesFromListNode = flowData.edges.filter((edge: any) => edge.source === listSelection.nodeId);
+    console.log(`[Automation] Edges from list node:`, edgesFromListNode.map((e: any) => ({
+      sourceHandle: e.sourceHandle,
+      target: e.target,
+      rowId: e.sourceHandle
+    })));
+
+    // Find the edge with sourceHandle matching the selected row
+    let selectedEdge = null;
+
+    // Try exact match first
+    selectedEdge = edgesFromListNode.find((edge: any) =>
+      edge.sourceHandle === listSelection.selectedRowId
+    );
+
+    // If not found, try matching by row ID pattern
+    if (!selectedEdge) {
+      console.log(`[Automation] No exact match for ${listSelection.selectedRowId}, trying pattern match...`);
+
+      // Look for edges with sourceHandle containing the row ID
+      selectedEdge = edgesFromListNode.find((edge: any) => {
+        if (!edge.sourceHandle) return false;
+
+        // Handle different edge ID patterns
+        const sourceHandle = edge.sourceHandle.toLowerCase();
+        const rowId = listSelection.selectedRowId.toLowerCase();
+
+        return sourceHandle.includes(rowId) ||
+          sourceHandle.includes(`row-${rowId}`) ||
+          sourceHandle.includes(`row_${rowId}`);
+      });
+    }
+
+    if (!selectedEdge) {
+      console.error(`[Automation] ❌ No edge found for selected row: ${listSelection.selectedRowId}`);
+      console.error(`[Automation] Available edges:`, edgesFromListNode.map((e: any) => e.sourceHandle));
+      return { success: false, error: 'No branch found for selected option' };
+    }
+
+    console.log(`[Automation] ✅ Found edge for selection:`, {
+      sourceHandle: selectedEdge.sourceHandle,
+      target: selectedEdge.target,
+      targetNodeType: flowData.nodes.find((n: any) => n.id === selectedEdge.target)?.type
+    });
+
+    // Create a new execution ID for the continuation
+    const continuationExecutionId = `exec-continue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Get user
+    const [user] = await db.select({
+      id: users.id,
+      email: users.email,
+      whatsappPhoneNumberId: users.whatsappPhoneNumberId,
+      whatsappAccessToken: users.whatsappAccessToken,
+    })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      console.error(`[Automation] ❌ User not found: ${userId}`);
+      return { success: false, error: 'User not found' };
+    }
+
+    // Get contact
+    const [contact] = await db.select({
+      id: contacts.id,
+      phone: contacts.phone,
+      name: contacts.name,
+      email: contacts.email,
+      tagIds: contacts.tagIds
+    })
+      .from(contacts)
+      .where(eq(contacts.id, contactId))
+      .limit(1);
+
+    if (!contact) {
+      console.error(`[Automation] ❌ Contact not found: ${contactId}`);
+      return { success: false, error: 'Contact not found' };
+    }
+
+    // Get conversation from the original list message
+    let conversation = null;
+    if (listSelection.messageId) {
+      const [message] = await db.select({
+        conversationId: messages.conversationId
+      })
+        .from(messages)
+        .where(eq(messages.id, listSelection.messageId))
+        .limit(1);
+
+      if (message) {
+        const [convo] = await db.select()
+          .from(conversations)
+          .where(eq(conversations.id, message.conversationId))
+          .limit(1);
+        conversation = convo;
+      }
+    }
+
+    // Create execution context for continuation
+    const context: ExecutionContext = {
+      contactId: contact.id,
+      workflowId: automation.id,
+      executionId: continuationExecutionId,
+      currentData: {
+        contact,
+        user,
+        conversation,
+        triggerData: {
+          listSelection: listSelection,
+          isContinuation: true,
+        },
+        variables: {},
+        // Store the selection info
+        listSelection: {
+          selectedRowId: listSelection.selectedRowId,
+          selectedRowTitle: selectedEdge.sourceHandle,
+          originalNodeId: listSelection.nodeId,
+        }
+      },
+      userData: user
+    };
+
+    // Now execute starting from the TARGET node of the selected edge
+    const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
+    const edgeMap = new Map<string, any[]>();
+
+    flowData.edges.forEach((edge: any) => {
+      if (!edgeMap.has(edge.source)) {
+        edgeMap.set(edge.source, []);
+      }
+      edgeMap.get(edge.source)!.push(edge);
+    });
+
+    // Start execution from the TARGET node of the selected edge
+    let currentNode = nodeMap.get(selectedEdge.target);
+
+    if (!currentNode) {
+      console.error(`[Automation] ❌ Target node not found: ${selectedEdge.target}`);
+      return { success: false, error: 'Target node not found' };
+    }
+
+    console.log(`[Automation] 🚀 Starting continuation from node: ${currentNode.id} (${currentNode.type})`);
+
+    let executionCount = 0;
+    const maxExecutions = 50; // Safety limit for continuation
+    const nodeExecutions: any[] = [];
+    const visitedNodes = new Set<string>();
+
+    // Track that we came from a list selection
+    visitedNodes.add(listSelection.nodeId);
+
+    // Execution loop for continuation
+    while (currentNode && executionCount < maxExecutions) {
+      executionCount++;
+
+      // Skip if already visited (prevents loops)
+      if (visitedNodes.has(currentNode.id)) {
+        console.log(`[Automation] ⚠️ Already visited ${currentNode.id}, stopping continuation`);
+        break;
+      }
+
+      visitedNodes.add(currentNode.id);
+
+      console.log(`[Automation] ➡️ Processing continuation node: ${currentNode.id} (${currentNode.type})`);
+
+      const nodeStartTime = Date.now();
+      let nodeSuccess = false;
+      let nodeError = null;
+      let conditionResult = null;
+      let keywordResult = null;
+
+      try {
+        switch (currentNode.type) {
+          case 'textMessageNode':
+            await this.executeTextMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'mediaMessageNode':
+            await this.executeMediaMessageNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'quickRepliesNode':
+            await this.executeQuickRepliesNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'keywordActionNode':
+            const keywordResponse = await this.executeKeywordActionNode(currentNode, context);
+            nodeSuccess = keywordResponse.success;
+            keywordResult = keywordResponse.matched;
+            console.log(`[Automation] Keyword check result: ${keywordResult ? 'MATCH' : 'NO MATCH'}`);
+            break;
+
+          case 'tagNode':
+            await this.executeTagNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'delayNode':
+            await this.executeDelayNode(currentNode, context);
+            nodeSuccess = true;
+            break;
+
+          case 'conditionNode':
+            const conditionResponse = await this.executeConditionNode(currentNode, context);
+            nodeSuccess = conditionResponse.success;
+            conditionResult = conditionResponse.success;
+            console.log(`[Automation] Condition result: ${conditionResult}`);
+            break;
+
+          case 'listMessageNode':
+            console.log(`[Automation] 📋 Executing list message node`);
+            const listResponse = await this.executeListMessageNode(currentNode, context);
+            nodeSuccess = listResponse.success;
+
+            // If we're sending a NEW list message, check if we need to pause
+            if (listResponse.pendingSelection) {
+              // Store pending selection and pause execution
+              context.currentData.pendingListSelection = listResponse.pendingSelection;
+              console.log(`[Automation] List message sent, waiting for user selection`);
+
+              // Save execution record and PAUSE
+              nodeExecutions.push({
+                nodeId: currentNode.id,
+                nodeType: currentNode.type,
+                success: nodeSuccess,
+                error: nodeError,
+                duration: Date.now() - nodeStartTime,
+                timestamp: new Date(),
+                pendingSelection: true,
+                listMessageId: listResponse.sentMessageId,
+              });
+
+              // Save and pause execution
+              await this.saveExecutionRecord({
+                automationId,
+                contactId,
+                userId,
+                status: 'pending_selection',
+                triggerData: {
+                  listSelection: listSelection,
+                  isContinuation: true,
+                },
+                nodeExecutions,
+                executionData: context,
+                startedAt: new Date(),
+                completedAt: new Date(),
+              });
+
+              console.log(`[Automation] ⏸️ Execution paused, waiting for user selection`);
+              return { success: true, executionId: continuationExecutionId };
+            }
+            break;
+
+          case 'interactiveMessageNode':
+            console.log(`[Automation] 🎮 Executing interactive message node`);
+            const interactiveResponse = await this.executeInteractiveMessageNode(currentNode, context);
+            nodeSuccess = interactiveResponse.success;
+
+            // If we're sending an interactive message, check if we need to pause
+            if (interactiveResponse.pendingAction) {
+              // Store pending action and pause execution
+              context.currentData.pendingInteractiveAction = interactiveResponse.pendingAction;
+              console.log(`[Automation] Interactive message sent, waiting for user action`);
+
+              // Save execution record and PAUSE
+              nodeExecutions.push({
+                nodeId: currentNode.id,
+                nodeType: currentNode.type,
+                success: nodeSuccess,
+                error: nodeError,
+                duration: Date.now() - nodeStartTime,
+                timestamp: new Date(),
+                pendingAction: true,
+                interactiveMessageId: interactiveResponse.sentMessageId,
+              });
+
+              // Save and pause execution
+              await this.saveExecutionRecord({
+                automationId,
+                contactId,
+                userId,
+                status: 'pending_action',
+                triggerData: {
+                  listSelection: listSelection,
+                  isContinuation: true,
+                },
+                nodeExecutions,
+                executionData: context,
+                startedAt: new Date(),
+                completedAt: new Date(),
+              });
+
+              console.log(`[Automation] ⏸️ Execution paused, waiting for user action`);
+              return { success: true, executionId: continuationExecutionId };
+            }
+            break;
+          default:
+            console.log(`[Automation] ⚠️ Unknown node type in continuation: ${currentNode.type}`);
+            nodeSuccess = true;
+        }
+      } catch (error: any) {
+        nodeError = error.message;
+        console.error(`[Automation] ❌ Error in continuation node ${currentNode.id}:`, error);
+      }
+
+      nodeExecutions.push({
+        nodeId: currentNode.id,
+        nodeType: currentNode.type,
+        success: nodeSuccess,
+        error: nodeError,
+        duration: Date.now() - nodeStartTime,
+        timestamp: new Date(),
+        conditionResult,
+        keywordResult,
+      });
+
+      // Determine next node based on edges
+      const outgoingEdges = edgeMap.get(currentNode.id) || [];
+
+      if (outgoingEdges.length === 0) {
+        console.log(`[Automation] 🏁 No outgoing edges from ${currentNode.id}, continuation complete`);
+        break;
+      }
+
+      // Handle keyword action node branching
+      if (currentNode.type === 'keywordActionNode') {
+        const matchEdge = outgoingEdges.find(e => e.sourceHandle === 'match');
+        const noMatchEdge = outgoingEdges.find(e => e.sourceHandle === 'no-match');
+
+        let nextEdge;
+        if (keywordResult === true && matchEdge) {
+          nextEdge = matchEdge;
+          console.log(`[Automation] ↪️ Keyword MATCH, following match branch to ${matchEdge.target}`);
+        } else if (keywordResult === false && noMatchEdge) {
+          nextEdge = noMatchEdge;
+          console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
+        } else {
+          nextEdge = outgoingEdges[0];
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+        }
+
+        if (nextEdge) {
+          currentNode = nodeMap.get(nextEdge.target);
+          continue;
+        }
+      }
+
+      // Handle condition node branching
+      if (currentNode.type === 'conditionNode') {
+        const trueEdge = outgoingEdges.find(e => e.sourceHandle === 'true');
+        const falseEdge = outgoingEdges.find(e => e.sourceHandle === 'false');
+
+        let nextEdge;
+        if (conditionResult === true && trueEdge) {
+          nextEdge = trueEdge;
+          console.log(`[Automation] ↪️ Condition TRUE, following true branch to ${trueEdge.target}`);
+        } else if (conditionResult === false && falseEdge) {
+          nextEdge = falseEdge;
+          console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
+        } else {
+          nextEdge = outgoingEdges[0];
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+        }
+
+        if (nextEdge) {
+          currentNode = nodeMap.get(nextEdge.target);
+          continue;
+        }
+      }
+
+      // For regular nodes, follow the first outgoing edge
+      if (outgoingEdges.length > 0) {
+        const nextEdge = outgoingEdges[0];
+        currentNode = nodeMap.get(nextEdge.target);
+      } else {
+        currentNode = null;
+      }
+    }
+
+    if (executionCount >= maxExecutions) {
+      console.warn(`[Automation] ⚠️ Continuation stopped: reached maximum execution limit (${maxExecutions} nodes)`);
+    }
+
+    // Save continuation execution record
+    await this.saveExecutionRecord({
+      automationId,
+      contactId,
+      userId,
+      status: 'completed',
+      triggerData: {
+        listSelection: listSelection,
+        isContinuation: true,
+      },
+      nodeExecutions: [
+        {
+          nodeId: listSelection.nodeId,
+          nodeType: 'listMessageNode',
+          success: true,
+          duration: 0,
+          timestamp: new Date(),
+          listSelection: listSelection.selectedRowId,
+        },
+        ...nodeExecutions
+      ],
+      executionData: context,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    console.log(`[Automation] ✅ Continuation completed: ${continuationExecutionId}`);
+    console.log(`[Automation] Processed ${executionCount} continuation nodes`);
+
+    return { success: true, executionId: continuationExecutionId };
   }
 
   /**

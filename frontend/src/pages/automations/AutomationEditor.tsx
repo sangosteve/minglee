@@ -15,7 +15,6 @@ import {
   MarkerType,
   useReactFlow,
   ReactFlowInstance,
-  EdgeSelectionChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -38,6 +37,7 @@ import {
   Cog6ToothIcon,
   ArrowPathIcon,
   PaperClipIcon,
+  ChatBubbleLeftEllipsisIcon,
 } from "@heroicons/react/24/outline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,9 @@ import QuickRepliesPanel from "@/components/automations/panels/QuickRepliesPanel
 import { KeyboardIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import KeywordActionPanel from "@/components/automations/panels/KeywordActionPanel";
+import DelayPanel from "@/components/automations/panels/DelayPanel";
+import ListMessagePanel from "@/components/automations/panels/ListMessagePanel";
+import InteractiveMessagePanel from "@/components/automations/panels/InteractiveMessagePanel";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -92,7 +95,7 @@ function AutomationEditorInner() {
   const [nodeId, setNodeId] = useState(2);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null); // Add selected edge state
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [expandedSections, setExpandedSections] = useState({
     messages: true,
     logic: true,
@@ -244,7 +247,7 @@ function AutomationEditorInner() {
 
       setNodes((nds) => nds.filter((node) => node.id !== nodeId));
       setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
-      
+
       // Clear selection if the selected node was deleted
       if (selectedNode && selectedNode.id === nodeId) {
         setSelectedNode(null);
@@ -257,12 +260,12 @@ function AutomationEditorInner() {
   const deleteEdge = useCallback(
     (edgeId: string) => {
       setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
-      
+
       // Clear selection if the selected edge was deleted
       if (selectedEdge && selectedEdge.id === edgeId) {
         setSelectedEdge(null);
       }
-      
+
       toast({
         title: "Connection removed",
         description: "The connection between nodes has been removed",
@@ -281,16 +284,36 @@ function AutomationEditorInner() {
   // Update node function
   const updateNode = useCallback(
     (nodeId: string, data: any) => {
+      console.log('🔄 Updating node:', nodeId, 'with data:', data);
+      
       setNodes((nds) =>
         nds.map((node) => {
           if (node.id === nodeId) {
-            return { ...node, data: { ...node.data, ...data } };
+            console.log('📝 Found node to update:', node.type);
+            
+            // Create a new data object, preserving existing properties
+            const newData = { ...node.data, ...data };
+            
+            return { 
+              ...node, 
+              data: newData 
+            };
           }
           return node;
         }),
       );
+      
+      // Also update the selectedNode state if it's the same node
+      if (selectedNode && selectedNode.id === nodeId) {
+        setSelectedNode(prev => {
+          if (prev) {
+            return { ...prev, data: { ...prev.data, ...data } };
+          }
+          return prev;
+        });
+      }
     },
-    [setNodes],
+    [setNodes, selectedNode],
   );
 
   // Handle connections
@@ -311,7 +334,7 @@ function AutomationEditorInner() {
   // Handle edge click
   const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     setSelectedEdge(edge);
-    setSelectedNode(null); // Clear node selection when edge is selected
+    setSelectedNode(null);
   }, []);
 
   // Handle pane click (clear selections)
@@ -352,7 +375,6 @@ function AutomationEditorInner() {
       triggerNode: { triggerType: "new_conversation", config: {} },
       textMessageNode: { message: "" },
       quickRepliesNode: { quickReplyId: null, quickReply: null },
-      listMessageNode: { header: "", body: "", footer: "", buttonText: "Options", sections: [] },
       conditionNode: { rules: [] },
       delayNode: { duration: 0, unit: "minutes" },
       tagNode: { action: "add", tagNames: [] },
@@ -362,6 +384,18 @@ function AutomationEditorInner() {
         matchType: "contains",
         caseSensitive: false,
         matchAll: false
+      },
+      listMessageNode: {
+        header: "",
+        body: "",
+        footer: "",
+        buttonText: "Options",
+        sections: []
+      },
+      interactiveMessageNode: {
+        type: 'buttons',
+        body: '',
+        actions: []
       },
     };
 
@@ -389,6 +423,7 @@ function AutomationEditorInner() {
       textMessageNode: `Send Message`,
       quickRepliesNode: `Send Quick Reply`,
       listMessageNode: `List Message`,
+      interactiveMessageNode: `Interactive Message`,
       conditionNode: `Condition`,
       delayNode: `Delay`,
       tagNode: `Tag`,
@@ -431,6 +466,7 @@ function AutomationEditorInner() {
       textMessageNode: `Send Message ${nodeId}`,
       quickRepliesNode: `Quick Replies ${nodeId}`,
       listMessageNode: `List Message ${nodeId}`,
+      interactiveMessageNode: `Interactive Message ${nodeId}`,
       conditionNode: `Condition ${nodeId}`,
       delayNode: `Delay ${nodeId}`,
       tagNode: `Tag ${nodeId}`,
@@ -465,7 +501,7 @@ function AutomationEditorInner() {
     if (connectionPopup.show) {
       document.addEventListener("mousedown", handleClickOutside);
     }
-    
+
     document.addEventListener("keydown", handleEscape);
 
     return () => {
@@ -476,9 +512,10 @@ function AutomationEditorInner() {
 
   // Handle node click
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+    console.log('🖱️ Node clicked:', node.type, node.id);
     if (node.type !== "triggerNode") {
       setSelectedNode(node);
-      setSelectedEdge(null); // Clear edge selection when node is selected
+      setSelectedEdge(null);
     }
   }, []);
 
@@ -560,72 +597,28 @@ function AutomationEditorInner() {
             }
           });
 
-          // Ensure message nodes have their message saved
-          if (node.type === 'textMessageNode') {
-            // Make sure message is included
-            if (node.data.message !== undefined) {
-              cleanData.message = node.data.message;
-            }
-
-            // Make sure label is included
-            if (node.data.label !== undefined) {
-              cleanData.label = node.data.label;
-            }
-
-            // Include any other important fields
-            if (node.data.usedVariables !== undefined) {
-              try {
-                cleanData.usedVariables = JSON.parse(JSON.stringify(node.data.usedVariables));
-              } catch {
-                cleanData.usedVariables = [];
+          // Special handling for different node types
+          if (node.type === 'interactiveMessageNode') {
+            // Make sure all interactive message fields are included
+            const interactiveFields = ['type', 'header', 'body', 'footer', 'actions'];
+            interactiveFields.forEach(field => {
+              if (node.data[field] !== undefined) {
+                try {
+                  if (field === 'actions' || field === 'header') {
+                    cleanData[field] = JSON.parse(JSON.stringify(node.data[field] || []));
+                  } else {
+                    cleanData[field] = node.data[field];
+                  }
+                } catch {
+                  cleanData[field] = field === 'actions' ? [] : '';
+                }
               }
-            }
-
-            if (node.data.hasVariables !== undefined) {
-              cleanData.hasVariables = node.data.hasVariables;
-            }
+            });
           }
 
-          if (node.type === 'quickRepliesNode') {
-            // Make sure quickReplyId is included
-            if (node.data.quickReplyId !== undefined) {
-              cleanData.quickReplyId = node.data.quickReplyId;
-            }
-
-            // Include quickReply object but clean it
-            if (node.data.quickReply && typeof node.data.quickReply === 'object') {
-              try {
-                cleanData.quickReply = {
-                  id: node.data.quickReply.id,
-                  name: node.data.quickReply.name,
-                  message: node.data.quickReply.message,
-                  topics: node.data.quickReply.topics,
-                  mediaAttachmentIds: node.data.quickReply.mediaAttachmentIds,
-                  isActive: node.data.quickReply.isActive,
-                };
-              } catch {
-                cleanData.quickReply = null;
-              }
-            }
-
-            // Make sure label is included
-            if (node.data.label !== undefined) {
-              cleanData.label = node.data.label;
-            }
-          }
-
-          // For trigger nodes, ensure trigger config is saved
-          if (node.type === 'triggerNode') {
-            if (node.data.triggerType !== undefined) {
-              cleanData.triggerType = node.data.triggerType;
-            }
-            if (node.data.config !== undefined) {
-              try {
-                cleanData.config = JSON.parse(JSON.stringify(node.data.config));
-              } catch {
-                cleanData.config = {};
-              }
-            }
+          // Ensure label is included
+          if (node.data.label !== undefined) {
+            cleanData.label = node.data.label;
           }
 
           // Only add data if we have properties
@@ -662,9 +655,7 @@ function AutomationEditorInner() {
         },
       };
 
-      // Debug: Log the cleaned data
       console.log("Saving workflow with nodes:", JSON.stringify(cleanNodes, null, 2));
-      console.log("Checking trigger nodes:", cleanNodes.filter(n => n.type === 'triggerNode'));
 
       const result = await updateAutomationMutation.mutateAsync({
         id: id!,
@@ -899,6 +890,20 @@ function AutomationEditorInner() {
                           Quick Replies
                         </button>
                         <button
+                          onClick={() => addNode("listMessageNode")}
+                          className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
+                        >
+                          <Squares2X2Icon className="h-4 w-4 text-green-500" />
+                          List Message
+                        </button>
+                        <button
+                          onClick={() => addNode("interactiveMessageNode")}
+                          className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
+                        >
+                          <ChatBubbleLeftEllipsisIcon className="h-4 w-4 text-purple-500" />
+                          Interactive Message
+                        </button>
+                        <button
                           onClick={() => addNode("keywordActionNode")}
                           className="w-full flex items-center gap-3 text-sm px-3 py-2 rounded-md transition-colors hover:bg-accent text-muted-foreground hover:text-foreground"
                         >
@@ -990,7 +995,7 @@ function AutomationEditorInner() {
               nodes={nodes}
               edges={edges.map(edge => ({
                 ...edge,
-                style: selectedEdge?.id === edge.id 
+                style: selectedEdge?.id === edge.id
                   ? { ...edge.style, ...selectedEdgeStyle }
                   : edge.style,
               }))}
@@ -1000,6 +1005,7 @@ function AutomationEditorInner() {
               onConnectEnd={onConnectEnd}
               onEdgeClick={onEdgeClick}
               onPaneClick={onPaneClick}
+              onNodeClick={onNodeClick}
               nodeTypes={{
                 ...nodeTypes,
                 triggerNode: (props) => {
@@ -1104,9 +1110,63 @@ function AutomationEditorInner() {
                     />
                   );
                 },
+                delayNode: (props) => {
+                  const DelayNodeComponent = nodeTypes.delayNode;
+                  return (
+                    <DelayNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                listMessageNode: (props) => {
+                  const ListMessageNodeComponent = nodeTypes.listMessageNode;
+                  return (
+                    <ListMessageNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          console.log('ListMessageNode clicked:', nodeId);
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            console.log('Setting selected node:', node.type, node.id);
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
+                interactiveMessageNode: (props) => {
+                  const InteractiveMessageNodeComponent = nodeTypes.interactiveMessageNode;
+                  return (
+                    <InteractiveMessageNodeComponent
+                      {...props}
+                      data={{
+                        ...props.data,
+                        onSelect: (nodeId: string) => {
+                          console.log('InteractiveMessageNode clicked:', nodeId);
+                          const node = nodes.find(n => n.id === nodeId);
+                          if (node) {
+                            console.log('Setting selected node:', node.type, node.id);
+                            setSelectedNode(node);
+                          }
+                        },
+                      }}
+                    />
+                  );
+                },
               }}
               defaultEdgeOptions={defaultEdgeOptions}
-              onNodeClick={onNodeClick}
               onInit={setReactFlowInstance}
               proOptions={{ hideAttribution: true }}
               fitView
@@ -1169,6 +1229,20 @@ function AutomationEditorInner() {
                         Quick Replies
                       </button>
                       <button
+                        onClick={() => handleCreateNode("listMessageNode")}
+                        className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <Squares2X2Icon className="h-4 w-4 text-green-500" />
+                        List Message
+                      </button>
+                      <button
+                        onClick={() => handleCreateNode("interactiveMessageNode")}
+                        className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <ChatBubbleLeftEllipsisIcon className="h-4 w-4 text-purple-500" />
+                        Interactive Message
+                      </button>
+                      <button
                         onClick={() => handleCreateNode("keywordActionNode")}
                         className="w-full flex items-center gap-3 text-sm px-8 py-2 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                       >
@@ -1212,78 +1286,114 @@ function AutomationEditorInner() {
           </div>
 
           {/* Right Panel for Node Configuration */}
-          {selectedNode && selectedNode.type === 'tagNode' ? (
-            <TagPanel
-              node={selectedNode}
-              onClose={closePanel}
-              onUpdate={updateNode}
-            />
-          ) : selectedNode && selectedNode.type === 'triggerNode' ? (
-            <TriggerPanel
-              node={selectedNode}
-              onClose={closePanel}
-              onUpdate={updateNode}
-            />
-          ) : selectedNode && selectedNode.type === 'textMessageNode' ? (
-            <TextMessagePanel
-              node={selectedNode}
-              onClose={closePanel}
-              onUpdate={updateNode}
-            />
-          ) : selectedNode && selectedNode.type === 'mediaMessageNode' ? (
-            <MediaMessagePanel
-              node={selectedNode}
-              onClose={closePanel}
-              onUpdate={updateNode}
-            />
-          ) : selectedNode && selectedNode.type === 'quickRepliesNode' ? (
-            <QuickRepliesPanel
-              node={selectedNode}
-              onClose={closePanel}
-              onUpdate={updateNode}
-            />) : selectedNode && selectedNode.type === 'conditionNode' ? (
-              <ConditionPanel
-                node={selectedNode}
-                onClose={closePanel}
-                onUpdate={updateNode}
-              />
-            ) : selectedNode && selectedNode.type === 'keywordActionNode' ? (
-              <KeywordActionPanel
-                node={selectedNode}
-                onClose={closePanel}
-                onUpdate={updateNode}
-              />
-            ) : selectedNode && (
-              <div className="w-96 bg-card border-l border-border flex flex-col shadow-lg">
-                <div className="p-4 border-b border-border flex items-center justify-between">
-                  <h3 className="font-semibold text-foreground">
-                    Configure {selectedNode.type?.replace('Node', '').replace(/([A-Z])/g, ' $1').trim()}
-                  </h3>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closePanel}>
-                    <XMarkIcon className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-2 block">
-                        Node Label
-                      </label>
-                      <Input
-                        value={selectedNode.data?.label || ""}
-                        onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
-                        placeholder="Enter node label..."
-                      />
-                    </div>
-
-                    {/* Node-specific configuration would go here */}
-                    <div className="text-sm text-muted-foreground">
-                      Configure this {selectedNode.type?.replace('Node', '')} node...
+          {selectedNode && (
+            <>
+              {selectedNode.type === 'tagNode' && (
+                <TagPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'triggerNode' && (
+                <TriggerPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'textMessageNode' && (
+                <TextMessagePanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'mediaMessageNode' && (
+                <MediaMessagePanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'quickRepliesNode' && (
+                <QuickRepliesPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'conditionNode' && (
+                <ConditionPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'keywordActionNode' && (
+                <KeywordActionPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'delayNode' && (
+                <DelayPanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'listMessageNode' && (
+                <ListMessagePanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {selectedNode.type === 'interactiveMessageNode' && (
+                <InteractiveMessagePanel
+                  node={selectedNode}
+                  onClose={closePanel}
+                  onUpdate={updateNode}
+                />
+              )}
+              {![
+                'tagNode', 'triggerNode', 'textMessageNode', 
+                'mediaMessageNode', 'quickRepliesNode', 'conditionNode',
+                'keywordActionNode', 'delayNode', 'listMessageNode',
+                'interactiveMessageNode'
+              ].includes(selectedNode.type) && (
+                <div className="w-96 bg-card border-l border-border flex flex-col shadow-lg">
+                  <div className="p-4 border-b border-border flex items-center justify-between">
+                    <h3 className="font-semibold text-foreground">
+                      Configure {selectedNode.type?.replace('Node', '').replace(/([A-Z])/g, ' $1').trim()}
+                    </h3>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={closePanel}>
+                      <XMarkIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-sm font-medium text-foreground mb-2 block">
+                          Node Label
+                        </label>
+                        <Input
+                          value={selectedNode.data?.label || ""}
+                          onChange={(e) => updateNode(selectedNode.id, { label: e.target.value })}
+                          placeholder="Enter node label..."
+                        />
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Configure this {selectedNode.type?.replace('Node', '')} node...
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </>
+          )}
         </div>
       </div>
     </MainLayout>
