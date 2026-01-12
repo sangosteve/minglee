@@ -4,9 +4,33 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export const AuthInterceptor = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, accessToken, initializeAuth } = useAuthStore();
+  const { isAuthenticated, accessToken, initializeAuth, isInitialized } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Initialize auth on mount
+  useEffect(() => {
+    initializeAuth();
+  }, [initializeAuth]);
+
+  // Redirect logic based on auth state
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const isPublicRoute = ['/login', '/signup', '/forgot-password'].includes(location.pathname);
+    const isAuthRoute = location.pathname === '/logout' || isPublicRoute;
+
+    if (isAuthenticated && isPublicRoute) {
+      // If authenticated and trying to access login/signup, redirect to dashboard
+      navigate('/dashboard', { replace: true });
+    } else if (!isAuthenticated && !isAuthRoute && location.pathname !== '/teams/invitation') {
+      // If not authenticated and trying to access protected route, redirect to login
+      navigate('/login', { 
+        replace: true,
+        state: { from: location.pathname }
+      });
+    }
+  }, [isAuthenticated, location.pathname, navigate, isInitialized]);
 
   // Check token expiration periodically
   useEffect(() => {
@@ -37,18 +61,15 @@ export const AuthInterceptor = ({ children }: { children: React.ReactNode }) => 
     };
 
     // Check immediately
-    checkTokenExpiration();
+    if (isAuthenticated) {
+      checkTokenExpiration();
+    }
 
     // Set up interval to check every minute
     const interval = setInterval(checkTokenExpiration, 60 * 1000);
 
     return () => clearInterval(interval);
   }, [accessToken, isAuthenticated, navigate, location]);
-
-  // Initialize auth on mount
-  useEffect(() => {
-    initializeAuth();
-  }, [initializeAuth]);
 
   // Listen for storage events (for cross-tab sync)
   useEffect(() => {

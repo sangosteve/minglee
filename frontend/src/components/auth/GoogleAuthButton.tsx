@@ -1,3 +1,4 @@
+// frontend/src/components/auth/GoogleAuthButton.tsx
 import { Button } from "@/components/ui/button";
 import { useGoogleLogin } from '@react-oauth/google';
 import { useAuthStore } from "@/stores/auth.store";
@@ -28,7 +29,7 @@ export function GoogleAuthButton({
       try {
         await googleLogin(tokenResponse.access_token);
         toast.success("Successfully authenticated with Google!");
-        navigate("/");
+        navigate("/dashboard", { replace: true }); // Fixed: redirect to dashboard
         onSuccess?.();
       } catch (error: any) {
         console.error('Google auth error:', error);

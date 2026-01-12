@@ -25,7 +25,6 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthInterceptor } from "./components/auth/AuthInterceptor";
 import { TagsProvider } from "./components/tags/TagsProvider";
 import Settings from "./pages/Settings";
-// Add these imports to your existing imports:
 import AutomationBuilder from "./pages/automations/AutomationBuilder";
 import AutomationEditor from "./pages/automations/AutomationEditor";
 import { TeamInvitationPage } from "./pages/TeamInvitationPage";
@@ -50,7 +49,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: window.location.pathname }} />;
   }
   
   return <>{children}</>;
@@ -71,9 +70,9 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
     );
   }
   
-  // Redirect to home if already authenticated
+  // Redirect to dashboard if already authenticated
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   
   return <>{children}</>;
@@ -100,17 +99,18 @@ const AppContent = () => {
       } />
       <Route path="/logout" element={<Logout />} />
 
-      {/* Protected Routes */}
+      {/* Root redirect - if user goes to "/", redirect to dashboard */}
       <Route path="/" element={
         <ProtectedRoute>
-          <Index />
+          <Navigate to="/dashboard" replace />
         </ProtectedRoute>
       } />
 
-        <Route path="/dashboard" element={
+      {/* Dashboard Route */}
+      <Route path="/dashboard" element={
         <ProtectedRoute>
           <MainLayout title="Dashboard">
-            <Dashboard/>
+            <Dashboard />
           </MainLayout>
         </ProtectedRoute>
       } />
@@ -209,7 +209,7 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const { initializeAuth, isInitialized } = useAuthStore();
+  const { initializeAuth } = useAuthStore();
   const [isAppReady, setIsAppReady] = useState(false);
 
   // Initialize auth state on app load
@@ -244,8 +244,8 @@ const App = () => {
         <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
           <BrowserRouter>
             <AuthInterceptor>
-               <TagsProvider>
-              <AppContent />
+              <TagsProvider>
+                <AppContent />
               </TagsProvider>
             </AuthInterceptor>
           </BrowserRouter>

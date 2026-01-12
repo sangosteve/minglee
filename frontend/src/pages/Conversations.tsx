@@ -100,7 +100,7 @@ const formatTime = (dateString: string) => {
   if (diffMins < 60) return `${diffMins}m`;
   if (diffHours < 24) return `${diffHours}h`;
   if (diffDays < 7) return `${diffDays}d`;
-  return date.toLocaleDateString();
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
 const formatMessageTime = (dateString: string) => {
@@ -183,8 +183,6 @@ const hasMediaContent = (message: Message): boolean => {
     metadata.media
   );
 };
-
-
 
 const getMediaUrl = (message: Message): string | undefined => {
   const metadata = message.metadata || {};
@@ -272,8 +270,6 @@ const normalizeMessageStatus = (status: string): string => {
 
   return statusMap[status.toLowerCase()] || 'sent';
 };
-
-
 
 const getStatusIndicator = (status: string) => {
   const statusMap: Record<string, string> = {
@@ -792,10 +788,13 @@ const Conversations = () => {
             <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
               <TabsList className="grid grid-cols-4 w-full">
                 <TabsTrigger value="All" className="text-xs">All</TabsTrigger>
-                <TabsTrigger value="Unread" className="text-xs">
+                <TabsTrigger value="Unread" className="text-xs relative">
                   Unread
                   {unreadCount && unreadCount > 0 && (
-                    <Badge variant="secondary" className="ml-1 h-4 w-4 p-0">
+                    <Badge 
+                      variant="destructive" 
+                      className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs min-w-5"
+                    >
                       {unreadCount > 99 ? '99+' : unreadCount}
                     </Badge>
                   )}
@@ -838,7 +837,7 @@ const Conversations = () => {
                     key={conv.id}
                     variant="ghost"
                     className={cn(
-                      "w-full flex items-center gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none",
+                      "w-full flex items-center gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none relative group",
                       isSelected && "bg-primary/5 border-l-2 border-l-primary"
                     )}
                     onClick={() => setSelectedConversationId(conv.id)}
@@ -857,20 +856,25 @@ const Conversations = () => {
                       />
                     </div>
                     <div className="flex-1 min-w-0 text-left">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between mb-1">
                         <span className="font-medium text-foreground truncate">
                           {contact?.name || contact?.phone || "Unknown"}
                         </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(conv.lastMessageAt)}
-                        </span>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {formatTime(conv.lastMessageAt)}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-sm text-muted-foreground truncate">
+                      <p className="text-sm text-muted-foreground truncate max-w-[180px]">
                         {conv.lastMessage || "No messages yet"}
                       </p>
                     </div>
                     {conv.unreadCount > 0 && (
-                      <Badge className="flex-shrink-0 w-5 h-5 p-0 flex items-center justify-center">
+                      <Badge 
+                        className="absolute right-4 top-1/2 -translate-y-1/2 h-5 min-w-[20px] px-1 flex items-center justify-center bg-primary text-primary-foreground text-xs"
+                        variant="default"
+                      >
                         {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
                       </Badge>
                     )}
@@ -1371,13 +1375,6 @@ const Conversations = () => {
                                     </p>
                                   </div>
                                 )}
-
-                                {/* REMOVE OR COMMENT OUT THE DEBUG INFO */}
-                                {/* {process.env.NODE_ENV === 'development' && (
-              <div className="text-xs p-2 bg-black/20 text-white">
-                Type: {mediaType} | Has body: {!!message.body}
-              </div>
-            )} */}
                               </div>
                             )}
 
