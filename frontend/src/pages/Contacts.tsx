@@ -11,6 +11,9 @@ import {
   MapPinIcon,
   ChatBubbleLeftRightIcon,
   UserGroupIcon,
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
   CheckCircleIcon,
@@ -27,6 +30,8 @@ import {
 import { cn } from "@/lib/utils";
 import { AddContactSheet } from "@/components/contacts/AddContactSheet";
 import { EditContactSheet } from "@/components/contacts/EditContactSheet";
+import { ImportContactsDialog } from "@/components/contacts/ImportContactsDialog";
+import { ExportContactsDialog } from "@/components/contacts/ExportContactsDialog";
 import { 
   useContacts, 
   useContactAnalytics, 
@@ -39,9 +44,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { useTags, transformTagsForSelect } from '@/lib/api/tags';
+import { useTags } from '@/lib/api/tags';
 import { useTagsStore } from '@/stores/tags.store';
 import { ContactFilter } from "@/components/contacts/ContactFilter";
+import { useContactsStore } from '@/stores/contacts.store';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 
 // Status configuration
 const statusConfig = {
@@ -72,6 +81,8 @@ const Contacts = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [isEditContactOpen, setIsEditContactOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [filters, setFilters] = useState<ContactFilters>({
     page: 1,
@@ -80,7 +91,16 @@ const Contacts = () => {
     sortOrder: "desc",
   });
 
-  // React Query hooks using your existing API
+  // Contacts store for selection management
+  const {
+    selectedContactIds,
+    toggleContactSelection,
+    selectAllContacts,
+    clearSelection,
+    importProgress,
+  } = useContactsStore();
+
+  // React Query hooks
   const { 
     data: contactsData, 
     isLoading: contactsLoading, 
@@ -88,23 +108,8 @@ const Contacts = () => {
     refetch 
   } = useContacts(filters);
 
-  // Available tags from React Query
   const { data: tagsData, isLoading: tagsLoading } = useTags();
-  
-  // Zustand store for global tag access
-  const { 
-    selectTags: availableTags, 
-    isLoading: storeLoading, 
-    setSelectTags,
-    getTagById,
-    getTagNameById
-  } = useTagsStore();
-
-  const { 
-    data: analytics, 
-    isLoading: analyticsLoading 
-  } = useContactAnalytics();
-
+  const { data: analytics, isLoading: analyticsLoading } = useContactAnalytics();
   const deleteContactMutation = useDeleteContact();
   const updateContactMutation = useUpdateContact();
   const updateStatusMutation = useUpdateContactStatus();
@@ -113,6 +118,7 @@ const Contacts = () => {
   const pagination = contactsData?.pagination;
 
   // Populate Zustand store when tags are loaded
+  const { setSelectTags, getTagById, getTagNameById } = useTagsStore();
   useEffect(() => {
     if (tagsData && tagsData.length > 0) {
       setSelectTags(tagsData);
@@ -132,6 +138,11 @@ const Contacts = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Clear selection when filters change
+  useEffect(() => {
+    clearSelection();
+  }, [filters, clearSelection]);
+
   const handleContactClick = (contact: Contact) => {
     setSelectedContact(contact);
     setIsEditContactOpen(true);
@@ -146,10 +157,42 @@ const Contacts = () => {
           title: "Contact deleted",
           description: "Contact has been deleted successfully.",
         });
+        // Remove from selection if it was selected
+        if (selectedContactIds.includes(contactId)) {
+          toggleContactSelection(contactId);
+        }
       } catch (error) {
         toast({
           title: "Error",
           description: "Failed to delete contact.",
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedContactIds.length === 0) return;
+    
+    if (window.confirm(`Are you sure you want to delete ${selectedContactIds.length} contact(s)?`)) {
+      try {
+        const deletePromises = selectedContactIds.map(id => 
+          deleteContactMutation.mutateAsync(id)
+        );
+        
+        await Promise.all(deletePromises);
+        
+        toast({
+          title: "Success",
+          description: `Deleted ${selectedContactIds.length} contact(s)`,
+        });
+        
+        clearSelection();
+        refetch();
+      } catch (error: any) {
+        toast({
+          title: "Error",
+          description: error.message || "Failed to delete contacts",
           variant: "destructive",
         });
       }
@@ -279,14 +322,29 @@ const Contacts = () => {
       {/* Header Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3 flex-1">
+          {selectedContactIds.length > 0 && (
+            <div className="flex items-center gap-3 mr-4">
+              <span className="text-sm font-medium">
+                {selectedContactIds.length} selected
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearSelection}
+                className="gap-2"
+              >
+                Clear
+              </Button>
+            </div>
+          )}
           <div className="relative flex-1 max-w-md">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
+            <Input
               type="text"
               placeholder="Search contacts..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm bg-card border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              className="w-full pl-9 pr-4 py-2 text-sm"
             />
           </div>
           <ContactFilter
@@ -317,6 +375,26 @@ const Contacts = () => {
               List
             </button>
           </div>
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <ArrowDownTrayIcon className="w-4 h-4" />
+                Import/Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => setIsImportDialogOpen(true)} className="gap-2">
+                <ArrowUpTrayIcon className="w-4 h-4" />
+                Import
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsExportDialogOpen(true)} className="gap-2">
+                <ArrowDownTrayIcon className="w-4 h-4" />
+                Export
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Button 
             className="gap-2" 
             onClick={() => setIsAddContactOpen(true)}
@@ -343,6 +421,122 @@ const Contacts = () => {
           contact={selectedContact}
           onSuccess={() => refetch()}
         />
+      )}
+      
+      <ImportContactsDialog
+        open={isImportDialogOpen}
+        onOpenChange={setIsImportDialogOpen}
+        onSuccess={() => {
+          refetch();
+          clearSelection();
+        }}
+      />
+      
+      <ExportContactsDialog
+        open={isExportDialogOpen}
+        onOpenChange={setIsExportDialogOpen}
+      />
+
+      {/* Bulk Actions Toolbar */}
+      {selectedContactIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-card border border-border rounded-lg shadow-lg px-4 py-3 z-50 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <Checkbox
+              className="rounded-none"
+                checked={selectedContactIds.length === contacts.length && contacts.length > 0}
+                onCheckedChange={() => {
+                  if (selectedContactIds.length === contacts.length) {
+                    clearSelection();
+                  } else {
+                    selectAllContacts(contacts.map(c => c.id));
+                  }
+                }}
+              />
+              <span className="text-sm font-medium">
+                {selectedContactIds.length} contact{selectedContactIds.length !== 1 ? 's' : ''} selected
+              </span>
+            </div>
+
+            <div className="h-4 w-px bg-border" />
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setIsExportDialogOpen(true)}
+              >
+                <ArrowDownTrayIcon className="w-4 h-4" />
+                Export
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <EllipsisHorizontalIcon className="w-4 h-4" />
+                    Actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => {}} className="gap-2">
+                    <CheckCircleIcon className="w-4 h-4" />
+                    Mark as Active
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => {}} className="gap-2">
+                    <XCircleIcon className="w-4 h-4" />
+                    Mark as Inactive
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={handleBulkDelete}
+                    className="gap-2 text-destructive"
+                  >
+                    <XMarkIcon className="w-4 h-4" />
+                    Delete selected
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearSelection}
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Progress Indicator */}
+      {importProgress && importProgress.total > 0 && (
+        <div className="mb-6 bg-card border border-border rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <ArrowUpTrayIcon className="w-5 h-5 text-primary" />
+              <div>
+                <p className="font-medium">Importing contacts</p>
+                <p className="text-sm text-muted-foreground">
+                  {importProgress.processed}/{importProgress.total} processed
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-success">
+                ✓ {importProgress.success} successful
+              </span>
+              <span className="text-sm text-destructive">
+                ✗ {importProgress.failed} failed
+              </span>
+            </div>
+          </div>
+          <Progress 
+            value={(importProgress.processed / importProgress.total) * 100} 
+            className="h-2"
+          />
+        </div>
       )}
 
       {/* Stats */}
@@ -429,20 +623,42 @@ const Contacts = () => {
           <p className="text-muted-foreground mb-4">
             {searchQuery ? "Try adjusting your search" : "Get started by adding your first contact"}
           </p>
-          <Button onClick={() => setIsAddContactOpen(true)}>
-            <PlusIcon className="w-4 h-4 mr-2" />
-            Add Contact
-          </Button>
+          <div className="flex gap-3">
+            <Button onClick={() => setIsAddContactOpen(true)}>
+              <PlusIcon className="w-4 h-4 mr-2" />
+              Add Contact
+            </Button>
+            <Button variant="outline" onClick={() => setIsImportDialogOpen(true)}>
+              <ArrowUpTrayIcon className="w-4 h-4 mr-2" />
+              Import CSV
+            </Button>
+          </div>
         </div>
       ) : view === "grid" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {contacts.map((contact, index) => (
             <div
               key={contact.id}
-              onClick={() => handleContactClick(contact)}
-              className="bg-card rounded-xl p-5 border border-border hover:shadow-lg hover:border-primary/20 transition-all duration-200 cursor-pointer group"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest('input[type="checkbox"]')) {
+                  e.stopPropagation();
+                  return;
+                }
+                handleContactClick(contact);
+              }}
+              className="bg-card rounded-xl p-5 border border-border hover:shadow-lg hover:border-primary/20 transition-all duration-200 cursor-pointer group relative"
               style={{ animationDelay: `${index * 50}ms` }}
             >
+              {/* Selection checkbox */}
+              <div className="absolute top-4 right-4 z-10">
+                <Checkbox
+                  checked={selectedContactIds.includes(contact.id)}
+                  onCheckedChange={() => toggleContactSelection(contact.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="rounded-none"
+                />
+              </div>
+
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -533,7 +749,7 @@ const Contacts = () => {
                 <div className="flex flex-wrap gap-1 mb-4">
                   {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : contact.tagIds).slice(0, 3).map((tag, idx) => {
                     // Show skeleton if tags are still loading
-                    if (tagsLoading || storeLoading) {
+                    if (tagsLoading) {
                       return (
                         <Skeleton key={idx} className="h-6 w-16 rounded-full" />
                       );
@@ -553,7 +769,7 @@ const Contacts = () => {
                       </Badge>
                     );
                   })}
-                  {!tagsLoading && !storeLoading && (((Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 3) ? contact.tagIds.length - 3 : 0)) > 0 && (
+                  {!tagsLoading && (((Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 3) ? contact.tagIds.length - 3 : 0)) > 0 && (
                     <Badge variant="secondary" className="text-xs">
                       +{ (Array.isArray(contact.tags) && contact.tags.length > 3) ? contact.tags.length - 3 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 3 ? contact.tagIds.length - 3 : 0) }
                     </Badge>
@@ -577,6 +793,19 @@ const Contacts = () => {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
+                <th className="text-left py-4 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider w-12">
+                  <Checkbox
+                    checked={selectedContactIds.length === contacts.length && contacts.length > 0}
+                    onCheckedChange={() => {
+                      if (selectedContactIds.length === contacts.length) {
+                        clearSelection();
+                      } else {
+                        selectAllContacts(contacts.map(c => c.id));
+                      }
+                    }}
+                    className="rounded-none"
+                  />
+                </th>
                 <th className="text-left py-4 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Contact</th>
                 <th className="text-left py-4 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">Email</th>
                 <th className="text-left py-4 px-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden lg:table-cell">Phone</th>
@@ -590,9 +819,21 @@ const Contacts = () => {
               {contacts.map((contact) => (
                 <tr
                   key={contact.id}
-                  onClick={() => handleContactClick(contact)}
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest('input[type="checkbox"]')) {
+                      return;
+                    }
+                    handleContactClick(contact);
+                  }}
                   className="hover:bg-secondary/30 transition-colors cursor-pointer group"
                 >
+                  <td className="py-4 px-4" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedContactIds.includes(contact.id)}
+                      onCheckedChange={() => toggleContactSelection(contact.id)}
+                      className="rounded-none"
+                    />
+                  </td>
                   <td className="py-4 px-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -625,7 +866,7 @@ const Contacts = () => {
                     <div className="flex flex-wrap gap-1">
                       {((Array.isArray(contact.tags) && contact.tags.length > 0) ? contact.tags : (Array.isArray(contact.tagIds) ? contact.tagIds : [])).slice(0, 2).map((tag, idx) => {
                         // Show skeleton if tags are still loading
-                        if (tagsLoading || storeLoading) {
+                        if (tagsLoading) {
                           return (
                             <Skeleton key={idx} className="h-6 w-16 rounded-full" />
                           );
@@ -645,7 +886,7 @@ const Contacts = () => {
                           </Badge>
                         );
                       })}
-                      {!tagsLoading && !storeLoading && (((Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 2) ? contact.tagIds.length - 2 : 0)) > 0 && (
+                      {!tagsLoading && (((Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : 0) || ((Array.isArray(contact.tagIds) && contact.tagIds.length > 2) ? contact.tagIds.length - 2 : 0)) > 0 && (
                         <Badge variant="secondary" className="text-xs">
                           +{ (Array.isArray(contact.tags) && contact.tags.length > 2) ? contact.tags.length - 2 : (Array.isArray(contact.tagIds) && contact.tagIds.length > 2 ? contact.tagIds.length - 2 : 0) }
                         </Badge>
