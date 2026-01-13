@@ -125,7 +125,7 @@ export function ConversationSidebar({
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  "w-full justify-start px-3 py-2 h-auto rounded-lg hover:bg-secondary transition-colors text-left",
+                  "w-full justify-start px-3 py-2 h-auto rounded-lg hover:bg-secondary transition-colors text-left relative",
                   filters.inboxType === item.id ? "bg-primary/10 text-primary" : "text-foreground/80",
                   item.disabled && "opacity-50 cursor-not-allowed"
                 )}
@@ -156,27 +156,27 @@ export function ConversationSidebar({
         variant="ghost"
         size="sm"
         className={cn(
-          "w-full justify-between px-3 py-2 h-auto rounded-lg hover:bg-secondary transition-colors text-left",
+          "w-full justify-start px-3 py-2 h-auto rounded-lg hover:bg-secondary transition-colors text-left relative",
           filters.inboxType === item.id ? "bg-primary/10 text-primary" : "text-foreground/80",
           item.disabled && "opacity-50 cursor-not-allowed"
         )}
         disabled={item.disabled}
         onClick={() => !item.disabled && handleFilterChange('inboxType', item.id)}
       >
-        <div className="flex items-center gap-2">
-          <item.icon className="w-4 h-4" />
-          <span className="text-sm">{item.label}</span>
+        <div className="flex items-center gap-2 w-full">
+          <item.icon className="w-4 h-4 flex-shrink-0" />
+          <span className="text-sm flex-1 truncate">{item.label}</span>
+          {item.count !== undefined && (
+            <span className={cn(
+              "flex items-center justify-center px-1.5 min-w-[20px] h-5 text-xs rounded-full flex-shrink-0 ml-2",
+              filters.inboxType === item.id 
+                ? "bg-primary text-primary-foreground" 
+                : "bg-muted text-muted-foreground"
+            )}>
+              {item.count > 99 ? '99+' : item.count}
+            </span>
+          )}
         </div>
-        {item.count !== undefined && (
-          <span className={cn(
-            "px-1.5 py-0.5 text-xs rounded-full min-w-5 h-5 flex items-center justify-center",
-            filters.inboxType === item.id 
-              ? "bg-primary text-primary-foreground" 
-              : "bg-muted text-muted-foreground"
-          )}>
-            {item.count}
-          </span>
-        )}
       </Button>
     );
   };
@@ -190,43 +190,42 @@ export function ConversationSidebar({
               variant="ghost"
               size="sm"
               className={cn(
-                "w-full justify-between px-3 py-1.5 h-auto rounded-lg hover:bg-secondary transition-colors text-left text-sm group",
+                "w-full justify-start px-3 py-1.5 h-auto rounded-lg hover:bg-secondary transition-colors text-left relative group",
                 filters.tag === tag.id ? "bg-primary/10 text-primary" : "text-foreground/80"
               )}
               onClick={() => handleFilterChange('tag', filters.tag === tag.id ? '' : tag.id)}
             >
-              <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="flex items-center gap-2 w-full">
                 <div 
                   className="w-3 h-3 rounded-full flex-shrink-0" 
                   style={{ backgroundColor: tag.color }}
                 />
-                <span className="truncate">{tag.name}</span>
-                {tag.description && (
-                  <InformationCircleIcon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                )}
-              </div>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                {tag.count > 0 && (
-                  <span className={cn(
-                    "px-1.5 py-0.5 text-xs rounded-full min-w-5 h-5 flex items-center justify-center",
-                    filters.tag === tag.id
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
-                  )}>
-                    {tag.count}
-                  </span>
-                )}
-                <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                  <EditTagDialog tag={tag} />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 w-5 p-0 hover:bg-destructive hover:text-destructive-foreground"
-                    onClick={(e) => handleDeleteTag(tag.id, e)}
-                  >
-                    <XMarkIcon className="w-3 h-3" />
-                  </Button>
+                <span className="truncate flex-1 min-w-0">{tag.name}</span>
+                
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {tag.count > 0 && (
+                    <span className={cn(
+                      "flex items-center justify-center px-1.5 min-w-[20px] h-5 text-xs rounded-full",
+                      filters.tag === tag.id
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    )}>
+                      {tag.count > 99 ? '99+' : tag.count}
+                    </span>
+                  )}
+                  
+                  <div className="flex opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                    <EditTagDialog tag={tag} />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 w-5 p-0 hover:bg-destructive hover:text-destructive-foreground"
+                      onClick={(e) => handleDeleteTag(tag.id, e)}
+                    >
+                      <XMarkIcon className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Button>
@@ -252,9 +251,9 @@ export function ConversationSidebar({
       )}
       onClick={() => handleFilterChange('status', item.id)}
     >
-      <div className="flex items-center gap-2">
-        <item.icon className="w-4 h-4" />
-        <span className="text-sm">{item.label}</span>
+      <div className="flex items-center gap-2 w-full">
+        <item.icon className="w-4 h-4 flex-shrink-0" />
+        <span className="text-sm truncate">{item.label}</span>
       </div>
     </Button>
   );

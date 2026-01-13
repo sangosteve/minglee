@@ -13,6 +13,9 @@ export default {
       },
     },
     extend: {
+      backgroundImage: {
+        'chat-pattern': "url('/chat-bg.png')",
+      },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },

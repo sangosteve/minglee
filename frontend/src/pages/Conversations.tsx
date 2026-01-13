@@ -76,6 +76,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useQuickReplies } from "@/hooks/use-quick-replies";
 import QuickRepliesDropdown from "@/components/chat/QuickRepliesDropdown";
 import { VariableService } from '@/lib/variable-service';
+import DateSeparator from "@/components/chat/DateSeparator";
+import { isSameDay } from "date-fns";
+import { Textarea } from "@/components/ui/textarea";
+
 
 // Helper functions
 const getInitials = (name?: string | null) => {
@@ -107,6 +111,8 @@ const formatMessageTime = (dateString: string) => {
   const date = new Date(dateString);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
+
+
 
 const getFileIconColor = (filename: string) => {
   if (!filename) return { bg: "bg-primary/20", text: "text-primary" };
@@ -703,7 +709,7 @@ const Conversations = () => {
 
   if (isLoading) {
     return (
-      <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
+      <div className="flex h-full bg-card overflow-hidden">
         <ConversationSidebar
           onFilterChange={handleSidebarFilterChange}
           currentUserId={user?.id}
@@ -749,7 +755,7 @@ const Conversations = () => {
 
   return (
     <TooltipProvider>
-      <div className="flex h-[calc(100vh-180px)] bg-card rounded-xl shadow-card border border-border overflow-hidden">
+      <div className="flex h-full bg-card rounded-xl shadow-card border border-border overflow-hidden">
         <ConversationSidebar
           onFilterChange={handleSidebarFilterChange}
           currentUserId={user?.id}
@@ -791,8 +797,8 @@ const Conversations = () => {
                 <TabsTrigger value="Unread" className="text-xs relative">
                   Unread
                   {unreadCount && unreadCount > 0 && (
-                    <Badge 
-                      variant="destructive" 
+                    <Badge
+                      variant="destructive"
                       className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs min-w-5"
                     >
                       {unreadCount > 99 ? '99+' : unreadCount}
@@ -837,7 +843,7 @@ const Conversations = () => {
                     key={conv.id}
                     variant="ghost"
                     className={cn(
-                      "w-full flex items-center gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none relative group",
+                      "w-full flex items-start gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none relative group",
                       isSelected && "bg-primary/5 border-l-2 border-l-primary"
                     )}
                     onClick={() => setSelectedConversationId(conv.id)}
@@ -855,29 +861,34 @@ const Conversations = () => {
                         )}
                       />
                     </div>
-                    <div className="flex-1 min-w-0 text-left">
+
+                    {/* Main content area - takes remaining space */}
+                    <div className="flex-1 min-w-0">
+                      {/* Top row: Contact name + Time */}
                       <div className="flex items-center justify-between mb-1">
                         <span className="font-medium text-foreground truncate">
                           {contact?.name || contact?.phone || "Unknown"}
                         </span>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {formatTime(conv.lastMessageAt)}
-                          </span>
-                        </div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0 ml-2">
+                          {formatTime(conv.lastMessageAt)}
+                        </span>
                       </div>
-                      <p className="text-sm text-muted-foreground truncate max-w-[180px]">
-                        {conv.lastMessage || "No messages yet"}
-                      </p>
+
+                      {/* Bottom row: Last message + Badge */}
+                      <div className="flex items-start w-full">
+                        <p className="text-sm text-muted-foreground truncate pr-2 flex-1 text-start">
+                          {conv.lastMessage || "No messages yet"}
+                        </p>
+                        {conv.unreadCount > 0 && (
+                          <Badge
+                            className="h-5 min-w-[20px] px-1 flex items-center justify-center bg-primary text-primary-foreground text-xs flex-shrink-0 mt-1"
+                            variant="default"
+                          >
+                            {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    {conv.unreadCount > 0 && (
-                      <Badge 
-                        className="absolute right-4 top-1/2 -translate-y-1/2 h-5 min-w-[20px] px-1 flex items-center justify-center bg-primary text-primary-foreground text-xs"
-                        variant="default"
-                      >
-                        {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-                      </Badge>
-                    )}
                   </Button>
                 );
               })
@@ -978,444 +989,481 @@ const Conversations = () => {
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 p-6 bg-secondary/30">
-                {conversationLoading ? (
-                  <div className="space-y-4">
-                    {[...Array(5)].map((_, i) => (
-                      <div
-                        key={i}
-                        className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div className={`w-2/3 h-16 bg-secondary rounded-2xl animate-pulse ${i % 2 === 0 ? 'rounded-br-md' : 'rounded-bl-md'}`}></div>
-                      </div>
-                    ))}
-                  </div>
-                ) : messages.length === 0 ? (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <ChatBubbleLeftRightIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                      <p className="text-muted-foreground">No messages yet</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Start the conversation!
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {sortedMessages.map((message) => {
-                      const isOutgoing = message.direction === "outgoing";
-                      const hasMedia = hasMediaContent(message);
-                      const mediaType = getMediaType(message);
-                      const mediaUrl = getMediaUrl(message);
-                      const filename = getFilename(message);
 
-                      // Check for special message types
-                      const isInteractive = mediaType === 'interactive';
-                      const isButton = mediaType === 'button';
-                      const isLocation = mediaType === 'location';
-                      const isContacts = mediaType === 'contacts';
 
-                      // Determine if we should show the media content section
-                      const shouldShowMediaSection = hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
-                      // Determine if we should show text content
-                      const shouldShowText = message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
-                      // Determine if we should show fallback
-                      const shouldShowFallback = !message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+              <ScrollArea className="flex-1">
+                <div
+                  className="min-h-full bg-repeat bg-center"
+                  style={{
+                    backgroundColor: "hsl(var(--background))",
+                    backgroundImage: "url('/chat-bg.png')",
+                    backgroundSize: "420px",
+                    backgroundAttachment: "fixed",
+                  }}
+                >
 
-                      return (
-                        <div
-                          key={message.id}
-                          className={cn(
-                            "flex mb-4",
-                            isOutgoing ? "justify-end" : "justify-start"
-                          )}
-                        >
+                  {/* Messages Content */}
+                  <div className="relative z-10 p-4 min-h-full">
+                    {conversationLoading ? (
+                      <div className="space-y-4">
+                        {[...Array(5)].map((_, i) => (
                           <div
-                            className={cn(
-                              "max-w-[280px] rounded-2xl overflow-hidden",
-                              (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "p-0" : "px-4 py-2.5",
-                              isOutgoing
-                                ? "bg-primary text-primary-foreground rounded-br-md"
-                                : "bg-card border border-border text-foreground rounded-bl-md"
-                            )}
+                            key={i}
+                            className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}
                           >
-                            {/* Interactive Messages */}
-                            {isInteractive && (
-                              <div className={cn(
-                                "w-full p-4",
-                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                              )}>
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                    🔄
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className={cn(
-                                      "text-sm font-medium",
-                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                    )}>
-                                      Interactive Message
-                                    </p>
-                                    <p className={cn(
-                                      "text-xs truncate",
-                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                      {message.metadata?.interactive?.type === 'list_reply' &&
-                                        `Selected: ${message.metadata.interactive.data?.title || 'Option'}`}
-                                      {message.metadata?.interactive?.type === 'button_reply' &&
-                                        `Clicked: ${message.metadata.interactive.data?.title || 'Button'}`}
-                                      {message.metadata?.interactive?.type === 'nfm_reply' &&
-                                        'Flow response'}
-                                      {!message.metadata?.interactive?.type && 'Interactive content'}
-                                    </p>
-                                  </div>
-                                </div>
-                                {message.body && message.body !== 'Interactive message' && (
-                                  <p className={cn(
-                                    "text-sm mt-2",
-                                    isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                  )}>
-                                    {message.body}
-                                  </p>
+                            <div className={`w-2/3 h-16 bg-secondary rounded-2xl animate-pulse ${i % 2 === 0 ? 'rounded-br-md' : 'rounded-bl-md'}`}></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : messages.length === 0 ? (
+                      <div className="h-full flex items-center justify-center min-h-[400px]">
+                        <div className="text-center bg-card/80 backdrop-blur-sm p-8 rounded-xl border border-border/50">
+                          <ChatBubbleLeftRightIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                          <p className="text-muted-foreground">No messages yet</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Start the conversation!
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {(() => {
+                          let lastDate: Date | null = null;
+                          const messageElements: React.ReactNode[] = [];
+
+                          sortedMessages.forEach((message) => {
+                            const messageDate = new Date(message.timestamp);
+                            const messageDay = new Date(
+                              messageDate.getFullYear(),
+                              messageDate.getMonth(),
+                              messageDate.getDate()
+                            );
+
+                            // Add date separator if needed
+                            if (!lastDate || !isSameDay(lastDate, messageDate)) {
+                              messageElements.push(
+                                <DateSeparator
+                                  key={`date-${message.id}-${message.timestamp}`}
+                                  dateString={message.timestamp}
+                                />
+                              );
+                              lastDate = messageDate;
+                            }
+
+                            // Render the message (KEEP ALL YOUR EXISTING MESSAGE RENDERING CODE)
+                            const isOutgoing = message.direction === "outgoing";
+                            const hasMedia = hasMediaContent(message);
+                            const mediaType = getMediaType(message);
+                            const mediaUrl = getMediaUrl(message);
+                            const filename = getFilename(message);
+                            const isInteractive = mediaType === 'interactive';
+                            const isButton = mediaType === 'button';
+                            const isLocation = mediaType === 'location';
+                            const isContacts = mediaType === 'contacts';
+                            const shouldShowMediaSection = hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+                            const shouldShowText = message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+                            const shouldShowFallback = !message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
+
+                            messageElements.push(
+                              <div
+                                key={message.id}
+                                className={cn(
+                                  "flex mb-4",
+                                  isOutgoing ? "justify-end" : "justify-start"
                                 )}
-                              </div>
-                            )}
-
-                            {/* Button Messages */}
-                            {isButton && (
-                              <div className={cn(
-                                "w-full p-4",
-                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                              )}>
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-                                    🔘
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className={cn(
-                                      "text-sm font-medium",
-                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                              >
+                                <div
+                                  className={cn(
+                                    "max-w-[280px] rounded-2xl overflow-hidden",
+                                    (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "p-0" : "px-4 py-2.5",
+                                    isOutgoing
+                                      ? "bg-primary text-primary-foreground rounded-br-md"
+                                      : "bg-card border border-border text-foreground rounded-bl-md"
+                                  )}
+                                >
+                                  {/* Interactive Messages */}
+                                  {isInteractive && (
+                                    <div className={cn(
+                                      "w-full p-4",
+                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
                                     )}>
-                                      Button Message
-                                    </p>
-                                    <p className={cn(
-                                      "text-xs truncate",
-                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                      {message.metadata?.button?.text || message.body || 'Button action'}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Location Messages */}
-                            {isLocation && (
-                              <div className={cn(
-                                "w-full p-3",
-                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                              )}>
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                    📍
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className={cn(
-                                      "text-sm font-medium",
-                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                    )}>
-                                      Location Shared
-                                    </p>
-                                    <p className={cn(
-                                      "text-xs truncate",
-                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                      {message.metadata?.location?.name || message.metadata?.location?.address || message.body || 'Shared location'}
-                                    </p>
-                                  </div>
-                                </div>
-                                {message.metadata?.location && (
-                                  <a
-                                    href={`https://maps.google.com/?q=${message.metadata.location.latitude},${message.metadata.location.longitude}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className={cn(
-                                      "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors text-center block",
-                                      isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
-                                        : "bg-primary/10 text-primary hover:bg-primary/20"
-                                    )}
-                                  >
-                                    View on Map
-                                  </a>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Contacts Messages */}
-                            {isContacts && (
-                              <div className={cn(
-                                "w-full p-4",
-                                isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                              )}>
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                                    👥
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className={cn(
-                                      "text-sm font-medium",
-                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                    )}>
-                                      Contact Shared
-                                    </p>
-                                    <p className={cn(
-                                      "text-xs truncate",
-                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                      {message.body || 'Contact information'}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Media Messages (images, videos, audio, documents, stickers) */}
-                            {shouldShowMediaSection && (
-                              <div className="relative">
-                                {/* KEEP YOUR EXISTING MEDIA RENDERING CODE HERE - DON'T CHANGE THIS PART */}
-                                {mediaType === "image" && mediaUrl && (
-                                  <div className="relative">
-                                    <img
-                                      src={mediaUrl}
-                                      alt={message.body || "Image"}
-                                      className="w-full h-auto max-h-[400px] object-contain cursor-pointer bg-black/5"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        // Create a modal for fullscreen view
-                                        const modal = document.createElement('div');
-                                        modal.className = 'fixed inset-0 bg-black/90 z-50 flex items-center justify-center';
-                                        modal.onclick = () => modal.remove();
-
-                                        const img = document.createElement('img');
-                                        img.src = mediaUrl;
-                                        img.className = 'max-w-full max-h-full object-contain p-4';
-                                        img.onclick = (e) => e.stopPropagation();
-
-                                        modal.appendChild(img);
-                                        document.body.appendChild(modal);
-                                      }}
-                                    />
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                          onClick={() => handleDownloadMedia(message)}
-                                        >
-                                          <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Download image</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </div>
-                                )}
-
-                                {mediaType === "video" && mediaUrl && (
-                                  <div className="relative w-full aspect-video bg-black/90">
-                                    <video
-                                      src={mediaUrl}
-                                      controls
-                                      className="w-full h-full object-contain"
-                                      preload="metadata"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      Your browser does not support the video tag.
-                                    </video>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                          onClick={() => handleDownloadMedia(message)}
-                                        >
-                                          <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Download video</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <div className="absolute bottom-2 left-2 flex items-center gap-1 text-white text-xs">
-                                      <VideoCameraIcon className="w-4 h-4" />
-                                      <span>{message.metadata?.duration || "0:00"}</span>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {mediaType === "audio" && mediaUrl && (
-                                  <div className={cn(
-                                    "w-full p-4",
-                                    isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                  )}>
-                                    <div className="flex items-center gap-3">
-                                      <audio
-                                        src={mediaUrl}
-                                        controls
-                                        className="flex-1"
-                                        preload="metadata"
-                                      >
-                                        Your browser does not support the audio element.
-                                      </audio>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className={cn(
-                                              "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
-                                              isOutgoing ? "bg-primary-foreground/20" : "bg-primary/10"
-                                            )}
-                                            onClick={() => handleDownloadMedia(message)}
-                                          >
-                                            <ArrowDownTrayIcon className={cn(
-                                              "w-5 h-5",
-                                              isOutgoing ? "text-primary-foreground" : "text-primary"
-                                            )} />
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p>Download audio</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </div>
-                                    {message.metadata?.duration && (
-                                      <div className="flex items-center justify-between mt-2">
-                                        <span className={cn(
-                                          "text-xs",
-                                          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                        )}>
-                                          Duration: {message.metadata.duration}
-                                        </span>
-                                        <MusicalNoteIcon className={cn(
-                                          "w-3.5 h-3.5",
-                                          isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
-                                        )} />
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                          🔄
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className={cn(
+                                            "text-sm font-medium",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            Interactive Message
+                                          </p>
+                                          <p className={cn(
+                                            "text-xs truncate",
+                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                          )}>
+                                            {message.metadata?.interactive?.type === 'list_reply' &&
+                                              `Selected: ${message.metadata.interactive.data?.title || 'Option'}`}
+                                            {message.metadata?.interactive?.type === 'button_reply' &&
+                                              `Clicked: ${message.metadata.interactive.data?.title || 'Button'}`}
+                                            {message.metadata?.interactive?.type === 'nfm_reply' &&
+                                              'Flow response'}
+                                            {!message.metadata?.interactive?.type && 'Interactive content'}
+                                          </p>
+                                        </div>
                                       </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {(mediaType === "document" || mediaType === "sticker") && (
-                                  <div className={cn(
-                                    "w-full p-3",
-                                    isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                  )}>
-                                    <div className="flex items-center gap-3">
-                                      <div className={cn(
-                                        "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                                        getFileIconColor(filename).bg
-                                      )}>
-                                        {mediaType === "sticker" ? (
-                                          <ArchiveBoxIcon className="text-amber-500" />
-                                        ) : (
-                                          <DocumentIcon className={getFileIconColor(filename).text} />
-                                        )}
-                                      </div>
-                                      <div className="flex-1 min-w-0">
+                                      {message.body && message.body !== 'Interactive message' && (
                                         <p className={cn(
-                                          "text-sm font-medium truncate",
+                                          "text-sm mt-2",
                                           isOutgoing ? "text-primary-foreground" : "text-foreground"
                                         )}>
-                                          {filename}
+                                          {message.body}
                                         </p>
-                                        <p className={cn(
-                                          "text-xs",
-                                          isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                        )}>
-                                          {formatFileSize(message.metadata?.fileSize)}
-                                        </p>
-                                      </div>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className={cn(
-                                              "p-2 rounded-full transition-colors",
-                                              isOutgoing ? "hover:bg-primary-foreground/10" : "hover:bg-muted"
-                                            )}
-                                            onClick={() => handleDownloadMedia(message)}
-                                          >
-                                            <ArrowDownTrayIcon className={cn(
-                                              "w-4 h-4",
-                                              isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                            )} />
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p>Download file</p>
-                                        </TooltipContent>
-                                      </Tooltip>
+                                      )}
                                     </div>
-                                  </div>
-                                )}
+                                  )}
 
-                                {/* Show caption for media messages */}
-                                {message.body && mediaType !== "audio" && mediaType !== "document" && mediaType !== "sticker" && (
-                                  <div className="px-3 py-2">
-                                    <p className={cn(
-                                      "text-sm",
-                                      isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                  {/* Button Messages */}
+                                  {isButton && (
+                                    <div className={cn(
+                                      "w-full p-4",
+                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
                                     )}>
-                                      {message.body}
-                                    </p>
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                                          🔘
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className={cn(
+                                            "text-sm font-medium",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            Button Message
+                                          </p>
+                                          <p className={cn(
+                                            "text-xs truncate",
+                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                          )}>
+                                            {message.metadata?.button?.text || message.body || 'Button action'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Location Messages */}
+                                  {isLocation && (
+                                    <div className={cn(
+                                      "w-full p-3",
+                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                                    )}>
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                          📍
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className={cn(
+                                            "text-sm font-medium",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            Location Shared
+                                          </p>
+                                          <p className={cn(
+                                            "text-xs truncate",
+                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                          )}>
+                                            {message.metadata?.location?.name || message.metadata?.location?.address || message.body || 'Shared location'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      {message.metadata?.location && (
+                                        <a
+                                          href={`https://maps.google.com/?q=${message.metadata.location.latitude},${message.metadata.location.longitude}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className={cn(
+                                            "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors text-center block",
+                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
+                                              : "bg-primary/10 text-primary hover:bg-primary/20"
+                                          )}
+                                        >
+                                          View on Map
+                                        </a>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Contacts Messages */}
+                                  {isContacts && (
+                                    <div className={cn(
+                                      "w-full p-4",
+                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                                    )}>
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                                          👥
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className={cn(
+                                            "text-sm font-medium",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            Contact Shared
+                                          </p>
+                                          <p className={cn(
+                                            "text-xs truncate",
+                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                          )}>
+                                            {message.body || 'Contact information'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Media Messages */}
+                                  {shouldShowMediaSection && (
+                                    <div className="relative">
+                                      {mediaType === "image" && mediaUrl && (
+                                        <div className="relative">
+                                          <img
+                                            src={mediaUrl}
+                                            alt={message.body || "Image"}
+                                            className="w-full h-auto max-h-[400px] object-contain cursor-pointer bg-black/5"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              const modal = document.createElement('div');
+                                              modal.className = 'fixed inset-0 bg-black/90 z-50 flex items-center justify-center';
+                                              modal.onclick = () => modal.remove();
+
+                                              const img = document.createElement('img');
+                                              img.src = mediaUrl;
+                                              img.className = 'max-w-full max-h-full object-contain p-4';
+                                              img.onclick = (e) => e.stopPropagation();
+
+                                              modal.appendChild(img);
+                                              document.body.appendChild(modal);
+                                            }}
+                                          />
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
+                                                onClick={() => handleDownloadMedia(message)}
+                                              >
+                                                <ArrowDownTrayIcon className="w-4 h-4 text-white" />
+                                              </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                              <p>Download image</p>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </div>
+                                      )}
+
+                                      {/* Video Messages */}
+                                      {mediaType === "video" && mediaUrl && (
+                                        <div className="relative w-full aspect-video bg-black/90">
+                                          <video
+                                            src={mediaUrl}
+                                            controls
+                                            className="w-full h-full object-contain"
+                                            preload="metadata"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            Your browser does not support the video tag.
+                                          </video>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
+                                                onClick={() => handleDownloadMedia(message)}
+                                              >
+                                                <ArrowDownTrayIcon className="w-4 h-4 text-white" />
+                                              </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                              <p>Download video</p>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                          <div className="absolute bottom-2 left-2 flex items-center gap-1 text-white text-xs">
+                                            <VideoCameraIcon className="w-4 h-4" />
+                                            <span>{message.metadata?.duration || "0:00"}</span>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Audio Messages */}
+                                      {mediaType === "audio" && mediaUrl && (
+                                        <div className={cn(
+                                          "w-full p-4",
+                                          isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                                        )}>
+                                          <div className="flex items-center gap-3">
+                                            <audio
+                                              src={mediaUrl}
+                                              controls
+                                              className="flex-1"
+                                              preload="metadata"
+                                            >
+                                              Your browser does not support the audio element.
+                                            </audio>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <Button
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  className={cn(
+                                                    "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
+                                                    isOutgoing ? "bg-primary-foreground/20" : "bg-primary/10"
+                                                  )}
+                                                  onClick={() => handleDownloadMedia(message)}
+                                                >
+                                                  <ArrowDownTrayIcon className={cn(
+                                                    "w-5 h-5",
+                                                    isOutgoing ? "text-primary-foreground" : "text-primary"
+                                                  )} />
+                                                </Button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                <p>Download audio</p>
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          </div>
+                                          {message.metadata?.duration && (
+                                            <div className="flex items-center justify-between mt-2">
+                                              <span className={cn(
+                                                "text-xs",
+                                                isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                              )}>
+                                                Duration: {message.metadata.duration}
+                                              </span>
+                                              <MusicalNoteIcon className={cn(
+                                                "w-3.5 h-3.5",
+                                                isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
+                                              )} />
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Document & Sticker Messages */}
+                                      {(mediaType === "document" || mediaType === "sticker") && (
+                                        <div className={cn(
+                                          "w-full p-3",
+                                          isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
+                                        )}>
+                                          <div className="flex items-center gap-3">
+                                            <div className={cn(
+                                              "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                                              getFileIconColor(filename).bg
+                                            )}>
+                                              {mediaType === "sticker" ? (
+                                                <ArchiveBoxIcon className="text-amber-500" />
+                                              ) : (
+                                                <DocumentIcon className={getFileIconColor(filename).text} />
+                                              )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <p className={cn(
+                                                "text-sm font-medium truncate",
+                                                isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                              )}>
+                                                {filename}
+                                              </p>
+                                              <p className={cn(
+                                                "text-xs",
+                                                isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                              )}>
+                                                {formatFileSize(message.metadata?.fileSize)}
+                                              </p>
+                                            </div>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <Button
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  className={cn(
+                                                    "p-2 rounded-full transition-colors",
+                                                    isOutgoing ? "hover:bg-primary-foreground/10" : "hover:bg-muted"
+                                                  )}
+                                                  onClick={() => handleDownloadMedia(message)}
+                                                >
+                                                  <ArrowDownTrayIcon className={cn(
+                                                    "w-4 h-4",
+                                                    isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                                  )} />
+                                                </Button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                <p>Download file</p>
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Show caption for media messages */}
+                                      {message.body && mediaType !== "audio" && mediaType !== "document" && mediaType !== "sticker" && (
+                                        <div className="px-3 py-2">
+                                          <p className={cn(
+                                            "text-sm",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            {message.body}
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Text Messages */}
+                                  {shouldShowText && (
+                                    <p className="text-sm whitespace-pre-wrap">{message.body}</p>
+                                  )}
+
+                                  {/* Fallback for empty messages */}
+                                  {shouldShowFallback && (
+                                    <div className="px-4 py-2.5">
+                                      <p className="text-sm text-muted-foreground italic">Message</p>
+                                      {process.env.NODE_ENV === 'development' && (
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          ID: {message.id} | Type: {message.messageType}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Message timestamp and status */}
+                                  <div className={cn(
+                                    "flex items-center gap-1 px-3 pb-2",
+                                    (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "" : "px-0 pb-0 mt-1",
+                                    isOutgoing ? "justify-end" : "justify-start"
+                                  )}>
+                                    <span className={cn(
+                                      "text-xs",
+                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
+                                    )}>
+                                      {formatMessageTime(message.timestamp)}
+                                    </span>
+                                    {isOutgoing && getMessageStatusIcon(message.status)}
                                   </div>
-                                )}
+                                </div>
                               </div>
-                            )}
+                            );
+                          });
 
-                            {/* Text Messages (no media) */}
-                            {shouldShowText && (
-                              <p className="text-sm whitespace-pre-wrap">{message.body}</p>
-                            )}
-
-                            {/* Show fallback for empty messages */}
-                            {shouldShowFallback && (
-                              <div className="px-4 py-2.5">
-                                <p className="text-sm text-muted-foreground italic">Message</p>
-                                {process.env.NODE_ENV === 'development' && (
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    ID: {message.id} | Type: {message.messageType}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Message timestamp and status */}
-                            <div className={cn(
-                              "flex items-center gap-1 px-3 pb-2",
-                              (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "" : "px-0 pb-0 mt-1",
-                              isOutgoing ? "justify-end" : "justify-start"
-                            )}>
-                              <span className={cn(
-                                "text-xs",
-                                isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                              )}>
-                                {formatMessageTime(message.timestamp)}
-                              </span>
-                              {isOutgoing && getMessageStatusIcon(message.status)}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div ref={messagesEndRef} />
-                  </>
-                )}
+                          return messageElements;
+                        })()}
+                        <div ref={messagesEndRef} />
+                      </>
+                    )}
+                  </div>
+                </div>
               </ScrollArea>
 
               {/* Quick reply media attachments preview */}
@@ -1555,155 +1603,311 @@ const Conversations = () => {
                 </div>
               )}
 
-              <div className="p-4 border-t border-border">
-                <div className="flex items-center gap-3">
-                  <QuickRepliesDropdown
-                    quickReplies={quickReplies}
-                    isLoading={quickRepliesLoading}
-                    onInsertIntoInput={(message, mediaAttachments = []) => {
-                      if (mediaAttachments.length > 0) {
-                        // When quick reply has media, put text in CAPTION field
-                        setCaption(message);
-                        setMessageInput("");
-                        setQuickReplyMediaAttachments(mediaAttachments);
-                        setAttachments([]);
-
-                        toast({
-                          title: "Quick reply inserted",
-                          description: `Media with caption added`,
-                        });
-                      } else {
-                        // When quick reply has NO media, put text in MAIN input field
-                        setMessageInput(message);
-                        setCaption("");
-
-                        // Focus on the input field after a short delay
-                        setTimeout(() => {
-                          const input = document.querySelector('input[placeholder="Type a message..."]');
-                          if (input) {
-                            (input as HTMLInputElement).focus();
-                            // Move cursor to end
-                            (input as HTMLInputElement).setSelectionRange(
-                              message.length,
-                              message.length
-                            );
-                          }
-                        }, 10);
-                      }
-                    }}
-                    conversationId={selectedConversationId || undefined}
-                    contact={contact}
-                    user={user}
-                    conversation={selectedConversation}
-                  />
-
-                  <DropdownMenu>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+              {/* Message Input Area - UPDATED STRUCTURE */}
+              <div className="border-t border-border">
+                {/* Input Bar - Redesigned */}
+                <div className="p-4">
+                  <div className="border border-border rounded-xl bg-background">
+                    {/* Top Row - Channel selector and AI button */}
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                      <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <PaperClipIcon className="w-5 h-5 text-muted-foreground" />
-                          </Button>
+                          <button className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border bg-background hover:bg-secondary transition-colors">
+                            <div className="w-4 h-4 rounded-full bg-[#25D366] flex items-center justify-center">
+                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
+                            </div>
+                            <span className="text-sm font-medium">WhatsApp</span>
+                            <span className="text-sm text-muted-foreground">(12)</span>
+                            <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
                         </DropdownMenuTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Attach files</p>
-                      </TooltipContent>
-                    </Tooltip>
-                    <DropdownMenuContent align="start" className="w-48 bg-card border-border z-50" sideOffset={8}>
-                      <DropdownMenuItem
-                        onClick={() => triggerFileInput("image/*")}
-                        className="cursor-pointer hover:bg-secondary"
-                      >
-                        <PhotoIcon className="w-4 h-4 mr-2" />
-                        Photos
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => triggerFileInput("video/*")}
-                        className="cursor-pointer hover:bg-secondary"
-                      >
-                        <FilmIcon className="w-4 h-4 mr-2" />
-                        Videos
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => triggerFileInput("audio/*")}
-                        className="cursor-pointer hover:bg-secondary"
-                      >
-                        <MusicalNoteIcon className="w-4 h-4 mr-2" />
-                        Audio
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => triggerFileInput(".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv")}
-                        className="cursor-pointer hover:bg-secondary"
-                      >
-                        <DocumentIcon className="w-4 h-4 mr-2" />
-                        Documents
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => triggerFileInput(".zip,.rar,.7z,.tar,.gz")}
-                        className="cursor-pointer hover:bg-secondary"
-                      >
-                        <ArchiveBoxIcon className="w-4 h-4 mr-2" />
-                        Compressed
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <div className="flex-1 relative">
-                    <Input
-                      type="text"
-                      placeholder="Type a message..."
-                      value={messageInput}
-                      onChange={(e) => setMessageInput(e.target.value)}
-                      onKeyDown={handleKeyPress}
-                      disabled={sendMessage.isPending || sendMediaMessage.isPending}
-                      className="w-full pr-10"
-                    />
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="absolute right-3 top-1/2 -translate-y-1/2"
-                          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                        >
-                          <FaceSmileIcon className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Emoji</p>
-                      </TooltipContent>
-                    </Tooltip>
-                    {showEmojiPicker && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-40"
-                          onClick={() => setShowEmojiPicker(false)}
+                        <DropdownMenuContent align="start" className="w-48 bg-popover border border-border">
+                          <DropdownMenuItem className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-[#25D366] flex items-center justify-center">
+                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
+                            </div>
+                            <span>WhatsApp</span>
+                            <span className="text-muted-foreground ml-auto">(12)</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-[#7360F2] flex items-center justify-center">
+                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
+                            </div>
+                            <span>Instagram</span>
+                            <span className="text-muted-foreground ml-auto">(5)</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-[#0088CC] flex items-center justify-center">
+                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
+                            </div>
+                            <span>Facebook</span>
+                            <span className="text-muted-foreground ml-auto">(3)</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                          >
+                            <SparklesIcon className="w-5 h-5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>AI Assistant</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+
+                    {/* Text Input Area */}
+                    <div className="px-3 py-3">
+                      <Textarea
+                        value={messageInput}
+                        onChange={(e) => setMessageInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendMessage();
+                          }
+                        }}
+                        placeholder="Use '/' for snippets, '$' for variables, ':' for emoji"
+                        rows={1}
+                        className="w-full bg-transparent text-sm placeholder:text-muted-foreground focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 resize-none border-0 p-0 min-h-[20px]"
+                        disabled={sendMessage.isPending || sendMediaMessage.isPending}
+                      />
+                    </div>
+
+                    {/* Bottom Row - Action icons and send button */}
+                    <div className="flex items-center justify-between px-3 py-2 border-t border-border">
+                      <div className="flex items-center gap-1">
+                        {/* Quick Replies Button */}
+                        <QuickRepliesDropdown
+                          quickReplies={quickReplies}
+                          isLoading={quickRepliesLoading}
+                          onInsertIntoInput={(message, mediaAttachments = []) => {
+                            if (mediaAttachments.length > 0) {
+                              setCaption(message);
+                              setMessageInput("");
+                              setQuickReplyMediaAttachments(mediaAttachments);
+                              setAttachments([]);
+                              toast({
+                                title: "Quick reply inserted",
+                                description: `Media with caption added`,
+                              });
+                            } else {
+                              setMessageInput(message);
+                              setCaption("");
+                              setTimeout(() => {
+                                const input = document.querySelector('textarea');
+                                if (input) {
+                                  (input as HTMLTextAreaElement).focus();
+                                  (input as HTMLTextAreaElement).setSelectionRange(
+                                    message.length,
+                                    message.length
+                                  );
+                                }
+                              }, 10);
+                            }
+                          }}
+                          conversationId={selectedConversationId || undefined}
+                          contact={contact}
+                          user={user}
+                          conversation={selectedConversation}
+                          trigger={
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors">
+                                  <BoltIcon className="w-4 h-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Quick Replies</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          }
                         />
-                        <EmojiPicker
-                          onEmojiSelect={handleEmojiSelect}
-                          onClose={() => setShowEmojiPicker(false)}
-                        />
-                      </>
-                    )}
+
+                        <div className="w-px h-5 bg-border mx-1" />
+
+                        {/* Emoji Picker */}
+                        <div className="relative">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
+                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                              >
+                                <FaceSmileIcon className="w-4 h-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Emoji</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          {showEmojiPicker && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-40"
+                                onClick={() => setShowEmojiPicker(false)}
+                              />
+                              <EmojiPicker
+                                onEmojiSelect={handleEmojiSelect}
+                                onClose={() => setShowEmojiPicker(false)}
+                              />
+                            </>
+                          )}
+                        </div>
+
+                        {/* Variable Button */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
+                              onClick={() => {
+                                const variables = ['{{contact.name}}', '{{contact.phone}}', '{{user.name}}'];
+                                const input = document.querySelector('textarea');
+                                if (input) {
+                                  const variable = variables[Math.floor(Math.random() * variables.length)];
+                                  setMessageInput(prev => prev + variable);
+                                  setTimeout(() => {
+                                    (input as HTMLTextAreaElement).focus();
+                                  }, 10);
+                                }
+                              }}
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
+                              </svg>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Insert Variable</p>
+                          </TooltipContent>
+                        </Tooltip>
+
+                        {/* Attachment Menu */}
+                        <DropdownMenu>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
+                                >
+                                  <PaperClipIcon className="w-4 h-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Attach files</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <DropdownMenuContent align="start" className="w-48 bg-popover border border-border">
+                            <DropdownMenuItem
+                              onClick={() => triggerFileInput("image/*")}
+                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
+                            >
+                              <PhotoIcon className="w-4 h-4" />
+                              Photos
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => triggerFileInput("video/*")}
+                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
+                            >
+                              <FilmIcon className="w-4 h-4" />
+                              Videos
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => triggerFileInput("audio/*")}
+                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
+                            >
+                              <MusicalNoteIcon className="w-4 h-4" />
+                              Audio
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => triggerFileInput(".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv")}
+                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
+                            >
+                              <DocumentIcon className="w-4 h-4" />
+                              Documents
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => triggerFileInput(".zip,.rar,.7z,.tar,.gz")}
+                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
+                            >
+                              <ArchiveBoxIcon className="w-4 h-4" />
+                              Compressed
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+
+                        {/* Additional Icons */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                              </svg>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Voice Message</p>
+                          </TooltipContent>
+                        </Tooltip>
+
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
+                              </svg>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Save as Snippet</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+
+                      {/* Send Button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            onClick={handleSendMessage}
+                            disabled={(!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
+                            className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {sendMessage.isPending || sendMediaMessage.isPending ? (
+                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <PaperAirplaneIcon className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Send message</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleSendMessage}
-                        disabled={(!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
-                        className="p-3"
-                      >
-                        {sendMessage.isPending || sendMediaMessage.isPending ? (
-                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <PaperAirplaneIcon className="w-5 h-5" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Send message</p>
-                    </TooltipContent>
-                  </Tooltip>
                 </div>
               </div>
             </>

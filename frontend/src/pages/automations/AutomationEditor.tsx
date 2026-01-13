@@ -735,7 +735,7 @@ function AutomationEditorInner() {
   }, [nodes, setNodes, setEdges, updateNode]);
 
   const goBack = () => {
-    navigate(`/automations/${id}`);
+    navigate(`/automations/`);
   };
 
   if (isLoading || isLoadingAutomation) {
