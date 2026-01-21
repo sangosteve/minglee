@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, apiKeys, mediaAttachments, contacts, conversations, refreshTokens, messages, tags } from "./schema";
+import { users, apiKeys, mediaAttachments, contacts, conversations, refreshTokens, messages, tags, messageTemplates } from "./schema";
 
 export const apiKeysRelations = relations(apiKeys, ({one}) => ({
 	user: one(users, {
@@ -20,6 +20,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	refreshTokens: many(refreshTokens),
 	tags: many(tags),
 	contacts: many(contacts),
+	messageTemplates: many(messageTemplates),
 }));
 
 export const mediaAttachmentsRelations = relations(mediaAttachments, ({one, many}) => ({
@@ -82,6 +83,13 @@ export const messagesRelations = relations(messages, ({one}) => ({
 export const tagsRelations = relations(tags, ({one}) => ({
 	user: one(users, {
 		fields: [tags.userId],
+		references: [users.id]
+	}),
+}));
+
+export const messageTemplatesRelations = relations(messageTemplates, ({one}) => ({
+	user: one(users, {
+		fields: [messageTemplates.userId],
 		references: [users.id]
 	}),
 }));

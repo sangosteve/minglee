@@ -1,4 +1,4 @@
-// This file defines the database schema using Drizzle ORM for a messaging application.
+// schema.ts
 import { pgTable, uuid, varchar, text, timestamp, unique, boolean, foreignKey, integer, jsonb, index, doublePrecision, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
@@ -8,14 +8,8 @@ export const contactSource = pgEnum("contact_source", ['manual', 'whatsapp', 'im
 export const contactStatus = pgEnum("contact_status", ['active', 'inactive', 'archived', 'blocked', 'lead', 'customer'])
 export const teamRole = pgEnum("team_role", ['owner', 'admin', 'manager', 'member', 'viewer'])
 export const teamStatus = pgEnum("team_status", ['active', 'pending', 'inactive', 'suspended'])
-
-
-export const campaigns = pgTable("campaigns", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	name: varchar({ length: 255 }),
-	description: text().default(''),
-	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-});
+export const broadcastStatus = pgEnum("broadcast_status", ['draft', 'scheduled', 'sending', 'sent', 'failed', 'paused'])
+export const broadcastAudienceType = pgEnum("broadcast_audience_type", ['all', 'tags', 'segments', 'contacts'])
 
 export const users = pgTable("users", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -36,55 +30,14 @@ export const users = pgTable("users", {
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 }, (table) => [
 	unique("users_email_unique").on(table.email),
-]);
+])
 
-export const apiKeys = pgTable("api_keys", {
+export const campaigns = pgTable("campaigns", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	userId: uuid("user_id"),
-	name: varchar({ length: 100 }).notNull(),
-	key: varchar({ length: 64 }).notNull(),
-	lastUsed: timestamp("last_used", { mode: 'string' }),
-	expiresAt: timestamp("expires_at", { mode: 'string' }),
-	isActive: boolean("is_active").default(true),
+	name: varchar({ length: 255 }),
+	description: text().default(''),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-}, (table) => [
-	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "api_keys_user_id_users_id_fk"
-		}).onDelete("cascade"),
-	unique("api_keys_key_unique").on(table.key),
-]);
-
-export const mediaAttachments = pgTable("media_attachments", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	messageId: uuid("message_id"),
-	uploadedByUserId: uuid("uploaded_by_user_id"),
-	publicId: varchar("public_id", { length: 255 }).notNull(),
-	resourceType: varchar("resource_type", { length: 20 }).default('image'),
-	format: varchar({ length: 10 }),
-	version: varchar({ length: 20 }),
-	originalFilename: varchar("original_filename", { length: 255 }),
-	mimeType: varchar("mime_type", { length: 100 }),
-	fileSize: integer("file_size"),
-	width: integer(),
-	height: integer(),
-	duration: integer(),
-	secureUrl: text("secure_url").notNull(),
-	thumbnailUrl: text("thumbnail_url"),
-	caption: text(),
-	tags: text().array().default([]),
-	status: varchar({ length: 20 }).default('active'),
-	uploadedAt: timestamp("uploaded_at", { mode: 'string' }).defaultNow(),
-	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-}, (table) => [
-	foreignKey({
-			columns: [table.uploadedByUserId],
-			foreignColumns: [users.id],
-			name: "media_attachments_uploaded_by_user_id_users_id_fk"
-		}).onDelete("set null"),
-]);
+})
 
 export const contacts = pgTable("contacts", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -113,11 +66,59 @@ export const contacts = pgTable("contacts", {
 	tagIds: uuid("tag_ids").array().default([]),
 }, (table) => [
 	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "contacts_user_id_users_id_fk"
-		}).onDelete("set null"),
-]);
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "contacts_user_id_users_id_fk"
+	}).onDelete("set null"),
+])
+
+export const apiKeys = pgTable("api_keys", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id"),
+	name: varchar({ length: 100 }).notNull(),
+	key: varchar({ length: 64 }).notNull(),
+	lastUsed: timestamp("last_used", { mode: 'string' }),
+	expiresAt: timestamp("expires_at", { mode: 'string' }),
+	isActive: boolean("is_active").default(true),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "api_keys_user_id_users_id_fk"
+	}).onDelete("cascade"),
+	unique("api_keys_key_unique").on(table.key),
+])
+
+export const mediaAttachments = pgTable("media_attachments", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	messageId: uuid("message_id"),
+	uploadedByUserId: uuid("uploaded_by_user_id"),
+	publicId: varchar("public_id", { length: 255 }).notNull(),
+	resourceType: varchar("resource_type", { length: 20 }).default('image'),
+	format: varchar({ length: 10 }),
+	version: varchar({ length: 20 }),
+	originalFilename: varchar("original_filename", { length: 255 }),
+	mimeType: varchar("mime_type", { length: 100 }),
+	fileSize: integer("file_size"),
+	width: integer(),
+	height: integer(),
+	duration: integer(),
+	secureUrl: text("secure_url").notNull(),
+	thumbnailUrl: text("thumbnail_url"),
+	caption: text(),
+	tags: text().array().default([]),
+	status: varchar({ length: 20 }).default('active'),
+	uploadedAt: timestamp("uploaded_at", { mode: 'string' }).defaultNow(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.uploadedByUserId],
+		foreignColumns: [users.id],
+		name: "media_attachments_uploaded_by_user_id_users_id_fk"
+	}).onDelete("set null"),
+])
 
 export const conversations = pgTable("conversations", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -134,21 +135,21 @@ export const conversations = pgTable("conversations", {
 	tagIds: uuid("tag_ids").array().default([]),
 }, (table) => [
 	foreignKey({
-			columns: [table.contactId],
-			foreignColumns: [contacts.id],
-			name: "conversations_contact_id_contacts_id_fk"
-		}).onDelete("cascade"),
+		columns: [table.contactId],
+		foreignColumns: [contacts.id],
+		name: "conversations_contact_id_contacts_id_fk"
+	}).onDelete("cascade"),
 	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "conversations_user_id_users_id_fk"
-		}).onDelete("set null"),
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "conversations_user_id_users_id_fk"
+	}).onDelete("set null"),
 	foreignKey({
-			columns: [table.assignedToUserId],
-			foreignColumns: [users.id],
-			name: "conversations_assigned_to_user_id_users_id_fk"
-		}).onDelete("set null"),
-]);
+		columns: [table.assignedToUserId],
+		foreignColumns: [users.id],
+		name: "conversations_assigned_to_user_id_users_id_fk"
+	}).onDelete("set null"),
+])
 
 export const refreshTokens = pgTable("refresh_tokens", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -161,12 +162,12 @@ export const refreshTokens = pgTable("refresh_tokens", {
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
 }, (table) => [
 	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "refresh_tokens_user_id_users_id_fk"
-		}).onDelete("cascade"),
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "refresh_tokens_user_id_users_id_fk"
+	}).onDelete("cascade"),
 	unique("refresh_tokens_token_unique").on(table.token),
-]);
+])
 
 export const messages = pgTable("messages", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -183,21 +184,21 @@ export const messages = pgTable("messages", {
 	mediaAttachmentId: uuid("media_attachment_id"),
 }, (table) => [
 	foreignKey({
-			columns: [table.contactId],
-			foreignColumns: [contacts.id],
-			name: "messages_contact_id_contacts_id_fk"
-		}).onDelete("cascade"),
+		columns: [table.contactId],
+		foreignColumns: [contacts.id],
+		name: "messages_contact_id_contacts_id_fk"
+	}).onDelete("cascade"),
 	foreignKey({
-			columns: [table.conversationId],
-			foreignColumns: [conversations.id],
-			name: "messages_conversation_id_conversations_id_fk"
-		}).onDelete("cascade"),
+		columns: [table.conversationId],
+		foreignColumns: [conversations.id],
+		name: "messages_conversation_id_conversations_id_fk"
+	}).onDelete("cascade"),
 	foreignKey({
-			columns: [table.mediaAttachmentId],
-			foreignColumns: [mediaAttachments.id],
-			name: "messages_media_attachment_id_media_attachments_id_fk"
-		}),
-]);
+		columns: [table.mediaAttachmentId],
+		foreignColumns: [mediaAttachments.id],
+		name: "messages_media_attachment_id_media_attachments_id_fk"
+	}),
+])
 
 export const tags = pgTable("tags", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -210,11 +211,11 @@ export const tags = pgTable("tags", {
 }, (table) => [
 	index("idx_tags_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
-			columns: [table.userId],
-			foreignColumns: [users.id],
-			name: "tags_user_id_users_id_fk"
-		}).onDelete("cascade"),
-]);
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "tags_user_id_users_id_fk"
+	}).onDelete("cascade"),
+])
 
 export const quickReplies = pgTable("quick_replies", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -229,22 +230,7 @@ export const quickReplies = pgTable("quick_replies", {
 }, (table) => [
 	index("idx_quick_replies_is_active").using("btree", table.isActive.asc().nullsLast().op("bool_ops")),
 	index("idx_quick_replies_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
-]);
-
-export const automationRuns = pgTable("automation_runs", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	automationId: uuid("automation_id").notNull(),
-	contactId: uuid("contact_id"),
-	userId: uuid("user_id"),
-	triggerData: jsonb("trigger_data").default({}),
-	executionData: jsonb("execution_data").default({}),
-	nodeExecutions: jsonb("node_executions").default([]),
-	error: text(),
-	status: varchar({ length: 50 }).default('pending'),
-	startedAt: timestamp("started_at", { mode: 'string' }).defaultNow(),
-	completedAt: timestamp("completed_at", { mode: 'string' }),
-	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-});
+])
 
 export const automations = pgTable("automations", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -262,22 +248,33 @@ export const automations = pgTable("automations", {
 	nextRunAt: timestamp("next_run_at", { mode: 'string' }),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-});
+})
 
-export const teamInvitations = pgTable("team_invitations", {
+export const automationRuns = pgTable("automation_runs", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	teamId: uuid("team_id").notNull(),
-	invitedByUserId: uuid("invited_by_user_id").notNull(),
-	email: varchar({ length: 255 }).notNull(),
-	role: teamRole().default('member'),
-	token: varchar({ length: 100 }).notNull(),
-	status: varchar({ length: 20 }).default('pending'),
-	expiresAt: timestamp("expires_at", { mode: 'string' }).notNull(),
+	automationId: uuid("automation_id").notNull(),
+	contactId: uuid("contact_id"),
+	userId: uuid("user_id"),
+	triggerData: jsonb("trigger_data").default({}),
+	executionData: jsonb("execution_data").default({}),
+	nodeExecutions: jsonb("node_executions").default([]),
+	error: text(),
+	status: varchar({ length: 50 }).default('pending'),
+	startedAt: timestamp("started_at", { mode: 'string' }).defaultNow(),
+	completedAt: timestamp("completed_at", { mode: 'string' }),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+})
+
+export const teams = pgTable("teams", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	description: text(),
+	ownerId: uuid("owner_id").notNull(),
+	settings: jsonb().default({"maxMembers":10,"defaultRole":"member","canInviteMembers":true,"allowMemberDeletion":false}),
+	status: teamStatus().default('active'),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-}, (table) => [
-	unique("team_invitations_token_unique").on(table.token),
-]);
+})
 
 export const teamMembers = pgTable("team_members", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -296,18 +293,22 @@ export const teamMembers = pgTable("team_members", {
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
 }, (table) => [
 	unique("uq_team_members_team_user").on(table.teamId, table.userId),
-]);
+])
 
-export const teams = pgTable("teams", {
+export const teamInvitations = pgTable("team_invitations", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	name: varchar({ length: 255 }).notNull(),
-	description: text(),
-	ownerId: uuid("owner_id").notNull(),
-	settings: jsonb().default({"maxMembers":10,"defaultRole":"member","canInviteMembers":true,"allowMemberDeletion":false}),
-	status: teamStatus().default('active'),
+	teamId: uuid("team_id").notNull(),
+	invitedByUserId: uuid("invited_by_user_id").notNull(),
+	email: varchar({ length: 255 }).notNull(),
+	role: teamRole().default('member'),
+	token: varchar({ length: 100 }).notNull(),
+	status: varchar({ length: 20 }).default('pending'),
+	expiresAt: timestamp("expires_at", { mode: 'string' }).notNull(),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-});
+}, (table) => [
+	unique("team_invitations_token_unique").on(table.token),
+])
 
 export const userPermissions = pgTable("user_permissions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -316,4 +317,136 @@ export const userPermissions = pgTable("user_permissions", {
 	action: varchar({ length: 50 }).notNull(),
 	allowed: boolean().default(true),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
-});
+})
+
+export const messageTemplates = pgTable("message_templates", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	category: varchar({ length: 100 }),
+	language: varchar({ length: 10 }).default('en'),
+	status: varchar({ length: 50 }).default('pending'),
+	components: jsonb().default([]),
+	variables: jsonb().default([]),
+	whatsappTemplateId: varchar("whatsapp_template_id", { length: 255 }),
+	whatsappCategory: varchar("whatsapp_category", { length: 100 }),
+	whatsappLanguage: varchar("whatsapp_language", { length: 10 }),
+	userId: uuid("user_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+	metaTemplateId: varchar("meta_template_id", { length: 255 }),
+	metaStatus: varchar("meta_status", { length: 50 }).default('PENDING'),
+	metaReviewFeedback: text("meta_review_feedback"),
+	lastSyncedAt: timestamp("last_synced_at", { mode: 'string' }),
+	qualityRating: varchar("quality_rating", { length: 50 }),
+}, (table) => [
+	index("idx_message_templates_meta_id").using("btree", table.metaTemplateId.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_meta_status").using("btree", table.metaStatus.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_status").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "message_templates_user_id_fkey"
+	}).onDelete("cascade"),
+])
+
+// ==================== BROADCAST TABLES ====================
+
+export const broadcasts = pgTable("broadcasts", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	description: text(),
+	
+	// Template reference
+	templateId: uuid("template_id"),
+	
+	// Audience configuration
+	audienceType: broadcastAudienceType().default('all'),
+	audienceFilter: jsonb("audience_filter").default({}),
+	audienceCount: integer("audience_count").default(0),
+	
+	// Template variables
+	variables: jsonb().default({}),
+	mediaUrl: text("media_url"),
+	
+	// Message content (for non-template broadcasts)
+	message: text(),
+	mediaAttachmentId: uuid("media_attachment_id"),
+	
+	// Scheduling
+	status: broadcastStatus().default('draft'),
+	scheduledAt: timestamp("scheduled_at", { mode: 'string' }),
+	sentAt: timestamp("sent_at", { mode: 'string' }),
+	completedAt: timestamp("completed_at", { mode: 'string' }),
+	
+	// Statistics
+	stats: jsonb().default({
+		total: 0,
+		sent: 0,
+		delivered: 0,
+		read: 0,
+		failed: 0
+	}),
+	
+	// Metadata
+	metadata: jsonb().default({}),
+	error: text(),
+	
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.userId],
+		foreignColumns: [users.id],
+		name: "broadcasts_user_id_fkey"
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.templateId],
+		foreignColumns: [messageTemplates.id],
+		name: "broadcasts_template_id_fkey"
+	}).onDelete("set null"),
+	foreignKey({
+		columns: [table.mediaAttachmentId],
+		foreignColumns: [mediaAttachments.id],
+		name: "broadcasts_media_attachment_id_fkey"
+	}).onDelete("set null"),
+])
+
+export const broadcastMessages = pgTable("broadcast_messages", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	broadcastId: uuid("broadcast_id").notNull(),
+	contactId: uuid("contact_id").notNull(),
+	messageId: uuid("message_id"),
+	
+	// Status tracking
+	status: varchar({ length: 50 }).default('pending'),
+	whatsappMessageId: varchar("whatsapp_message_id", { length: 255 }),
+	whatsappStatus: varchar("whatsapp_status", { length: 50 }),
+	error: text(),
+	
+	// Timing
+	scheduledAt: timestamp("scheduled_at", { mode: 'string' }),
+	sentAt: timestamp("sent_at", { mode: 'string' }),
+	deliveredAt: timestamp("delivered_at", { mode: 'string' }),
+	readAt: timestamp("read_at", { mode: 'string' }),
+	
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+}, (table) => [
+	foreignKey({
+		columns: [table.broadcastId],
+		foreignColumns: [broadcasts.id],
+		name: "broadcast_messages_broadcast_id_fkey"
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.contactId],
+		foreignColumns: [contacts.id],
+		name: "broadcast_messages_contact_id_fkey"
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.messageId],
+		foreignColumns: [messages.id],
+		name: "broadcast_messages_message_id_fkey"
+	}).onDelete("set null"),
+])

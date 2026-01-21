@@ -1,387 +1,93 @@
-// frontend/src/pages/Conversations.tsx
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
-  useConversations,
   useConversation,
-  useSendMessage,
   useUpdateConversationStatus,
   useMarkAsRead,
   useUnreadCount,
-  useSendMediaMessage,
   type Conversation,
   type Message,
-  conversationsApi,
 } from "@/lib/api/conversations";
-import {
-  MagnifyingGlassIcon,
-  FunnelIcon,
-  PaperAirplaneIcon,
-  BoltIcon,
-  PaperClipIcon,
-  FaceSmileIcon,
-  EllipsisVerticalIcon,
-  PhoneIcon,
-  VideoCameraIcon,
-  CheckIcon,
-  CheckCircleIcon,
-  PhotoIcon,
-  PlayIcon,
-  DocumentIcon,
-  MusicalNoteIcon,
-  ArchiveBoxIcon,
-  ArrowDownTrayIcon,
-  XMarkIcon,
-  FilmIcon,
-  ChatBubbleLeftRightIcon,
-  ExclamationCircleIcon,
-  SparklesIcon,
-  ClockIcon,
-} from "@heroicons/react/24/outline";
-import {
-  CheckCircleIcon as CheckCircleSolid,
-  CheckIcon as CheckSolid,
-} from "@heroicons/react/24/solid";
-
-import { HugeiconsIcon } from '@hugeicons/react';
-import {
-  Tick01Icon,
-  TickDouble01Icon,
-  AlertCircleIcon,
-} from '@hugeicons/core-free-icons';
-
-import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { EmojiPicker } from "@/components/chat/EmojiPicker";
-import { AssignmentDropdown } from "@/components/chat/AssignmentDropdown";
-import { ConversationSidebar, ConversationFilters } from "@/components/chat/ConversationSidebar";
-import { useAuthStore } from "@/stores/auth.store";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useQuery } from "@tanstack/react-query";
 import { useQuickReplies } from "@/hooks/use-quick-replies";
-import QuickRepliesDropdown from "@/components/chat/QuickRepliesDropdown";
-import { VariableService } from '@/lib/variable-service';
-import DateSeparator from "@/components/chat/DateSeparator";
-import { isSameDay } from "date-fns";
-import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { useAuthStore } from "@/stores/auth.store";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
+// Components
+import { ConversationSidebar } from "@/components/chat/ConversationSidebar";
+import { ConversationList } from "@/components/chat/ConversationList";
+import { ContactHeader } from "@/components/chat/ContactHeader";
+import { MessagesContainer } from "@/components/chat/MessagesContainer";
+import { MessageInput } from "@/components/chat/MessageInput";
+import { AttachmentPreview } from "@/components/chat/AttachmentPreview";
+import { TemplateSelectDialog } from "@/components/chat/TemplateSelectDialog";
+import { TemplateVariablesDialog } from "@/components/chat/TemplateVariablesDialog";
 
-// Helper functions
-const getInitials = (name?: string | null) => {
-  if (!name) return "??";
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-};
+// Hooks
+import { useConversationsData } from "@/hooks/useConversationsData";
+import { useMessageHandlers } from "@/hooks/useMessageHandlers";
 
-const formatTime = (dateString: string) => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
-  if (diffDays < 7) return `${diffDays}d`;
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
-
-const formatMessageTime = (dateString: string) => {
-  const date = new Date(dateString);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-};
-
-
-
-const getFileIconColor = (filename: string) => {
-  if (!filename) return { bg: "bg-primary/20", text: "text-primary" };
-  if (filename.endsWith('.pdf')) return { bg: "bg-red-500/20", text: "text-red-500" };
-  if (filename.endsWith('.docx') || filename.endsWith('.doc')) return { bg: "bg-blue-500/20", text: "text-blue-500" };
-  if (filename.endsWith('.xlsx') || filename.endsWith('.xls')) return { bg: "bg-green-500/20", text: "text-green-500" };
-  if (filename.endsWith('.pptx') || filename.endsWith('.ppt')) return { bg: "bg-orange-500/20", text: "text-orange-500" };
-  if (filename.endsWith('.csv')) return { bg: "bg-emerald-500/20", text: "text-emerald-500" };
-  if (filename.endsWith('.zip') || filename.endsWith('.rar') || filename.endsWith('.tar') || filename.endsWith('.gz'))
-    return { bg: "bg-amber-500/20", text: "text-amber-500" };
-  return { bg: "bg-primary/20", text: "text-primary" };
-};
-
-const formatFileSize = (bytes?: number): string => {
-  if (!bytes) return 'N/A';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-};
-
-const getMediaType = (message: Message): string => {
-  const metadata = message.metadata || {};
-  const messageType = message.messageType?.toLowerCase();
-
-  // Return the actual message type if it's a known type
-  if (['image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts'].includes(messageType)) {
-    return messageType;
-  }
-
-  // Check for interactive messages
-  if (messageType === 'interactive' || metadata.interactive) {
-    return 'interactive';
-  }
-
-  // Check for button messages
-  if (messageType === 'button' || metadata.button) {
-    return 'button';
-  }
-
-  // Check metadata for type
-  if (metadata.image || metadata.mediaType === 'image') return 'image';
-  if (metadata.video || metadata.mediaType === 'video') return 'video';
-  if (metadata.audio || metadata.mediaType === 'audio') return 'audio';
-  if (metadata.document || metadata.mediaType === 'document') return 'document';
-  if (metadata.sticker) return 'sticker';
-  if (metadata.location) return 'location';
-  if (metadata.contacts) return 'contacts';
-
-  // Default to text
-  return 'text';
-};
-
-const hasMediaContent = (message: Message): boolean => {
-  const metadata = message.metadata || {};
-  const messageType = message.messageType?.toLowerCase();
-
-  // Check for media types
-  const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker'];
-  if (mediaTypes.includes(messageType)) {
-    return true;
-  }
-
-  // Check for media in metadata
-  return !!(
-    metadata.mediaAttachmentId ||
-    metadata.cloudinaryUrl ||
-    metadata.secureUrl ||
-    metadata.url ||
-    metadata.image ||
-    metadata.video ||
-    metadata.audio ||
-    metadata.document ||
-    metadata.media
-  );
-};
-
-const getMediaUrl = (message: Message): string | undefined => {
-  const metadata = message.metadata || {};
-  return metadata.cloudinaryUrl ||
-    metadata.secureUrl ||
-    metadata.url ||
-    metadata.image?.url ||
-    metadata.video?.url ||
-    metadata.audio?.url ||
-    metadata.document?.url;
-};
-
-const getFilename = (message: Message): string => {
-  const metadata = message.metadata || {};
-  return metadata.originalFilename ||
-    metadata.filename ||
-    metadata.document?.filename ||
-    message.body ||
-    'file';
-};
-
-const getMessageStatusIcon = (status: string) => {
-  const normalizedStatus = normalizeMessageStatus(status);
-
-  switch (normalizedStatus) {
-    case "read":
-      // Double green ticks for read messages
-      return (
-        <HugeiconsIcon
-          icon={TickDouble01Icon}
-          size={14}
-          color="#22c55e" // Green-500 color
-          strokeWidth={2}
-          title="Read"
-        />
-      );
-    case "delivered":
-      // Double gray ticks for delivered but unread
-      return (
-        <HugeiconsIcon
-          icon={TickDouble01Icon}
-          size={14}
-          color="rgba(var(--primary-foreground), 0.7)" // Using CSS variable for consistency
-          strokeWidth={2}
-          title="Delivered"
-        />
-      );
-    case "sent":
-      // Single tick for sent/undelivered
-      return (
-        <HugeiconsIcon
-          icon={Tick01Icon}
-          size={14}
-          color="rgba(var(--primary-foreground), 0.7)"
-          strokeWidth={2}
-          title="Sent"
-        />
-      );
-    default:
-      // Error icon for failed messages
-      return (
-        <HugeiconsIcon
-          icon={AlertCircleIcon}
-          size={14}
-          color="hsl(var(--destructive))"
-          strokeWidth={2}
-          title="Failed to send"
-        />
-      );
-  }
-};
-
-// Keep the normalizeMessageStatus function
-const normalizeMessageStatus = (status: string): string => {
-  const statusMap: Record<string, string> = {
-    'read': 'read',
-    'seen': 'read',
-    'delivered': 'delivered',
-    'sent': 'sent',
-    'pending': 'sent',
-    'failed': 'failed',
-    'undelivered': 'failed',
-    'error': 'failed'
-  };
-
-  return statusMap[status.toLowerCase()] || 'sent';
-};
-
-const getStatusIndicator = (status: string) => {
-  const statusMap: Record<string, string> = {
-    'active': 'bg-success',
-    'online': 'bg-success',
-    'offline': 'bg-muted-foreground',
-    'inactive': 'bg-muted-foreground',
-    'archived': 'bg-gray-500',
-  };
-  return statusMap[status] || 'bg-muted-foreground';
-};
-
-const getContactStatus = (contactStatus?: string): "online" | "offline" => {
-  if (contactStatus === 'active' || contactStatus === 'online') return 'online';
-  return 'offline';
-};
-
-type MediaType = "image" | "video" | "audio" | "document" | "compressed";
-
-interface AttachmentPreview {
-  file: File;
-  type: MediaType;
-  previewUrl: string;
-}
-
-const getFileType = (file: File): MediaType => {
-  const mimeType = file.type;
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.includes("zip") || mimeType.includes("rar") || mimeType.includes("7z") || mimeType.includes("tar") || mimeType.includes("gz")) return "compressed";
-  return "document";
-};
+// Types
+import type { Template } from "@/lib/api/templates";
+import { useApprovedTemplates, useSendTemplateMessage } from "@/lib/api/templates";
+import { ChatBubbleLeftRightIcon } from "@heroicons/react/24/outline";
 
 const Conversations = () => {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [messageInput, setMessageInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTab, setSelectedTab] = useState<string>("All");
-  const [attachments, setAttachments] = useState<AttachmentPreview[]>([]);
-  const [quickReplyMediaAttachments, setQuickReplyMediaAttachments] = useState<any[]>([]);
-  const [caption, setCaption] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
-  const [sidebarFilters, setSidebarFilters] = useState<ConversationFilters>({
-    inboxType: 'all',
-    lifecycle: '',
-    status: 'open',
-    teamInbox: '',
-    customInbox: '',
-    viewType: 'chats',
-  });
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
+  const [showTemplateSelect, setShowTemplateSelect] = useState(false);
+  const [showTemplateVariables, setShowTemplateVariables] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  
+  const { toast } = useToast();
   const { user } = useAuthStore();
+  const dropZoneRef = useRef<HTMLDivElement>(null);
+
+  // Hooks
+  const {
+    searchQuery,
+    setSearchQuery,
+    selectedTab,
+    setSelectedTab,
+    sidebarFilters,
+    setSidebarFilters,
+    conversations,
+    inboxCounts,
+    isLoading: conversationsLoading,
+    user: currentUser,
+  } = useConversationsData();
 
   const {
-    data: quickRepliesData,
-    isLoading: quickRepliesLoading,
-  } = useQuickReplies({
+    messageInput,
+    setMessageInput,
+    attachments,
+    setAttachments,
+    quickReplyMediaAttachments,
+    setQuickReplyMediaAttachments,
+    caption,
+    setCaption,
+    isDragging,
+    setIsDragging,
+    fileInputRef,
+    handleFileSelect,
+    handleRemoveAttachment,
+    handleClearAllAttachments,
+    handleSendMessage: handleSendMessageLogic,
+    triggerFileInput,
+    handleDragEnter,
+    handleDragLeave,
+    handleDragOver,
+    handleDrop,
+    handleEmojiSelect,
+    isSending,
+  } = useMessageHandlers();
+
+  const { data: quickRepliesData, isLoading: quickRepliesLoading } = useQuickReplies({
     page: 1,
     limit: 100,
     isActive: true,
   });
 
-  const quickReplies = quickRepliesData?.quickReplies ?? [];
-
-  // Debounce search query
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Fetch ALL conversations once
-  const { data: allConversationsData, isLoading: conversationsLoading } = useQuery({
-    queryKey: ['conversations', {
-      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
-      search: debouncedSearch
-    }],
-    queryFn: () => conversationsApi.getAllConversations({
-      status: selectedTab !== "All" ? selectedTab.toLowerCase() : undefined,
-      search: debouncedSearch || undefined,
-    }),
-    staleTime: 1000 * 30,
-  });
-
-  // Fetch assigned conversations (for "Mine" filter)
-  const { data: assignedConversationsData, isLoading: assignedLoading } = useQuery({
-    queryKey: ['conversations-assigned', { user: user?.id }],
-    queryFn: () => conversationsApi.getAssignedConversations(),
-    enabled: sidebarFilters.inboxType === 'mine' && !!user?.id,
-    staleTime: 1000 * 30,
-  });
-
-  // Fetch unassigned conversations (for "Unassigned" filter)
-  const { data: unassignedConversationsData, isLoading: unassignedLoading } = useQuery({
-    queryKey: ['conversations-unassigned'],
-    queryFn: () => conversationsApi.getUnassignedConversations(),
-    enabled: sidebarFilters.inboxType === 'unassigned',
-    staleTime: 1000 * 30,
-  });
+  const { data: approvedTemplates = [], isLoading: templatesLoading } = useApprovedTemplates();
+  const sendTemplateMutation = useSendTemplateMessage();
 
   const { data: conversationData, isLoading: conversationLoading } = useConversation(
     selectedConversationId || "",
@@ -389,64 +95,13 @@ const Conversations = () => {
     50
   );
 
-  const sendMessage = useSendMessage();
-  const sendMediaMessage = useSendMediaMessage();
-  const updateStatus = useUpdateConversationStatus();
   const markAsRead = useMarkAsRead();
   const { data: unreadCount } = useUnreadCount();
 
-  // Select the appropriate data based on active filter
-  const conversations = useMemo(() => {
-    switch (sidebarFilters.inboxType) {
-      case 'mine':
-        return assignedConversationsData?.conversations || [];
-      case 'unassigned':
-        return unassignedConversationsData?.conversations || [];
-      case 'all':
-      default:
-        return allConversationsData?.conversations || [];
-    }
-  }, [
-    sidebarFilters.inboxType,
-    allConversationsData?.conversations,
-    assignedConversationsData?.conversations,
-    unassignedConversationsData?.conversations,
-  ]);
-
-  const allConversations = allConversationsData?.conversations || [];
   const selectedConversation = conversationData?.conversation;
   const messages = conversationData?.messages || [];
   const contact = conversationData?.contact;
-
-  // Sort Messages:
-  const sortedMessages = useMemo(() => {
-    if (!messages) return [];
-    return [...messages].sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime();
-      const timeB = new Date(b.timestamp).getTime();
-      return timeA - timeB; // Ascending order (oldest first)
-    });
-  }, [messages]);
-
-  // Calculate counts for sidebar
-  const getInboxCounts = useMemo(() => {
-    const currentUserId = user?.id ? String(user.id) : null;
-
-    const mineCount = allConversations.filter(conv => {
-      if (!currentUserId || !conv.assignedToUserId) return false;
-      return String(conv.assignedToUserId) === currentUserId;
-    }).length;
-
-    const unassignedCount = allConversations.filter(conv => {
-      return conv.assignedToUserId === null || conv.assignedToUserId === undefined;
-    }).length;
-
-    return {
-      all: allConversations.length,
-      mine: mineCount,
-      unassigned: unassignedCount,
-    };
-  }, [allConversations, user?.id]);
+  const quickReplies = quickRepliesData?.quickReplies ?? [];
 
   // Auto-select first conversation
   useEffect(() => {
@@ -455,181 +110,16 @@ const Conversations = () => {
     }
   }, [conversations, selectedConversationId]);
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
   // Mark as read when conversation is selected
   useEffect(() => {
     if (selectedConversationId && selectedConversation?.unreadCount) {
       markAsRead.mutate(selectedConversationId);
     }
-  }, [selectedConversationId]);
+  }, [selectedConversationId, selectedConversation?.unreadCount]);
 
-  // Process files for attachment preview
-  const processFiles = (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const newAttachments: AttachmentPreview[] = fileArray.map(file => {
-      const type = getFileType(file);
-      const previewUrl = type === "image" || type === "video" ? URL.createObjectURL(file) : "";
-      return { file, type, previewUrl };
-    });
-    setAttachments(prev => [...prev, ...newAttachments]);
-    // Clear quick reply media if adding local files
-    if (fileArray.length > 0) {
-      setQuickReplyMediaAttachments([]);
-    }
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processFiles(e.target.files);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const handleRemoveAttachment = (index: number) => {
-    setAttachments(prev => {
-      const attachment = prev[index];
-      if (attachment?.previewUrl) {
-        URL.revokeObjectURL(attachment.previewUrl);
-      }
-      return prev.filter((_, i) => i !== index);
-    });
-  };
-
-  const handleClearAllAttachments = () => {
-    attachments.forEach(att => {
-      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-    });
-    setAttachments([]);
-    setQuickReplyMediaAttachments([]);
-    setCaption("");
-  };
-
-  const handleSendMessage = async () => {
-    if (!selectedConversationId || (!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0)) return;
-
-    try {
-      let finalMessage = messageInput.trim();
-      let captionForMedia = caption.trim();
-
-      // Check if message contains variables that need personalization
-      if (messageInput.includes('{{') && contact && user) {
-        // Personalize variables on client-side before sending
-        const personalizedMessage = VariableService.replaceVariables(
-          messageInput,
-          { contact, user, conversation: selectedConversation }
-        );
-
-        finalMessage = personalizedMessage.trim();
-
-        // Update input field to show what's being sent
-        if (messageInput !== finalMessage) {
-          setMessageInput(finalMessage);
-        }
-      }
-
-      // Also personalize caption if it has variables
-      if (caption.includes('{{') && contact && user) {
-        const personalizedCaption = VariableService.replaceVariables(
-          caption,
-          { contact, user, conversation: selectedConversation }
-        );
-
-        captionForMedia = personalizedCaption.trim();
-
-        if (caption !== captionForMedia) {
-          setCaption(captionForMedia);
-        }
-      }
-
-      // Priority: Quick reply media attachments > local attachments
-      if (quickReplyMediaAttachments.length > 0) {
-        // Format quick reply media attachments for backend
-        const formattedAttachments = quickReplyMediaAttachments.map((media, index) => ({
-          id: media.id,
-          secureUrl: media.secureUrl || media.url,
-          url: media.secureUrl || media.url,
-          mimeType: media.mimeType,
-          originalFilename: media.originalFilename || media.filename,
-          filename: media.filename || media.originalFilename,
-          fileSize: media.fileSize,
-          width: media.width,
-          height: media.height,
-          duration: media.duration,
-          caption: captionForMedia,
-        }));
-
-        // Send quick reply with pre-uploaded media
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversationId,
-          message: captionForMedia,
-          attachments: formattedAttachments,
-        });
-
-        // Clear quick reply media and caption
-        setQuickReplyMediaAttachments([]);
-        setCaption("");
-        setMessageInput("");
-
-      } else if (attachments.length > 0) {
-        // Send local media files
-        const formData = new FormData();
-
-        if (!contact?.phone) {
-          toast({
-            title: "Cannot send message",
-            description: "Contact phone number is missing",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        formData.append('phoneNumber', contact.phone);
-        formData.append('caption', captionForMedia || '');
-
-        if (attachments[0]) {
-          formData.append('file', attachments[0].file);
-        }
-
-        await sendMediaMessage.mutateAsync(formData);
-        handleClearAllAttachments();
-      } else {
-        // Plain text message (no media)
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversationId,
-          message: finalMessage,
-          attachments: [],
-        });
-      }
-
-      setMessageInput("");
-      setCaption("");
-    } catch (error) {
-      console.error('Error sending message:', error);
-      toast({
-        title: "Failed to send message",
-        description: "Please try again",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  const triggerFileInput = (accept: string) => {
-    if (fileInputRef.current) {
-      fileInputRef.current.accept = accept;
-      fileInputRef.current.click();
+  const handleSendMessage = () => {
+    if (selectedConversationId && contact && selectedConversation) {
+      handleSendMessageLogic(selectedConversationId, contact, selectedConversation);
     }
   };
 
@@ -666,38 +156,57 @@ const Conversations = () => {
     }
   };
 
-  const handleDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
+  const handleSelectTemplate = (template: Template) => {
+    setSelectedTemplate(template);
+    setShowTemplateVariables(true);
   };
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
+  const handleSendTemplate = async (variables: Record<string, string>, media?: { type: string; url: string }) => {
+    if (!selectedTemplate || !selectedConversationId || !contact) {
+      toast({
+        title: "Cannot send template",
+        description: "Missing required information",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
+    try {
+      const result = await sendTemplateMutation.mutateAsync({
+        templateId: selectedTemplate.id,
+        contactId: contact.id,
+        parameters: {
+          variables,
+          media,
+        },
+      });
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processFiles(e.dataTransfer.files);
+      if (result.success) {
+        toast({
+          title: "Template message sent!",
+          description: "The template has been sent successfully",
+        });
+      } else {
+        toast({
+          title: "Failed to send template message",
+          description: result.error || "Unknown error",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Error sending template:", error);
+      toast({
+        title: "Failed to send template message",
+        description: error.message || "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setSelectedTemplate(null);
+      setShowTemplateVariables(false);
     }
   };
 
-  const handleEmojiSelect = (emoji: string) => {
-    setMessageInput(prev => prev + emoji);
-  };
-
-  const handleSidebarFilterChange = (filters: ConversationFilters) => {
+  const handleSidebarFilterChange = (filters: any) => {
     setSidebarFilters(filters);
   };
 
@@ -705,15 +214,13 @@ const Conversations = () => {
     setSearchQuery(value);
   };
 
-  const isLoading = conversationsLoading || assignedLoading || unassignedLoading;
-
-  if (isLoading) {
+  if (conversationsLoading) {
     return (
       <div className="flex h-full bg-card overflow-hidden">
         <ConversationSidebar
           onFilterChange={handleSidebarFilterChange}
           currentUserId={user?.id}
-          inboxCounts={getInboxCounts}
+          inboxCounts={inboxCounts}
         />
 
         <div className="w-80 border-r border-border flex flex-col">
@@ -756,145 +263,30 @@ const Conversations = () => {
   return (
     <TooltipProvider>
       <div className="flex h-full bg-card rounded-xl shadow-card border border-border overflow-hidden">
-        <ConversationSidebar
-          onFilterChange={handleSidebarFilterChange}
-          currentUserId={user?.id}
-          inboxCounts={getInboxCounts}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
         />
 
-        <div className="w-80 border-r border-border flex flex-col">
-          <div className="p-4 border-b border-border">
-            <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Search conversations..."
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="w-full pl-9 pr-10"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 h-auto"
-                  >
-                    <FunnelIcon className="w-4 h-4 text-muted-foreground" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Advanced filters</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
+        <ConversationSidebar
+          onFilterChange={handleSidebarFilterChange}
+          currentUserId={currentUser?.id}
+          inboxCounts={inboxCounts}
+        />
 
-          <div className="px-4 py-2 border-b border-border">
-            <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
-              <TabsList className="grid grid-cols-4 w-full">
-                <TabsTrigger value="All" className="text-xs">All</TabsTrigger>
-                <TabsTrigger value="Unread" className="text-xs relative">
-                  Unread
-                  {unreadCount && unreadCount > 0 && (
-                    <Badge
-                      variant="destructive"
-                      className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs min-w-5"
-                    >
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="Open" className="text-xs">Open</TabsTrigger>
-                <TabsTrigger value="Resolved" className="text-xs">Resolved</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-
-          <ScrollArea className="flex-1">
-            {conversations.length === 0 ? (
-              <div className="p-8 text-center">
-                <ChatBubbleLeftRightIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">No conversations found</p>
-                {sidebarFilters.inboxType === 'mine' && (
-                  <p className="text-sm text-muted-foreground mt-2">
-                    You don't have any assigned conversations
-                  </p>
-                )}
-                {sidebarFilters.inboxType === 'unassigned' && (
-                  <p className="text-sm text-muted-foreground mt-2">
-                    All conversations are assigned
-                  </p>
-                )}
-                {searchQuery && (
-                  <p className="text-sm text-muted-foreground mt-2">
-                    Try a different search term
-                  </p>
-                )}
-              </div>
-            ) : (
-              conversations.map((conv) => {
-                const isSelected = conv.id === selectedConversationId;
-                const contact = conv.contact;
-                const contactStatus = getContactStatus(contact?.status);
-
-                return (
-                  <Button
-                    key={conv.id}
-                    variant="ghost"
-                    className={cn(
-                      "w-full flex items-start gap-3 p-4 h-auto hover:bg-secondary/50 transition-colors border-b border-border rounded-none relative group",
-                      isSelected && "bg-primary/5 border-l-2 border-l-primary"
-                    )}
-                    onClick={() => setSelectedConversationId(conv.id)}
-                  >
-                    <div className="relative flex-shrink-0">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                        <span className="text-sm font-medium text-primary">
-                          {getInitials(contact?.name)}
-                        </span>
-                      </div>
-                      <span
-                        className={cn(
-                          "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card",
-                          getStatusIndicator(contactStatus)
-                        )}
-                      />
-                    </div>
-
-                    {/* Main content area - takes remaining space */}
-                    <div className="flex-1 min-w-0">
-                      {/* Top row: Contact name + Time */}
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-medium text-foreground truncate">
-                          {contact?.name || contact?.phone || "Unknown"}
-                        </span>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0 ml-2">
-                          {formatTime(conv.lastMessageAt)}
-                        </span>
-                      </div>
-
-                      {/* Bottom row: Last message + Badge */}
-                      <div className="flex items-start w-full">
-                        <p className="text-sm text-muted-foreground truncate pr-2 flex-1 text-start">
-                          {conv.lastMessage || "No messages yet"}
-                        </p>
-                        {conv.unreadCount > 0 && (
-                          <Badge
-                            className="h-5 min-w-[20px] px-1 flex items-center justify-center bg-primary text-primary-foreground text-xs flex-shrink-0 mt-1"
-                            variant="default"
-                          >
-                            {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </Button>
-                );
-              })
-            )}
-          </ScrollArea>
-        </div>
+        <ConversationList
+          conversations={conversations}
+          selectedConversationId={selectedConversationId}
+          onSelectConversation={setSelectedConversationId}
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          selectedTab={selectedTab}
+          onTabChange={setSelectedTab}
+          unreadCount={unreadCount}
+        />
 
         <div
           ref={dropZoneRef}
@@ -904,14 +296,6 @@ const Conversations = () => {
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFileSelect}
-          />
-
           {isDragging && (
             <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-xl flex items-center justify-center z-50 backdrop-blur-sm">
               <div className="text-center">
@@ -924,1090 +308,82 @@ const Conversations = () => {
 
           {selectedConversation && contact ? (
             <>
-              <div className="h-16 px-6 flex items-center justify-between border-b border-border">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <span className="text-sm font-medium text-primary">
-                        {getInitials(contact?.name)}
-                      </span>
-                    </div>
-                    <span
-                      className={cn(
-                        "absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-card",
-                        getStatusIndicator(getContactStatus(contact?.status))
-                      )}
-                    />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">
-                      {contact?.name || contact?.phone || "Unknown"}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      {contact?.phone || "No phone"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <AssignmentDropdown
-                    conversationId={selectedConversation.id}
-                    currentAssignment={selectedConversation.assignedToUserId}
-                    onAssignmentChange={() => {
-                      // Invalidate queries to refresh data
-                    }}
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <PhoneIcon className="w-5 h-5 text-muted-foreground" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Call</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <VideoCameraIcon className="w-5 h-5 text-muted-foreground" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Video call</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <EllipsisVerticalIcon className="w-5 h-5 text-muted-foreground" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>More options</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
+              <ContactHeader
+                contact={contact}
+                conversation={selectedConversation}
+              />
 
+              <MessagesContainer
+                messages={messages}
+                isLoading={conversationLoading}
+                onDownloadMedia={handleDownloadMedia}
+                onViewMedia={handleViewMedia}
+              />
 
+              <AttachmentPreview
+                attachments={attachments}
+                quickReplyMediaAttachments={quickReplyMediaAttachments}
+                caption={caption}
+                onClearAll={handleClearAllAttachments}
+                onRemoveAttachment={handleRemoveAttachment}
+                onCaptionChange={setCaption}
+              />
 
-              <ScrollArea className="flex-1">
-                <div
-                  className="min-h-full bg-repeat bg-center"
-                  style={{
-                    backgroundColor: "hsl(var(--background))",
-                    backgroundImage: "url('/chat-bg.png')",
-                    backgroundSize: "420px",
-                    backgroundAttachment: "fixed",
-                  }}
-                >
-
-                  {/* Messages Content */}
-                  <div className="relative z-10 p-4 min-h-full">
-                    {conversationLoading ? (
-                      <div className="space-y-4">
-                        {[...Array(5)].map((_, i) => (
-                          <div
-                            key={i}
-                            className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}
-                          >
-                            <div className={`w-2/3 h-16 bg-secondary rounded-2xl animate-pulse ${i % 2 === 0 ? 'rounded-br-md' : 'rounded-bl-md'}`}></div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : messages.length === 0 ? (
-                      <div className="h-full flex items-center justify-center min-h-[400px]">
-                        <div className="text-center bg-card/80 backdrop-blur-sm p-8 rounded-xl border border-border/50">
-                          <ChatBubbleLeftRightIcon className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                          <p className="text-muted-foreground">No messages yet</p>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Start the conversation!
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {(() => {
-                          let lastDate: Date | null = null;
-                          const messageElements: React.ReactNode[] = [];
-
-                          sortedMessages.forEach((message) => {
-                            const messageDate = new Date(message.timestamp);
-                            const messageDay = new Date(
-                              messageDate.getFullYear(),
-                              messageDate.getMonth(),
-                              messageDate.getDate()
-                            );
-
-                            // Add date separator if needed
-                            if (!lastDate || !isSameDay(lastDate, messageDate)) {
-                              messageElements.push(
-                                <DateSeparator
-                                  key={`date-${message.id}-${message.timestamp}`}
-                                  dateString={message.timestamp}
-                                />
-                              );
-                              lastDate = messageDate;
-                            }
-
-                            // Render the message (KEEP ALL YOUR EXISTING MESSAGE RENDERING CODE)
-                            const isOutgoing = message.direction === "outgoing";
-                            const hasMedia = hasMediaContent(message);
-                            const mediaType = getMediaType(message);
-                            const mediaUrl = getMediaUrl(message);
-                            const filename = getFilename(message);
-                            const isInteractive = mediaType === 'interactive';
-                            const isButton = mediaType === 'button';
-                            const isLocation = mediaType === 'location';
-                            const isContacts = mediaType === 'contacts';
-                            const shouldShowMediaSection = hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
-                            const shouldShowText = message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
-                            const shouldShowFallback = !message.body && !hasMedia && !isInteractive && !isButton && !isLocation && !isContacts;
-
-                            messageElements.push(
-                              <div
-                                key={message.id}
-                                className={cn(
-                                  "flex mb-4",
-                                  isOutgoing ? "justify-end" : "justify-start"
-                                )}
-                              >
-                                <div
-                                  className={cn(
-                                    "max-w-[280px] rounded-2xl overflow-hidden",
-                                    (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "p-0" : "px-4 py-2.5",
-                                    isOutgoing
-                                      ? "bg-primary text-primary-foreground rounded-br-md"
-                                      : "bg-card border border-border text-foreground rounded-bl-md"
-                                  )}
-                                >
-                                  {/* Interactive Messages */}
-                                  {isInteractive && (
-                                    <div className={cn(
-                                      "w-full p-4",
-                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                    )}>
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                          🔄
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <p className={cn(
-                                            "text-sm font-medium",
-                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                          )}>
-                                            Interactive Message
-                                          </p>
-                                          <p className={cn(
-                                            "text-xs truncate",
-                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                          )}>
-                                            {message.metadata?.interactive?.type === 'list_reply' &&
-                                              `Selected: ${message.metadata.interactive.data?.title || 'Option'}`}
-                                            {message.metadata?.interactive?.type === 'button_reply' &&
-                                              `Clicked: ${message.metadata.interactive.data?.title || 'Button'}`}
-                                            {message.metadata?.interactive?.type === 'nfm_reply' &&
-                                              'Flow response'}
-                                            {!message.metadata?.interactive?.type && 'Interactive content'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      {message.body && message.body !== 'Interactive message' && (
-                                        <p className={cn(
-                                          "text-sm mt-2",
-                                          isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                        )}>
-                                          {message.body}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {/* Button Messages */}
-                                  {isButton && (
-                                    <div className={cn(
-                                      "w-full p-4",
-                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                    )}>
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-                                          🔘
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <p className={cn(
-                                            "text-sm font-medium",
-                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                          )}>
-                                            Button Message
-                                          </p>
-                                          <p className={cn(
-                                            "text-xs truncate",
-                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                          )}>
-                                            {message.metadata?.button?.text || message.body || 'Button action'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Location Messages */}
-                                  {isLocation && (
-                                    <div className={cn(
-                                      "w-full p-3",
-                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                    )}>
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                          📍
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <p className={cn(
-                                            "text-sm font-medium",
-                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                          )}>
-                                            Location Shared
-                                          </p>
-                                          <p className={cn(
-                                            "text-xs truncate",
-                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                          )}>
-                                            {message.metadata?.location?.name || message.metadata?.location?.address || message.body || 'Shared location'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      {message.metadata?.location && (
-                                        <a
-                                          href={`https://maps.google.com/?q=${message.metadata.location.latitude},${message.metadata.location.longitude}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className={cn(
-                                            "mt-2 w-full py-1.5 text-sm rounded-lg transition-colors text-center block",
-                                            isOutgoing ? "bg-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/30"
-                                              : "bg-primary/10 text-primary hover:bg-primary/20"
-                                          )}
-                                        >
-                                          View on Map
-                                        </a>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {/* Contacts Messages */}
-                                  {isContacts && (
-                                    <div className={cn(
-                                      "w-full p-4",
-                                      isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                    )}>
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
-                                          👥
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <p className={cn(
-                                            "text-sm font-medium",
-                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                          )}>
-                                            Contact Shared
-                                          </p>
-                                          <p className={cn(
-                                            "text-xs truncate",
-                                            isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                          )}>
-                                            {message.body || 'Contact information'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Media Messages */}
-                                  {shouldShowMediaSection && (
-                                    <div className="relative">
-                                      {mediaType === "image" && mediaUrl && (
-                                        <div className="relative">
-                                          <img
-                                            src={mediaUrl}
-                                            alt={message.body || "Image"}
-                                            className="w-full h-auto max-h-[400px] object-contain cursor-pointer bg-black/5"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              const modal = document.createElement('div');
-                                              modal.className = 'fixed inset-0 bg-black/90 z-50 flex items-center justify-center';
-                                              modal.onclick = () => modal.remove();
-
-                                              const img = document.createElement('img');
-                                              img.src = mediaUrl;
-                                              img.className = 'max-w-full max-h-full object-contain p-4';
-                                              img.onclick = (e) => e.stopPropagation();
-
-                                              modal.appendChild(img);
-                                              document.body.appendChild(modal);
-                                            }}
-                                          />
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                                onClick={() => handleDownloadMedia(message)}
-                                              >
-                                                <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Download image</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </div>
-                                      )}
-
-                                      {/* Video Messages */}
-                                      {mediaType === "video" && mediaUrl && (
-                                        <div className="relative w-full aspect-video bg-black/90">
-                                          <video
-                                            src={mediaUrl}
-                                            controls
-                                            className="w-full h-full object-contain"
-                                            preload="metadata"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Your browser does not support the video tag.
-                                          </video>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full hover:bg-black/70 transition-colors"
-                                                onClick={() => handleDownloadMedia(message)}
-                                              >
-                                                <ArrowDownTrayIcon className="w-4 h-4 text-white" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Download video</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                          <div className="absolute bottom-2 left-2 flex items-center gap-1 text-white text-xs">
-                                            <VideoCameraIcon className="w-4 h-4" />
-                                            <span>{message.metadata?.duration || "0:00"}</span>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* Audio Messages */}
-                                      {mediaType === "audio" && mediaUrl && (
-                                        <div className={cn(
-                                          "w-full p-4",
-                                          isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                        )}>
-                                          <div className="flex items-center gap-3">
-                                            <audio
-                                              src={mediaUrl}
-                                              controls
-                                              className="flex-1"
-                                              preload="metadata"
-                                            >
-                                              Your browser does not support the audio element.
-                                            </audio>
-                                            <Tooltip>
-                                              <TooltipTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="icon"
-                                                  className={cn(
-                                                    "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
-                                                    isOutgoing ? "bg-primary-foreground/20" : "bg-primary/10"
-                                                  )}
-                                                  onClick={() => handleDownloadMedia(message)}
-                                                >
-                                                  <ArrowDownTrayIcon className={cn(
-                                                    "w-5 h-5",
-                                                    isOutgoing ? "text-primary-foreground" : "text-primary"
-                                                  )} />
-                                                </Button>
-                                              </TooltipTrigger>
-                                              <TooltipContent>
-                                                <p>Download audio</p>
-                                              </TooltipContent>
-                                            </Tooltip>
-                                          </div>
-                                          {message.metadata?.duration && (
-                                            <div className="flex items-center justify-between mt-2">
-                                              <span className={cn(
-                                                "text-xs",
-                                                isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                              )}>
-                                                Duration: {message.metadata.duration}
-                                              </span>
-                                              <MusicalNoteIcon className={cn(
-                                                "w-3.5 h-3.5",
-                                                isOutgoing ? "text-primary-foreground/50" : "text-muted-foreground/50"
-                                              )} />
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {/* Document & Sticker Messages */}
-                                      {(mediaType === "document" || mediaType === "sticker") && (
-                                        <div className={cn(
-                                          "w-full p-3",
-                                          isOutgoing ? "bg-primary-hover/50" : "bg-secondary"
-                                        )}>
-                                          <div className="flex items-center gap-3">
-                                            <div className={cn(
-                                              "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                                              getFileIconColor(filename).bg
-                                            )}>
-                                              {mediaType === "sticker" ? (
-                                                <ArchiveBoxIcon className="text-amber-500" />
-                                              ) : (
-                                                <DocumentIcon className={getFileIconColor(filename).text} />
-                                              )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                              <p className={cn(
-                                                "text-sm font-medium truncate",
-                                                isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                              )}>
-                                                {filename}
-                                              </p>
-                                              <p className={cn(
-                                                "text-xs",
-                                                isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                              )}>
-                                                {formatFileSize(message.metadata?.fileSize)}
-                                              </p>
-                                            </div>
-                                            <Tooltip>
-                                              <TooltipTrigger asChild>
-                                                <Button
-                                                  variant="ghost"
-                                                  size="icon"
-                                                  className={cn(
-                                                    "p-2 rounded-full transition-colors",
-                                                    isOutgoing ? "hover:bg-primary-foreground/10" : "hover:bg-muted"
-                                                  )}
-                                                  onClick={() => handleDownloadMedia(message)}
-                                                >
-                                                  <ArrowDownTrayIcon className={cn(
-                                                    "w-4 h-4",
-                                                    isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                                  )} />
-                                                </Button>
-                                              </TooltipTrigger>
-                                              <TooltipContent>
-                                                <p>Download file</p>
-                                              </TooltipContent>
-                                            </Tooltip>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* Show caption for media messages */}
-                                      {message.body && mediaType !== "audio" && mediaType !== "document" && mediaType !== "sticker" && (
-                                        <div className="px-3 py-2">
-                                          <p className={cn(
-                                            "text-sm",
-                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
-                                          )}>
-                                            {message.body}
-                                          </p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {/* Text Messages */}
-                                  {shouldShowText && (
-                                    <p className="text-sm whitespace-pre-wrap">{message.body}</p>
-                                  )}
-
-                                  {/* Fallback for empty messages */}
-                                  {shouldShowFallback && (
-                                    <div className="px-4 py-2.5">
-                                      <p className="text-sm text-muted-foreground italic">Message</p>
-                                      {process.env.NODE_ENV === 'development' && (
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                          ID: {message.id} | Type: {message.messageType}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {/* Message timestamp and status */}
-                                  <div className={cn(
-                                    "flex items-center gap-1 px-3 pb-2",
-                                    (hasMedia || isInteractive || isButton || isLocation || isContacts) ? "" : "px-0 pb-0 mt-1",
-                                    isOutgoing ? "justify-end" : "justify-start"
-                                  )}>
-                                    <span className={cn(
-                                      "text-xs",
-                                      isOutgoing ? "text-primary-foreground/70" : "text-muted-foreground"
-                                    )}>
-                                      {formatMessageTime(message.timestamp)}
-                                    </span>
-                                    {isOutgoing && getMessageStatusIcon(message.status)}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          });
-
-                          return messageElements;
-                        })()}
-                        <div ref={messagesEndRef} />
-                      </>
-                    )}
-                  </div>
-                </div>
-              </ScrollArea>
-
-              {/* Quick reply media attachments preview */}
-              {quickReplyMediaAttachments.length > 0 && (
-                <div className="p-4 pb-0">
-                  <div className="bg-secondary rounded-xl p-3 border-2 border-primary/20">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="default" className="text-xs">
-                          <BoltIcon className="w-3 h-3 mr-1" />
-                          Quick Reply Media
-                        </Badge>
-                        <span className="text-sm font-medium text-foreground">
-                          {quickReplyMediaAttachments.length} file{quickReplyMediaAttachments.length > 1 ? "s" : ""} from quick reply
-                        </span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-destructive hover:text-destructive/80 transition-colors"
-                        onClick={() => setQuickReplyMediaAttachments([])}
-                      >
-                        Clear all
-                      </Button>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {quickReplyMediaAttachments.map((attachment, index) => {
-                        const getIcon = (mimeType: string) => {
-                          if (mimeType?.startsWith('image/')) return PhotoIcon;
-                          if (mimeType?.startsWith('video/')) return FilmIcon;
-                          if (mimeType?.startsWith('audio/')) return MusicalNoteIcon;
-                          if (mimeType?.includes('zip') || mimeType?.includes('rar')) return ArchiveBoxIcon;
-                          return DocumentIcon;
-                        };
-
-                        const Icon = getIcon(attachment.mimeType);
-                        const filename = attachment.originalFilename || attachment.filename || `Media ${index + 1}`;
-
-                        return (
-                          <div key={index} className="relative group">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <div className="w-16 h-16 bg-primary/10 rounded-lg flex flex-col items-center justify-center p-1 cursor-help">
-                                  <Icon className="w-5 h-5 text-primary" />
-                                  <span className="text-[8px] text-muted-foreground mt-1 truncate w-full text-center">
-                                    {filename.slice(0, 8)}...
-                                  </span>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{filename}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {attachment.mimeType || 'Unknown type'}
-                                </p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Caption input for quick reply media */}
-                    <Input
-                      type="text"
-                      placeholder="Add a caption for these files..."
-                      value={caption}
-                      onChange={(e) => setCaption(e.target.value)}
-                      className="w-full mt-2"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Local attachments preview (only show if no quick reply media) */}
-              {attachments.length > 0 && quickReplyMediaAttachments.length === 0 && (
-                <div className="p-4 pb-0">
-                  <div className="bg-secondary rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-sm font-medium text-foreground">
-                        {attachments.length} file{attachments.length > 1 ? "s" : ""} attached
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-destructive hover:text-destructive/80 transition-colors"
-                        onClick={handleClearAllAttachments}
-                      >
-                        Clear all
-                      </Button>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {attachments.map((attachment, index) => {
-                        const Icon = attachment.type === "image" ? PhotoIcon :
-                          attachment.type === "video" ? FilmIcon :
-                            attachment.type === "audio" ? MusicalNoteIcon :
-                              attachment.type === "compressed" ? ArchiveBoxIcon : DocumentIcon;
-
-                        return (
-                          <div key={index} className="relative group">
-                            <div className="w-20 h-20 bg-primary/5 rounded-lg overflow-hidden">
-                              {attachment.type === "image" && attachment.previewUrl ? (
-                                <img
-                                  src={attachment.previewUrl}
-                                  alt={attachment.file.name}
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                                  <Icon className="w-8 h-8 text-primary/60" />
-                                  <span className="text-[10px] text-muted-foreground mt-1 truncate w-full text-center">
-                                    {attachment.file.name.slice(0, 12)}...
-                                  </span>
-                                </div>
-                              )}
-                              <button
-                                onClick={() => handleRemoveAttachment(index)}
-                                className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <Input
-                      type="text"
-                      placeholder="Add a caption for all files..."
-                      value={caption}
-                      onChange={(e) => setCaption(e.target.value)}
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Message Input Area - UPDATED STRUCTURE */}
-              <div className="border-t border-border">
-                {/* Input Bar - Redesigned */}
-                <div className="p-4">
-                  <div className="border border-border rounded-xl bg-background">
-                    {/* Top Row - Channel selector and AI button */}
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border bg-background hover:bg-secondary transition-colors">
-                            <div className="w-4 h-4 rounded-full bg-[#25D366] flex items-center justify-center">
-                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
-                            </div>
-                            <span className="text-sm font-medium">WhatsApp</span>
-                            <span className="text-sm text-muted-foreground">(12)</span>
-                            <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-48 bg-popover border border-border">
-                          <DropdownMenuItem className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full bg-[#25D366] flex items-center justify-center">
-                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
-                            </div>
-                            <span>WhatsApp</span>
-                            <span className="text-muted-foreground ml-auto">(12)</span>
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full bg-[#7360F2] flex items-center justify-center">
-                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
-                            </div>
-                            <span>Instagram</span>
-                            <span className="text-muted-foreground ml-auto">(5)</span>
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full bg-[#0088CC] flex items-center justify-center">
-                              <PhoneIcon className="w-2.5 h-2.5 text-white" />
-                            </div>
-                            <span>Facebook</span>
-                            <span className="text-muted-foreground ml-auto">(3)</span>
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
-                          >
-                            <SparklesIcon className="w-5 h-5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>AI Assistant</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-
-                    {/* Text Input Area */}
-                    <div className="px-3 py-3">
-                      <Textarea
-                        value={messageInput}
-                        onChange={(e) => setMessageInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSendMessage();
-                          }
-                        }}
-                        placeholder="Use '/' for snippets, '$' for variables, ':' for emoji"
-                        rows={1}
-                        className="w-full bg-transparent text-sm placeholder:text-muted-foreground focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 resize-none border-0 p-0 min-h-[20px]"
-                        disabled={sendMessage.isPending || sendMediaMessage.isPending}
-                      />
-                    </div>
-
-                    {/* Bottom Row - Action icons and send button */}
-                    <div className="flex items-center justify-between px-3 py-2 border-t border-border">
-                      <div className="flex items-center gap-1">
-                        {/* Quick Replies Button */}
-                        <QuickRepliesDropdown
-                          quickReplies={quickReplies}
-                          isLoading={quickRepliesLoading}
-                          onInsertIntoInput={(message, mediaAttachments = []) => {
-                            if (mediaAttachments.length > 0) {
-                              setCaption(message);
-                              setMessageInput("");
-                              setQuickReplyMediaAttachments(mediaAttachments);
-                              setAttachments([]);
-                              toast({
-                                title: "Quick reply inserted",
-                                description: `Media with caption added`,
-                              });
-                            } else {
-                              setMessageInput(message);
-                              setCaption("");
-                              setTimeout(() => {
-                                const input = document.querySelector('textarea');
-                                if (input) {
-                                  (input as HTMLTextAreaElement).focus();
-                                  (input as HTMLTextAreaElement).setSelectionRange(
-                                    message.length,
-                                    message.length
-                                  );
-                                }
-                              }, 10);
-                            }
-                          }}
-                          conversationId={selectedConversationId || undefined}
-                          contact={contact}
-                          user={user}
-                          conversation={selectedConversation}
-                          trigger={
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors">
-                                  <BoltIcon className="w-4 h-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Quick Replies</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          }
-                        />
-
-                        <div className="w-px h-5 bg-border mx-1" />
-
-                        {/* Emoji Picker */}
-                        <div className="relative">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                              >
-                                <FaceSmileIcon className="w-4 h-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Emoji</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          {showEmojiPicker && (
-                            <>
-                              <div
-                                className="fixed inset-0 z-40"
-                                onClick={() => setShowEmojiPicker(false)}
-                              />
-                              <EmojiPicker
-                                onEmojiSelect={handleEmojiSelect}
-                                onClose={() => setShowEmojiPicker(false)}
-                              />
-                            </>
-                          )}
-                        </div>
-
-                        {/* Variable Button */}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                              onClick={() => {
-                                const variables = ['{{contact.name}}', '{{contact.phone}}', '{{user.name}}'];
-                                const input = document.querySelector('textarea');
-                                if (input) {
-                                  const variable = variables[Math.floor(Math.random() * variables.length)];
-                                  setMessageInput(prev => prev + variable);
-                                  setTimeout(() => {
-                                    (input as HTMLTextAreaElement).focus();
-                                  }, 10);
-                                }
-                              }}
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z" />
-                              </svg>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Insert Variable</p>
-                          </TooltipContent>
-                        </Tooltip>
-
-                        {/* Attachment Menu */}
-                        <DropdownMenu>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                                >
-                                  <PaperClipIcon className="w-4 h-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Attach files</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <DropdownMenuContent align="start" className="w-48 bg-popover border border-border">
-                            <DropdownMenuItem
-                              onClick={() => triggerFileInput("image/*")}
-                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
-                            >
-                              <PhotoIcon className="w-4 h-4" />
-                              Photos
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => triggerFileInput("video/*")}
-                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
-                            >
-                              <FilmIcon className="w-4 h-4" />
-                              Videos
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => triggerFileInput("audio/*")}
-                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
-                            >
-                              <MusicalNoteIcon className="w-4 h-4" />
-                              Audio
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => triggerFileInput(".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv")}
-                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
-                            >
-                              <DocumentIcon className="w-4 h-4" />
-                              Documents
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => triggerFileInput(".zip,.rar,.7z,.tar,.gz")}
-                              className="cursor-pointer hover:bg-secondary flex items-center gap-2"
-                            >
-                              <ArchiveBoxIcon className="w-4 h-4" />
-                              Compressed
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-
-                        {/* Additional Icons */}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
-                              </svg>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Voice Message</p>
-                          </TooltipContent>
-                        </Tooltip>
-
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition-colors"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
-                              </svg>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Save as Snippet</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-
-                      {/* Send Button */}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            onClick={handleSendMessage}
-                            disabled={(!messageInput.trim() && attachments.length === 0 && quickReplyMediaAttachments.length === 0) || sendMessage.isPending || sendMediaMessage.isPending}
-                            className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {sendMessage.isPending || sendMediaMessage.isPending ? (
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <PaperAirplaneIcon className="w-4 h-4" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Send message</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <MessageInput
+                value={messageInput}
+                onChange={setMessageInput}
+                onSend={handleSendMessage}
+                onEmojiSelect={handleEmojiSelect}
+                onFileSelect={triggerFileInput}
+                onTemplateSelect={() => setShowTemplateSelect(true)}
+                disabled={isSending}
+                isSending={isSending}
+                fileInputRef={fileInputRef}
+                quickReplies={quickReplies}
+                quickRepliesLoading={quickRepliesLoading}
+                conversationId={selectedConversationId}
+                contact={contact}
+                user={currentUser}
+                conversation={selectedConversation}
+              />
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <ChatBubbleLeftRightIcon className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">Select a conversation</h3>
-                <p className="text-muted-foreground">
-                  Choose a conversation from the list to start messaging
-                </p>
-              </div>
-            </div>
+            <EmptyConversationState />
           )}
         </div>
 
-        {selectedConversation && contact && (
-          <div className="w-72 border-l border-border p-6 hidden xl:block">
-            <div className="text-center mb-6">
-              <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
-                <span className="text-2xl font-semibold text-primary">
-                  {getInitials(contact?.name)}
-                </span>
-              </div>
-              <h3 className="font-semibold text-foreground">
-                {contact?.name || "Unknown"}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {contact?.phone || "No phone"}
-              </p>
-            </div>
+        {/* Template Dialogs */}
+        <TemplateSelectDialog
+          open={showTemplateSelect}
+          onOpenChange={setShowTemplateSelect}
+          onSelectTemplate={handleSelectTemplate}
+        />
 
-            <div className="space-y-4">
-              <div>
-                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Contact Info</h4>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Email</span>
-                    <span className="text-foreground">{contact?.email || "Not set"}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Location</span>
-                    <span className="text-foreground">
-                      {contact?.city || contact?.country ? `${contact.city || ''}${contact.city && contact.country ? ', ' : ''}${contact.country || ''}` : 'Not set'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Source</span>
-                    <span className="text-foreground capitalize">{contact?.source || "whatsapp"}</span>
-                  </div>
-                </div>
-              </div>
-
-              {contact?.tags && contact.tags.length > 0 && (
-                <div className="border-t border-border pt-4">
-                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Tags</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {contact.tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="px-2 py-1">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="border-t border-border pt-4">
-                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Notes</h4>
-                <p className="text-sm text-muted-foreground">
-                  {contact?.note || "No notes available"}
-                </p>
-              </div>
-
-              <div className="border-t border-border pt-4">
-                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Conversation Info</h4>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Messages</span>
-                    <span className="text-foreground">{messages.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Last active</span>
-                    <span className="text-foreground">
-                      {formatTime(selectedConversation.lastMessageAt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Created</span>
-                    <span className="text-foreground">
-                      {new Date(selectedConversation.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <TemplateVariablesDialog
+          open={showTemplateVariables}
+          onOpenChange={setShowTemplateVariables}
+          template={selectedTemplate}
+          onSend={handleSendTemplate}
+        />
       </div>
     </TooltipProvider>
   );
 };
+
+// Helper functions that need to be imported
+import { getMediaUrl, getFilename } from "@/components/chat/message-utils";
+import { PaperClipIcon } from "@heroicons/react/24/outline";
+
+const EmptyConversationState = () => (
+  <div className="flex-1 flex items-center justify-center">
+    <div className="text-center">
+      <ChatBubbleLeftRightIcon className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+      <h3 className="text-lg font-semibold mb-2">Select a conversation</h3>
+      <p className="text-muted-foreground">
+        Choose a conversation from the list to start messaging
+      </p>
+    </div>
+  </div>
+);
 
 export default Conversations;

@@ -11,7 +11,8 @@ import Index from "./pages/Index";
 import Conversations from "./pages/Conversations";
 import Contacts from "./pages/Contacts";
 import Analytics from "./pages/Analytics";
-import Broadcasts from "./pages/Broadcasts";
+import Broadcasts from "./pages/broadcasts/Broadcasts";
+import CreateBroadcast from "./pages/broadcasts/CreateBroadcast"; // Add this import
 import Campaigns from "./pages/Campaigns";
 import Automations from "./pages/automations/Automations";
 import Teams from "./pages/Teams";
@@ -29,6 +30,10 @@ import AutomationBuilder from "./pages/automations/AutomationBuilder";
 import AutomationEditor from "./pages/automations/AutomationEditor";
 import { TeamInvitationPage } from "./pages/TeamInvitationPage";
 import Dashboard from "./pages/Dashboard";
+import Templates from '@/pages/templates/Templates';
+import CreateTemplate from '@/pages/templates/CreateTemplate';
+import TemplateDetail from '@/pages/templates/TemplateDetail';
+import BroadcastDetails from "./pages/broadcasts/BroadcastDetails";
 
 const queryClient = new QueryClient();
 
@@ -122,7 +127,31 @@ const AppContent = () => {
           </MainLayout>
         </ProtectedRoute>
       } />
-      
+
+      <Route path="/templates" element={
+        <ProtectedRoute>
+          <MainLayout title="Templates" subtitle="Manage all your conversations">
+            <Templates />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+      <Route path="/templates/create" element={
+        <ProtectedRoute>
+          <MainLayout title="Templates" subtitle="Manage all your conversations">
+            <CreateTemplate />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+      <Route path="/templates/:id" element={
+        <ProtectedRoute>
+          <MainLayout title="Templates" subtitle="Manage all your conversations">
+            <TemplateDetail />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
       <Route path="/contacts" element={
         <ProtectedRoute>
           <MainLayout title="Contacts" subtitle="Manage your contact list">
@@ -139,10 +168,27 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
       
+      {/* Broadcast Routes */}
       <Route path="/broadcasts" element={
         <ProtectedRoute>
           <MainLayout title="Broadcasts" subtitle="Send messages to your audience">
             <Broadcasts />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+      
+      <Route path="/broadcasts/create" element={
+        <ProtectedRoute>
+          <MainLayout title="Create Broadcast" subtitle="Send messages to multiple contacts">
+            <CreateBroadcast />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+            <Route path="/broadcasts/:id" element={
+        <ProtectedRoute>
+          <MainLayout title="Broadcast Detail" subtitle="View broadcast details and status">
+            <BroadcastDetails />
           </MainLayout>
         </ProtectedRoute>
       } />

@@ -63,6 +63,16 @@ import KeywordActionPanel from "@/components/automations/panels/KeywordActionPan
 import DelayPanel from "@/components/automations/panels/DelayPanel";
 import ListMessagePanel from "@/components/automations/panels/ListMessagePanel";
 import InteractiveMessagePanel from "@/components/automations/panels/InteractiveMessagePanel";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Default edge options
 const defaultEdgeOptions = {
@@ -114,6 +124,22 @@ function AutomationEditorInner() {
   const popupRef = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  
+  // Alert dialog states
+  const [deleteAlert, setDeleteAlert] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    actionType: 'node' | 'edge' | 'reset';
+    itemId?: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    description: "",
+    actionType: 'node',
+    onConfirm: () => {},
+  });
 
   // Query hooks
   const { data: automation, isLoading: isLoadingAutomation, refetch } = useAutomation(id!);
@@ -168,7 +194,7 @@ function AutomationEditorInner() {
           ...node,
           data: {
             ...node.data,
-            onDelete: node.type === "triggerNode" ? undefined : deleteNode,
+            onDelete: node.type === "triggerNode" ? undefined : deleteNodeWithConfirmation,
             onUpdate: updateNode,
           },
         }));
@@ -220,12 +246,13 @@ function AutomationEditorInner() {
 
       if (result.data.success) {
         toast({
-          title: "Success",
+          title: "✅ Success",
           description: "Automation triggered successfully",
+          className: "border-green-500 bg-green-50 dark:bg-green-950/30",
         });
       } else {
         toast({
-          title: "Error",
+          title: "❌ Error",
           description: result.data.error,
           variant: "destructive",
         });
@@ -233,11 +260,37 @@ function AutomationEditorInner() {
     } catch (error) {
       console.error('Error triggering automation:', error);
       toast({
-        title: "Error",
+        title: "❌ Error",
         description: "Failed to trigger automation",
         variant: "destructive",
       });
     }
+  };
+
+  // Show delete confirmation dialog
+  const showDeleteConfirmation = (type: 'node' | 'edge' | 'reset', itemId?: string, onConfirm: () => void) => {
+    const messages = {
+      node: {
+        title: "Delete Block",
+        description: "Are you sure you want to delete this block? This action cannot be undone."
+      },
+      edge: {
+        title: "Delete Connection",
+        description: "Are you sure you want to delete this connection? This action cannot be undone."
+      },
+      reset: {
+        title: "Reset Flow",
+        description: "Are you sure you want to reset the entire flow? This will delete all blocks except the trigger."
+      }
+    };
+
+    setDeleteAlert({
+      isOpen: true,
+      ...messages[type],
+      actionType: type,
+      itemId,
+      onConfirm,
+    });
   };
 
   // Delete node function
@@ -252,8 +305,24 @@ function AutomationEditorInner() {
       if (selectedNode && selectedNode.id === nodeId) {
         setSelectedNode(null);
       }
+
+      toast({
+        title: "🗑️ Block Deleted",
+        description: "The block has been successfully removed.",
+        className: "border-orange-500 bg-orange-50 dark:bg-orange-950/30",
+      });
     },
     [setNodes, setEdges, selectedNode],
+  );
+
+  // Delete node with confirmation
+  const deleteNodeWithConfirmation = useCallback(
+    (nodeId: string) => {
+      if (nodeId.startsWith('trigger-')) return;
+
+      showDeleteConfirmation('node', nodeId, () => deleteNode(nodeId));
+    },
+    [deleteNode],
   );
 
   // Delete edge function
@@ -267,8 +336,9 @@ function AutomationEditorInner() {
       }
 
       toast({
-        title: "Connection removed",
-        description: "The connection between nodes has been removed",
+        title: "🔗 Connection Removed",
+        description: "The connection between blocks has been removed.",
+        className: "border-blue-500 bg-blue-50 dark:bg-blue-950/30",
       });
     },
     [setEdges, selectedEdge],
@@ -277,7 +347,7 @@ function AutomationEditorInner() {
   // Delete selected edge function
   const deleteSelectedEdge = useCallback(() => {
     if (selectedEdge) {
-      deleteEdge(selectedEdge.id);
+      showDeleteConfirmation('edge', selectedEdge.id, () => deleteEdge(selectedEdge.id));
     }
   }, [selectedEdge, deleteEdge]);
 
@@ -367,7 +437,7 @@ function AutomationEditorInner() {
 
     const baseData = {
       label,
-      onDelete: deleteNode,
+      onDelete: deleteNodeWithConfirmation,
       onUpdate: updateNode,
     };
 
@@ -407,7 +477,7 @@ function AutomationEditorInner() {
     };
 
     return newNode;
-  }, [nodeId, deleteNode, updateNode]);
+  }, [nodeId, deleteNodeWithConfirmation, updateNode]);
 
   // Handle adding nodes from connection popup
   const handleCreateNode = useCallback((type: string) => {
@@ -535,7 +605,7 @@ function AutomationEditorInner() {
   const saveWorkflow = async () => {
     if (!workflowName.trim()) {
       toast({
-        title: "Error",
+        title: "❌ Error",
         description: "Please enter a name for your automation",
         variant: "destructive",
       });
@@ -665,8 +735,9 @@ function AutomationEditorInner() {
       console.log("Save response:", result);
 
       toast({
-        title: "Success",
+        title: "✅ Success",
         description: "Automation updated successfully!",
+        className: "border-green-500 bg-green-50 dark:bg-green-950/30",
       });
 
       refetch();
@@ -674,7 +745,7 @@ function AutomationEditorInner() {
     } catch (error) {
       console.error('Error updating workflow:', error);
       toast({
-        title: "Error",
+        title: "❌ Error",
         description: error instanceof Error ? error.message : "Failed to update automation",
         variant: "destructive",
       });
@@ -691,12 +762,15 @@ function AutomationEditorInner() {
       await updateStatusMutation.mutateAsync({ id: id!, status: newStatus });
       setWorkflowStatus(newStatus);
       toast({
-        title: `Automation ${newStatus === 'active' ? 'activated' : 'paused'}`,
+        title: `🔄 Automation ${newStatus === 'active' ? 'Activated' : 'Paused'}`,
         description: `Automation has been ${newStatus === 'active' ? 'activated' : 'paused'} successfully.`,
+        className: newStatus === 'active' 
+          ? "border-green-500 bg-green-50 dark:bg-green-950/30" 
+          : "border-amber-500 bg-amber-50 dark:bg-amber-950/30",
       });
     } catch (error) {
       toast({
-        title: "Error",
+        title: "❌ Error",
         description: "Failed to update automation status.",
         variant: "destructive",
       });
@@ -705,32 +779,35 @@ function AutomationEditorInner() {
 
   // Reset flow
   const resetFlow = useCallback(() => {
-    const triggerNode = nodes.find(node => node.type === 'triggerNode');
-    if (triggerNode) {
-      setNodes([triggerNode]);
-    } else {
-      // Create a new trigger node if none exists
-      const newTriggerNode: Node = {
-        id: 'trigger-1',
-        type: 'triggerNode',
-        position: { x: 100, y: 100 },
-        data: {
-          triggerType: 'new_conversation',
-          label: 'Trigger',
-          config: {},
-          onDelete: undefined,
-          onUpdate: updateNode,
-        },
-      };
-      setNodes([newTriggerNode]);
-    }
-    setEdges([]);
-    setSelectedEdge(null);
-    setSelectedNode(null);
-    setNodeId(2);
-    toast({
-      title: "Flow reset",
-      description: "Automation flow has been reset",
+    showDeleteConfirmation('reset', undefined, () => {
+      const triggerNode = nodes.find(node => node.type === 'triggerNode');
+      if (triggerNode) {
+        setNodes([triggerNode]);
+      } else {
+        // Create a new trigger node if none exists
+        const newTriggerNode: Node = {
+          id: 'trigger-1',
+          type: 'triggerNode',
+          position: { x: 100, y: 100 },
+          data: {
+            triggerType: 'new_conversation',
+            label: 'Trigger',
+            config: {},
+            onDelete: undefined,
+            onUpdate: updateNode,
+          },
+        };
+        setNodes([newTriggerNode]);
+      }
+      setEdges([]);
+      setSelectedEdge(null);
+      setSelectedNode(null);
+      setNodeId(2);
+      toast({
+        title: "🔄 Flow Reset",
+        description: "Automation flow has been reset successfully.",
+        className: "border-blue-500 bg-blue-50 dark:bg-blue-950/30",
+      });
     });
   }, [nodes, setNodes, setEdges, updateNode]);
 
@@ -1396,6 +1473,40 @@ function AutomationEditorInner() {
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Alert Dialog */}
+      <AlertDialog open={deleteAlert.isOpen} onOpenChange={(open) => setDeleteAlert(prev => ({ ...prev, isOpen: open }))}>
+        <AlertDialogContent className="bg-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground">
+              {deleteAlert.title}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              {deleteAlert.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-border hover:bg-secondary text-foreground">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                deleteAlert.onConfirm();
+                setDeleteAlert(prev => ({ ...prev, isOpen: false }));
+              }}
+              className={
+                deleteAlert.actionType === 'node' || deleteAlert.actionType === 'reset'
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : "bg-blue-600 text-blue-50 hover:bg-blue-700"
+              }
+            >
+              {deleteAlert.actionType === 'node' ? 'Delete Block' : 
+               deleteAlert.actionType === 'edge' ? 'Delete Connection' : 
+               'Reset Flow'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </MainLayout>
   );
 }

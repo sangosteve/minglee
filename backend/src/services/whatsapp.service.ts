@@ -89,7 +89,7 @@ export interface MediaDownloadOptions {
 }
 
 export class WhatsAppService {
-  private static apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
+  private static apiVersion = process.env.WHATSAPP_API_VERSION || 'v23.0';
   private static baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
 
 
@@ -499,44 +499,77 @@ static async sendInteractiveMessage(
   /**
    * Send template message
    */
-  static async sendTemplateMessage(
-    phoneNumberId: string,
-    to: string,
-    templateName: string,
-    languageCode: string,
-    components: any[] = [],
-    accessToken: string
-  ): Promise<any> {
-    try {
-      const response = await axios.post(
-        `${this.baseUrl}/${phoneNumberId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          to,
-          type: 'template',
-          template: {
-            name: templateName,
-            language: {
-              code: languageCode,
-            },
-            components,
-          },
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
+static async sendTemplateMessage(
+  phoneNumberId: string,
+  to: string,
+  templateName: string,
+  language: string, // Language should already be in correct format like "en_US"
+  components: any[] = [],
+  accessToken: string
+): Promise<any> {
+  try {
+    // Format phone number (remove non-digits)
+    const formattedTo = to.replace(/\D/g, '');
+    
+    // Log the language exactly as received
+    console.log('🔍 WhatsApp template language (as received):', {
+      templateName,
+      language,
+      isUnderscored: language.includes('_'),
+      length: language.length,
+    });
+    
+    // Build request body - USE LANGUAGE AS-IS
+    const requestBody: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: formattedTo,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: {
+          code: language, // Use the language exactly as provided
         }
-      );
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ Error sending template message:', error.response?.data || error.message);
-      throw error;
+      }
+    };
+    
+    // Only add components if we have them
+    if (components && components.length > 0) {
+      requestBody.template.components = components;
     }
+    
+    const url = `${this.baseUrl}/${phoneNumberId}/messages`;
+    console.log('📤 WhatsApp API URL:', url);
+    console.log('📤 WhatsApp Template Request:', JSON.stringify(requestBody, null, 2));
+    
+    const response = await axios.post(
+      url,
+      requestBody,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    console.log('✅ WhatsApp Template Response:', response.data);
+    return response.data;
+    
+  } catch (error: any) {
+    console.error('❌ WhatsApp Template Error:', {
+      templateName,
+      language,
+      to,
+      error: error.message,
+      responseError: error.response?.data,
+      status: error.response?.status,
+    });
+    
+    throw error;
   }
-
+}
   /**
    * Get business profile
    */

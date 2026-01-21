@@ -15,6 +15,8 @@ import {
   Logout01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  BrochureIcon,
+  Megaphone03Icon
 } from '@hugeicons/core-free-icons';
 import {
   DropdownMenu,
@@ -74,6 +76,8 @@ export function Sidebar() {
       badge: unreadCount > 0 ? unreadCount : undefined 
     },
     { name: "Contacts", href: "/contacts", icon: Contact01Icon },
+    { name: "Templates", href: "/templates", icon:  BrochureIcon},
+    { name: "Broadcasts", href: "/broadcasts", icon: Megaphone03Icon },
     { name: "Automations", href: "/automations", icon: AlgorithmIcon  },
     { name: "Analytics", href: "/analytics", icon: ChartDownIcon },
   ];

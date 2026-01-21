@@ -40,6 +40,16 @@ import {
   type AutomationWorkflow,
 } from "@/lib/api/automations";
 import { format, formatDistanceToNow, isValid } from 'date-fns';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Helper functions
 const formatDate = (dateString: string) => {
@@ -158,6 +168,15 @@ const Automations = () => {
     status: "",
   });
 
+  // Alert dialog state
+  const [deleteAlert, setDeleteAlert] = useState<{
+    isOpen: boolean;
+    automation: AutomationWorkflow | null;
+  }>({
+    isOpen: false,
+    automation: null,
+  });
+
   const {
     data: automationsData,
     isLoading: automationsLoading,
@@ -194,7 +213,7 @@ const Automations = () => {
   };
 
   const handleViewAutomation = (id: string) => {
-    navigate(`/automations/}`);
+    navigate(`/automations/${id}`);
   };
 
   const toggleAutomationStatus = async (id: string, currentStatus: string) => {
@@ -202,361 +221,438 @@ const Automations = () => {
       const newStatus = currentStatus === 'active' ? 'paused' : 'active';
       await updateStatusMutation.mutateAsync({ id, status: newStatus });
       toast({
-        title: `Automation ${newStatus === 'active' ? 'activated' : 'paused'}`,
+        title: `🔄 Automation ${newStatus === 'active' ? 'Activated' : 'Paused'}`,
         description: `Automation has been ${newStatus === 'active' ? 'activated' : 'paused'} successfully.`,
+        className: newStatus === 'active' 
+          ? "border-green-500 bg-green-50 dark:bg-green-950/30" 
+          : "border-amber-500 bg-amber-50 dark:bg-amber-950/30",
       });
     } catch (error) {
       toast({
-        title: "Error",
+        title: "❌ Error",
         description: "Failed to update automation status.",
         variant: "destructive",
       });
     }
   };
 
-  const handleDeleteAutomation = async (automation: AutomationWorkflow) => {
-    if (window.confirm(`Are you sure you want to delete "${automation.name}"? This action cannot be undone.`)) {
-      try {
-        await deleteAutomationMutation.mutateAsync(automation.id);
-        toast({
-          title: "Automation deleted",
-          description: "Automation has been deleted successfully.",
-        });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to delete automation.",
-          variant: "destructive",
-        });
-      }
+  const showDeleteConfirmation = (automation: AutomationWorkflow) => {
+    setDeleteAlert({
+      isOpen: true,
+      automation,
+    });
+  };
+
+  const handleDeleteAutomation = async () => {
+    if (!deleteAlert.automation) return;
+
+    try {
+      await deleteAutomationMutation.mutateAsync(deleteAlert.automation.id);
+      toast({
+        title: "🗑️ Automation Deleted",
+        description: `"${deleteAlert.automation.name}" has been deleted successfully.`,
+        className: "border-orange-500 bg-orange-50 dark:bg-orange-950/30",
+      });
+    } catch (error) {
+      toast({
+        title: "❌ Error",
+        description: "Failed to delete automation.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteAlert({ isOpen: false, automation: null });
     }
   };
 
   const handleCreateSuccess = (automationId: string) => {
+    toast({
+      title: "✅ Automation Created",
+      description: "Your automation has been created successfully!",
+      className: "border-green-500 bg-green-50 dark:bg-green-950/30",
+    });
     // Redirect to builder with the new automation ID
     navigate(`/automations/${automationId}/edit`);
   }
 
   if (automationsError) {
     return (
-
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
-            <PauseIcon className="w-6 h-6 text-destructive" />
+      <MainLayout>
+        <div className="max-w-7xl mx-auto space-y-8 px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+                <PauseIcon className="w-6 h-6 text-destructive" />
+              </div>
+              <h3 className="text-lg font-semibold mb-2 text-foreground">
+                Failed to load automations
+              </h3>
+              <p className="text-muted-foreground mb-4">
+                {automationsError instanceof Error ? automationsError.message : "Unknown error occurred"}
+              </p>
+              <Button 
+                onClick={() => refetch()}
+                className="gap-2"
+              >
+                <ArrowPathIcon className="h-4 w-4" />
+                Retry
+              </Button>
+            </div>
           </div>
-          <h3 className="text-lg font-semibold mb-2">Failed to load automations</h3>
-          <p className="text-muted-foreground mb-4">
-            {automationsError instanceof Error ? automationsError.message : "Unknown error occurred"}
-          </p>
-          <Button onClick={() => refetch()}>Retry</Button>
         </div>
-      </div>
-
+      </MainLayout>
     );
   }
 
   return (
 
-    <div className="max-w-7xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-              <BoltIcon className="h-5 w-5 text-primary-foreground" />
+      <div className="max-w-7xl mx-auto space-y-8 px-4 sm:px-6 lg:px-8 py-6">
+        {/* Header */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                <BoltIcon className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-foreground">
+                  Automations
+                </h1>
+                <p className="text-muted-foreground text-lg">
+                  Create and manage automated message workflows
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">
-                Automations
-              </h1>
-              <p className="text-muted-foreground text-lg">
-                Create and manage automated message workflows
-              </p>
+          </div>
+
+          <Button
+            onClick={handleCreateAutomation}
+            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-12 px-6"
+            disabled={automationsLoading}
+          >
+            <PlusIcon className="h-5 w-5" />
+            Create Automation
+          </Button>
+        </div>
+
+        {/* Stats Cards */}
+        <StatsCards />
+
+        {/* Filters and Search */}
+        <div className="bg-card rounded-xl p-6 border border-border">
+          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
+            <div className="relative flex-1 max-w-md">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search automations by name, description, or trigger..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+              <div className="flex items-center gap-2">
+                <FunnelIcon className="h-4 w-4 text-muted-foreground" />
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="active">Active</option>
+                  <option value="paused">Paused</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
 
-        <Button
-          onClick={handleCreateAutomation}
-          className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-12 px-6"
-          disabled={automationsLoading}
-        >
-          <PlusIcon className="h-5 w-5" />
-          Create Automation
-        </Button>
-      </div>
-
-      {/* Stats Cards */}
-      <StatsCards />
-
-      {/* Filters and Search */}
-      <div className="bg-card rounded-xl p-6 border border-border">
-        <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-          <div className="relative flex-1 max-w-md">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search automations by name, description, or trigger..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-            />
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-            <div className="flex items-center gap-2">
-              <FunnelIcon className="h-4 w-4 text-muted-foreground" />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+        {/* Loading State */}
+        {automationsLoading ? (
+          <div className="grid gap-4">
+            {[...Array(3)].map((_, index) => (
+              <div
+                key={index}
+                className="bg-card rounded-xl p-6 border border-border animate-pulse"
               >
-                <option value="all">All Statuses</option>
-                <option value="draft">Draft</option>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Loading State */}
-      {automationsLoading ? (
-        <div className="grid gap-4">
-          {[...Array(3)].map((_, index) => (
-            <div
-              key={index}
-              className="bg-card rounded-xl p-6 border border-border animate-pulse"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-4">
-                  <Skeleton className="w-12 h-12 rounded-lg" />
-                  <div>
-                    <Skeleton className="h-5 w-48 mb-2" />
-                    <Skeleton className="h-4 w-32" />
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-4">
+                    <Skeleton className="w-12 h-12 rounded-lg" />
+                    <div>
+                      <Skeleton className="h-5 w-48 mb-2" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
                   </div>
+                  <Skeleton className="w-8 h-8 rounded" />
                 </div>
-                <Skeleton className="w-8 h-8 rounded" />
+                <Skeleton className="h-4 w-3/4 mt-4" />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-6 w-24" />
+                </div>
               </div>
-              <Skeleton className="h-4 w-3/4 mt-4" />
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-                <Skeleton className="h-6 w-24" />
-                <Skeleton className="h-6 w-24" />
-                <Skeleton className="h-6 w-24" />
-                <Skeleton className="h-6 w-24" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : automations.length === 0 ? (
-        <div className="bg-card rounded-xl border border-border p-12 text-center">
-          <div className="mx-auto w-16 h-16 rounded-lg bg-muted flex items-center justify-center mb-4">
-            <ClockIcon className="h-8 w-8 text-muted-foreground" />
+            ))}
           </div>
-          <h3 className="text-xl font-semibold text-foreground mb-2">
-            {searchQuery || statusFilter !== "all" ? "No automations found" : "No automations yet"}
-          </h3>
-          <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-            {searchQuery || statusFilter !== "all"
-              ? "Try adjusting your search or filters"
-              : "Create your first automation to start automating your WhatsApp messages"}
-          </p>
-          {!(searchQuery || statusFilter !== "all") && (
-            <Button
-              onClick={handleCreateAutomation}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              <PlusIcon className="h-4 w-4" />
-              Create Automation
-            </Button>
-          )}
-        </div>
-      ) : (
-        /* Automations List */
-        <div className="grid gap-4">
-          {automations.map((automation) => (
-            <div
-              key={automation.id}
-              className="bg-card rounded-xl p-6 border border-border hover:border-border/70 transition-colors cursor-pointer group"
-              onClick={() => handleViewAutomation(automation.id)}
-            >
-              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
-                <div className="flex gap-4 flex-1">
-                  <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-xl">
-                    {getIconForTrigger(automation.trigger_type || "manual")}
+        ) : automations.length === 0 ? (
+          <div className="bg-card rounded-xl border border-border p-12 text-center">
+            <div className="mx-auto w-16 h-16 rounded-lg bg-muted flex items-center justify-center mb-4">
+              <ClockIcon className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold text-foreground mb-2">
+              {searchQuery || statusFilter !== "all" ? "No automations found" : "No automations yet"}
+            </h3>
+            <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+              {searchQuery || statusFilter !== "all"
+                ? "Try adjusting your search or filters"
+                : "Create your first automation to start automating your WhatsApp messages"}
+            </p>
+            {!(searchQuery || statusFilter !== "all") && (
+              <Button
+                onClick={handleCreateAutomation}
+                className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                <PlusIcon className="h-4 w-4" />
+                Create Automation
+              </Button>
+            )}
+          </div>
+        ) : (
+          /* Automations List */
+          <div className="grid gap-4">
+            {automations.map((automation) => (
+              <div
+                key={automation.id}
+                className="bg-card rounded-xl p-6 border border-border hover:border-border/70 transition-colors cursor-pointer group"
+                onClick={() => handleViewAutomation(automation.id)}
+              >
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+                  <div className="flex gap-4 flex-1">
+                    <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center text-xl">
+                      {getIconForTrigger(automation.trigger_type || "manual")}
+                    </div>
+
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-semibold text-foreground text-lg">
+                          {automation.name}
+                        </h3>
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            "inline-flex items-center gap-1",
+                            getStatusConfig(automation.status).color
+                          )}
+                        >
+                          {(() => {
+                            const Icon = getStatusConfig(automation.status).icon;
+                            return Icon && <Icon className="w-3 h-3" />;
+                          })()}
+                          {getStatusConfig(automation.status).label}
+                        </Badge>
+                      </div>
+
+                      <p className="text-muted-foreground leading-relaxed">
+                        {automation.description || "No description provided"}
+                      </p>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground font-medium">TRIGGER</p>
+                          <p className="text-sm font-medium text-foreground capitalize">
+                            {(automation.trigger_type || "manual").replace('_', ' ')}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground font-medium">NODES</p>
+                          <p className="text-sm font-medium text-foreground">
+                            {getNodeCount(automation.flow_data)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground font-medium">CREATED</p>
+                          <p className="text-sm font-medium text-foreground">
+                            {formatRelativeTime(automation.created_at)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground font-medium">UPDATED</p>
+                          <p className="text-sm font-medium text-foreground">
+                            {formatRelativeTime(automation.updated_at)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="flex-1 space-y-3">
+                  <div className="flex items-center gap-3 lg:flex-col lg:items-end">
                     <div className="flex items-center gap-3">
-                      <h3 className="font-semibold text-foreground text-lg">
-                        {automation.name}
-                      </h3>
-                      <Badge
-                        variant="secondary"
-                        className={cn(
-                          "inline-flex items-center gap-1",
-                          getStatusConfig(automation.status).color
-                        )}
-                      >
-                        {(() => {
-                          const Icon = getStatusConfig(automation.status).icon;
-                          return Icon && <Icon className="w-3 h-3" />;
-                        })()}
-                        {getStatusConfig(automation.status).label}
-                      </Badge>
-                    </div>
+                      {automation.status !== 'draft' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleAutomationStatus(automation.id, automation.status);
+                          }}
+                          className={cn(
+                            "p-2 rounded-lg transition-colors",
+                            automation.status === "active"
+                              ? "bg-green-500/10 text-green-500 hover:bg-green-500/20"
+                              : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
+                          )}
+                        >
+                          {automation.status === "active" ? (
+                            <PauseIcon className="h-4 w-4" />
+                          ) : (
+                            <PlayIcon className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
 
-                    <p className="text-muted-foreground leading-relaxed">
-                      {automation.description || "No description provided"}
-                    </p>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium">TRIGGER</p>
-                        <p className="text-sm font-medium text-foreground capitalize">
-                           {(automation.trigger_type || "manual").replace('_', ' ')}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium">NODES</p>
-                        <p className="text-sm font-medium text-foreground">
-                          {getNodeCount(automation.flow_data)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium">CREATED</p>
-                        <p className="text-sm font-medium text-foreground">
-                          {formatRelativeTime(automation.created_at)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium">UPDATED</p>
-                        <p className="text-sm font-medium text-foreground">
-                          {formatRelativeTime(automation.updated_at)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 lg:flex-col lg:items-end">
-                  <div className="flex items-center gap-3">
-                    {automation.status !== 'draft' && (
-                      <button
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleAutomationStatus(automation.id, automation.status);
+                          handleEditAutomation(automation.id);
                         }}
-                        className={cn(
-                          "p-2 rounded-lg transition-colors",
-                          automation.status === "active"
-                            ? "bg-green-500/10 text-green-500 hover:bg-green-500/20"
-                            : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"
-                        )}
+                        className="border-border hover:bg-accent"
                       >
-                        {automation.status === "active" ? (
-                          <PauseIcon className="h-4 w-4" />
-                        ) : (
-                          <PlayIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    )}
+                        <PencilIcon className="h-4 w-4 mr-2" />
+                        Edit
+                      </Button>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditAutomation(automation.id);
-                      }}
-                      className="border-border hover:bg-accent"
-                    >
-                      <PencilIcon className="h-4 w-4 mr-2" />
-                      Edit
-                    </Button>
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="sm" className="h-9 w-9 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <EllipsisHorizontalIcon className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-48">
-                        <DropdownMenuItem onClick={() => handleEditAutomation(automation.id)}>
-                          <PencilIcon className="h-4 w-4 mr-2" />
-                          Edit Automation
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <DocumentDuplicateIcon className="h-4 w-4 mr-2" />
-                          Duplicate
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <ChartBarIcon className="h-4 w-4 mr-2" />
-                          View Analytics
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => handleDeleteAutomation(automation)}
-                        >
-                          <TrashIcon className="h-4 w-4 mr-2" />
-                          Delete Automation
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="sm" className="h-9 w-9 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <EllipsisHorizontalIcon className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48 bg-card border-border">
+                          <DropdownMenuItem 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEditAutomation(automation.id);
+                            }}
+                            className="gap-2 cursor-pointer text-foreground hover:bg-accent"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                            Edit Automation
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={(e) => e.stopPropagation()}
+                            className="gap-2 cursor-pointer text-foreground hover:bg-accent"
+                          >
+                            <DocumentDuplicateIcon className="h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={(e) => e.stopPropagation()}
+                            className="gap-2 cursor-pointer text-foreground hover:bg-accent"
+                          >
+                            <ChartBarIcon className="h-4 w-4" />
+                            View Analytics
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="gap-2 cursor-pointer text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              showDeleteConfirmation(automation);
+                            }}
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                            Delete Automation
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
                 </div>
               </div>
+            ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {pagination && pagination.pages > 1 && (
+          <div className="flex items-center justify-between pt-6 border-t border-border">
+            <div className="text-sm text-muted-foreground">
+              Showing {((pagination.page - 1) * pagination.limit) + 1} to{" "}
+              {Math.min(pagination.page * pagination.limit, pagination.total)} of{" "}
+              {pagination.total} automations
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Pagination */}
-      {pagination && pagination.pages > 1 && (
-        <div className="flex items-center justify-between pt-6 border-t border-border">
-          <div className="text-sm text-muted-foreground">
-            Showing {((pagination.page - 1) * pagination.limit) + 1} to{" "}
-            {Math.min(pagination.page * pagination.limit, pagination.total)} of{" "}
-            {pagination.total} automations
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters(prev => ({
+                  ...prev,
+                  page: Math.max((prev.page || 1) - 1, 1)
+                }))}
+                disabled={pagination.page === 1}
+                className="border-border hover:bg-accent"
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFilters(prev => ({
+                  ...prev,
+                  page: Math.min((prev.page || 1) + 1, pagination.pages)
+                }))}
+                disabled={pagination.page === pagination.pages}
+                className="border-border hover:bg-accent"
+              >
+                Next
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFilters(prev => ({
-                ...prev,
-                page: Math.max((prev.page || 1) - 1, 1)
-              }))}
-              disabled={pagination.page === 1}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFilters(prev => ({
-                ...prev,
-                page: Math.min((prev.page || 1) + 1, pagination.pages)
-              }))}
-              disabled={pagination.page === pagination.pages}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
+        )}
 
-      <CreateAutomationDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-        onSuccess={handleCreateSuccess}
-      />
-    </div>
+        <CreateAutomationDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onSuccess={handleCreateSuccess}
+        />
+
+        {/* Delete Confirmation Alert Dialog */}
+        <AlertDialog open={deleteAlert.isOpen} onOpenChange={(open) => setDeleteAlert({ isOpen: open, automation: null })}>
+          <AlertDialogContent className="bg-card border-border">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-foreground flex items-center gap-2">
+                <TrashIcon className="h-5 w-5 text-destructive" />
+                Delete Automation
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-muted-foreground">
+                Are you sure you want to delete "{deleteAlert.automation?.name}"? 
+                <span className="block mt-2 text-destructive/80 font-medium">
+                  This action cannot be undone and all associated data will be permanently removed.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="border-border hover:bg-secondary text-foreground">
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteAutomation}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete Automation
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
 
   );
 };
+
+// Add ArrowPathIcon import at the top with other imports
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
 
 export default Automations;

@@ -19,7 +19,9 @@ import quickRepliesRoutes from './routes/quick-replies.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import automationRoutes from './routes/automation.routes';
 import teamRoutes from './routes/team.routes';
-
+import { getDb } from './db/client';
+import templateRoutes from './routes/templates.routes';
+import broadcastRoutes from './routes/broadcasts.routes';
 const app = express();
 
 // 1. CORS
@@ -59,6 +61,8 @@ app.use('/api/quick-replies', quickRepliesRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/teams', teamRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/broadcasts', broadcastRoutes);
 
 // 5. Health checks
 app.get("/health", (_req, res) => {
@@ -78,7 +82,7 @@ app.get("/api/test", (_req, res) => {
 });
 
 // Debug route for invitation testing
-import { getDb } from './db/client';
+
 app.get('/debug/invitation/:token', async (req, res) => {
   try {
     const db = getDb();

@@ -316,3 +316,34 @@ export const userPermissions = pgTable("user_permissions", {
 	allowed: boolean().default(true),
 	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
 });
+
+export const messageTemplates = pgTable("message_templates", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	name: varchar({ length: 255 }).notNull(),
+	category: varchar({ length: 100 }),
+	language: varchar({ length: 10 }).default('en'),
+	status: varchar({ length: 50 }).default('pending'),
+	components: jsonb().default([]),
+	variables: jsonb().default([]),
+	whatsappTemplateId: varchar("whatsapp_template_id", { length: 255 }),
+	whatsappCategory: varchar("whatsapp_category", { length: 100 }),
+	whatsappLanguage: varchar("whatsapp_language", { length: 10 }),
+	userId: uuid("user_id").notNull(),
+	createdAt: timestamp("created_at", { mode: 'string' }).defaultNow(),
+	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
+	metaTemplateId: varchar("meta_template_id", { length: 255 }),
+	metaStatus: varchar("meta_status", { length: 50 }).default('PENDING'),
+	metaReviewFeedback: text("meta_review_feedback"),
+	lastSyncedAt: timestamp("last_synced_at", { mode: 'string' }),
+	qualityRating: varchar("quality_rating", { length: 50 }),
+}, (table) => [
+	index("idx_message_templates_meta_id").using("btree", table.metaTemplateId.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_meta_status").using("btree", table.metaStatus.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_status").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	index("idx_message_templates_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [users.id],
+			name: "message_templates_user_id_fkey"
+		}).onDelete("cascade"),
+]);
