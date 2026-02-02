@@ -1,9 +1,11 @@
 // backend/src/routes/contacts.routes.ts
 import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
-import { contacts, tags } from '../db/schema';
-import { eq, and, or, like, inArray, desc, asc, sql } from 'drizzle-orm';
+import { contacts, tags, ContactInsert, ContactUpdate } from '../db/schema';
+import { eq, and, or, like, inArray, desc, asc, sql, SQL } from 'drizzle-orm';
+import { InferSelectModel } from 'drizzle-orm';
 
 const router = Router();
 
@@ -28,8 +30,8 @@ async function getTagsWithDetails(tagIds: string[], userId: string) {
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
     const { 
-      page = 1, 
-      limit = 20, 
+      page = '1', 
+      limit = '20', 
       search, 
       status, 
       tags: tagIds, 
@@ -40,47 +42,54 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     } = req.query;
     
     const db = getDb();
-    const offset = (Number(page) - 1) * Number(limit);
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const offset = (pageNum - 1) * limitNum;
     const userId = req.user!.userId;
     
     // Build where conditions
-    const conditions = [eq(contacts.userId, userId)];
+    const conditions: (SQL | undefined)[] = [eq(contacts.userId, userId)];
     
-    if (search) {
-      conditions.push(
-        or(
-          like(contacts.name, `%${search}%`),
-          like(contacts.phone, `%${search}%`),
-          like(contacts.email, `%${search}%`)
-        )
+    if (search && typeof search === 'string') {
+      const searchCondition = or(
+        like(contacts.name, `%${search}%`),
+        like(contacts.phone, `%${search}%`),
+        like(contacts.email, `%${search}%`)
       );
+      if (searchCondition) {
+        conditions.push(searchCondition);
+      }
     }
     
-    if (status) {
-      conditions.push(eq(contacts.status, String(status)));
-    }
+   if (status && typeof status === 'string') {
+  conditions.push(eq(contacts.status, status as 'active' | 'inactive' | 'archived' | 'blocked' | 'lead' | 'customer'));
+}
     
     // Handle tag filtering by tag IDs
     if (tagIds) {
       const tagArray = Array.isArray(tagIds) ? tagIds : [tagIds];
-      conditions.push(sql`${contacts.tagIds} && ARRAY[${sql.join(tagArray.map(tag => sql`${tag}::uuid`), sql`, `)}]`);
+      const tagCondition = sql`${contacts.tagIds} && ARRAY[${sql.join(tagArray.map(tag => sql`${tag}::uuid`), sql`, `)}]`;
+      conditions.push(tagCondition);
     }
     
-    if (city) {
-      conditions.push(eq(contacts.city, String(city)));
+    if (city && typeof city === 'string') {
+      conditions.push(eq(contacts.city, city));
     }
     
-    if (country) {
-      conditions.push(eq(contacts.country, String(country)));
+    if (country && typeof country === 'string') {
+      conditions.push(eq(contacts.country, country));
     }
+    
+    // Filter out undefined conditions
+    const validConditions = conditions.filter((c): c is SQL => c !== undefined);
     
     // Build query
-    const query = db.select()
-      .from(contacts)
-      .where(and(...conditions));
+    const whereClause = validConditions.length > 0 ? and(...validConditions) : undefined;
+    const query = db.select().from(contacts);
+    const queryWithWhere = whereClause ? query.where(whereClause) : query;
     
     // Apply sorting
-    const sortField = {
+    const sortFieldMap: Record<string, any> = {
       'name': contacts.name,
       'phone': contacts.phone,
       'email': contacts.email,
@@ -90,34 +99,37 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       'lastContactedAt': contacts.lastContactedAt,
       'createdAt': contacts.createdAt,
       'updatedAt': contacts.updatedAt,
-    }[sortBy as string] || contacts.createdAt;
+    };
     
-    const sortedQuery = query.orderBy(
+    const sortField = sortFieldMap[sortBy as string] || contacts.createdAt;
+    const sortedQuery = queryWithWhere.orderBy(
       sortOrder === 'desc' ? desc(sortField) : asc(sortField)
     );
     
     // Get paginated results
     const contactsList = await sortedQuery
-      .limit(Number(limit))
+      .limit(limitNum)
       .offset(offset);
     
     // Get total count
-    const totalResult = await db.select({ count: sql<number>`count(*)` })
-      .from(contacts)
-      .where(and(...conditions));
+    const totalQuery = db.select({ count: sql<number>`count(*)` }).from(contacts);
+    const totalQueryWithWhere = whereClause ? totalQuery.where(whereClause) : totalQuery;
+    const totalResult = await totalQueryWithWhere;
     
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    // FIX: Check if totalResult has elements before accessing
+    const total = totalResult.length > 0 ? Number(totalResult[0]?.count) : 0;
     
     // Enhance contacts with tag details
     const enhancedContacts = await Promise.all(
       contactsList.map(async (contact) => {
-        let tagDetails = [];
+        // FIX: Add explicit type annotation
+        let tagDetails: InferSelectModel<typeof tags>[] = [];
         if (contact.tagIds && contact.tagIds.length > 0) {
           tagDetails = await getTagsWithDetails(contact.tagIds, userId);
         }
         return {
           ...contact,
-          tags: tagDetails, // Add full tag objects
+          tags: tagDetails,
         };
       })
     );
@@ -126,15 +138,16 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       success: true,
       contacts: enhancedContacts,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / Number(limit)),
+        pages: Math.ceil(total / limitNum),
       },
     });
     
-  } catch (error: any) {
-    console.error('Error fetching contacts:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error fetching contacts:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to fetch contacts' 
@@ -146,6 +159,14 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
     const userId = req.user!.userId;
     const db = getDb();
     
@@ -166,10 +187,17 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
+    // FIX: Add type guard or non-null assertion
     const contact = contactResult[0];
+    if (!contact) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
     
     // Get tag details
-    let tagDetails = [];
+    let tagDetails: InferSelectModel<typeof tags>[] = [];
     if (contact.tagIds && contact.tagIds.length > 0) {
       tagDetails = await getTagsWithDetails(contact.tagIds, userId);
     }
@@ -182,8 +210,9 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       },
     });
     
-  } catch (error: any) {
-    console.error('Error fetching contact:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error fetching contact:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to fetch contact' 
@@ -202,7 +231,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status = 'active',
-      tags: tagIds = [], // Expecting array of tag IDs (UUIDs)
+      tags: tagIds = [],
       metadata = {},
       note,
       source = 'manual'
@@ -246,7 +275,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     
     // Validate that all tag IDs exist and belong to the user
     let validTagIds: string[] = [];
-    if (tagIds && tagIds.length > 0) {
+    if (tagIds && Array.isArray(tagIds) && tagIds.length > 0) {
       const tagArray = Array.isArray(tagIds) ? tagIds : [tagIds];
       
       // Check if tags exist and belong to user
@@ -263,8 +292,9 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       validTagIds = existingTags.map(tag => tag.id);
     }
     
-    // Create contact
-    const [newContact] = await db.insert(contacts).values({
+    // FIX: Create properly typed contact data
+    const contactData: ContactInsert = {
+      id: uuidv4(),
       name,
       phone,
       email: email || '',
@@ -272,19 +302,25 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       state: state || '',
       country: country || '',
       status,
-      tagIds: validTagIds, // Store array of tag UUIDs
-      metadata,
+      tagIds: validTagIds,
+     customFields: metadata as Record<string, any>,
       note: note || '',
       userId,
       source,
       isActive: true,
       optIn: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).returning();
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastContactedAt: null,
+      address: '',
+      postalCode: '',
+    };
+    
+    // Create contact
+    const [newContact] = await db.insert(contacts).values(contactData).returning();
     
     // Get tag details for response
-    let tagDetails = [];
+    let tagDetails: InferSelectModel<typeof tags>[] = [];
     if (validTagIds.length > 0) {
       tagDetails = await getTagsWithDetails(validTagIds, userId);
     }
@@ -293,19 +329,19 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       success: true,
       contact: {
         ...newContact,
-        tags: tagDetails, // Include full tag objects in response
+        tags: tagDetails,
       },
     });
     
-  } catch (error: any) {
-    console.error('Error creating contact:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error creating contact:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to create contact' 
     });
   }
 });
-
 
 // PUT /api/contacts/:id - Update contact
 router.put("/:id", authenticate, async (req: AuthRequest, res) => {
@@ -314,6 +350,14 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
     console.log("📦 Request body:", JSON.stringify(req.body, null, 2));
 
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
     const {
       name,
       phone,
@@ -322,7 +366,7 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
       state,
       country,
       status,
-      tags: tagIds, // tag IDs from request body (array of UUIDs)
+      tags: tagIds,
       metadata,
       note,
       isActive,
@@ -347,8 +391,9 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
       return res.status(404).json({ success: false, error: "Contact not found" });
     }
 
-    const updateData: any = {
-      updatedAt: new Date(),
+    // FIX: Use ContactUpdate type for better type safety
+    const updateData: ContactUpdate = {
+      updatedAt: new Date().toISOString(),
     };
 
     // Only update provided fields
@@ -361,7 +406,7 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
     if (status !== undefined) updateData.status = status;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (optIn !== undefined) updateData.optIn = optIn;
-    if (metadata !== undefined) updateData.metadata = metadata;
+    if (metadata !== undefined) updateData.customFields = metadata as Record<string, any>;
     if (note !== undefined) updateData.note = note;
 
     // Update tagIds based on the tagIds field from request
@@ -408,8 +453,16 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
     console.log("✅ PUT /contacts/:id - COMPLETE");
     console.log("📤 Updated contact:", JSON.stringify(updatedContact, null, 2));
 
+    // FIX: Check if updatedContact exists
+    if (!updatedContact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update contact',
+      });
+    }
+
     // Get tag details for response
-    let tagDetails = [];
+    let tagDetails: InferSelectModel<typeof tags>[] = [];
     if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
       tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
     }
@@ -421,20 +474,30 @@ router.put("/:id", authenticate, async (req: AuthRequest, res) => {
         tags: tagDetails,
       },
     });
-  } catch (error: any) {
-    console.error("❌ Error updating contact:", error);
-    console.error("❌ Error stack:", error.stack);
+  } catch (error: unknown) {
+    const err = error as Error & { stack?: string };
+    console.error("❌ Error updating contact:", err);
+    console.error("❌ Error stack:", err.stack);
     res.status(500).json({
       success: false,
       error: "Failed to update contact",
-      details: error.message,
+      details: err.message,
     });
   }
 });
+
 // PATCH /api/contacts/:id/status - Update contact status
 router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
     const { status } = req.body;
     const userId = req.user!.userId;
     const db = getDb();
@@ -467,7 +530,7 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
     const [updatedContact] = await db.update(contacts)
       .set({ 
         status,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       })
       .where(
         and(
@@ -477,8 +540,16 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
       )
       .returning();
     
+    // FIX: Check if updatedContact exists
+    if (!updatedContact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update contact status',
+      });
+    }
+    
     // Get tag details for response
-    let tagDetails = [];
+    let tagDetails: InferSelectModel<typeof tags>[] = [];
     if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
       tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
     }
@@ -491,8 +562,9 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
       },
     });
     
-  } catch (error: any) {
-    console.error('Error updating contact status:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error updating contact status:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to update contact status' 
@@ -504,6 +576,14 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
     const userId = req.user!.userId;
     const db = getDb();
     
@@ -539,8 +619,9 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
       message: 'Contact deleted successfully',
     });
     
-  } catch (error: any) {
-    console.error('Error deleting contact:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error deleting contact:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to delete contact' 
@@ -560,7 +641,8 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
       .from(contacts)
       .where(eq(contacts.userId, userId));
     
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    // FIX: Check if totalResult[0] exists before accessing count
+    const total = totalResult.length > 0 ? Number(totalResult[0]?.count) : 0;
     
     // Get contacts by status
     const byStatusResult = await db.select({
@@ -581,17 +663,20 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
       ORDER BY count DESC
     `);
     
+    // FIX: Type assertion for byTagResult.rows
+    const tagRows = byTagResult.rows as { tag_id: string; count: string }[];
+    
     // Get tag names for the tag IDs
-    const tagDetails = byTagResult.rows.length > 0 ? await db.select()
+    const tagDetails = tagRows.length > 0 ? await db.select()
       .from(tags)
       .where(
         and(
-          inArray(tags.id, byTagResult.rows.map((row: any) => row.tag_id)),
+          inArray(tags.id, tagRows.map(row => row.tag_id)),
           eq(tags.userId, userId)
         )
       ) : [];
     
-    const byTag = byTagResult.rows.map((row: any) => {
+    const byTag = tagRows.map((row) => {
       const tag = tagDetails.find(t => t.id === row.tag_id);
       return {
         tag: tag?.name || row.tag_id,
@@ -611,11 +696,11 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
       .where(
         and(
           eq(contacts.userId, userId),
-          sql`${contacts.createdAt} >= ${startOfMonth}`
+          sql`${contacts.createdAt} >= ${startOfMonth.toISOString()}`
         )
       );
     
-    const newThisMonth = newThisMonthResult.length > 0 ? Number(newThisMonthResult[0].count) : 0;
+    const newThisMonth = newThisMonthResult.length > 0 ? Number(newThisMonthResult[0]?.count) : 0;
     
     res.json({
       success: true,
@@ -630,8 +715,9 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
       },
     });
     
-  } catch (error: any) {
-    console.error('Error fetching contact analytics:', error?.message || error, error?.stack || '');
+  } catch (error: unknown) {
+    const err = error as Error & { message?: string; stack?: string };
+    console.error('Error fetching contact analytics:', err?.message || err, err?.stack || '');
     res.status(500).json({ 
       success: false,
       error: 'Failed to fetch contact analytics' 
@@ -643,7 +729,15 @@ router.get('/analytics/overview', authenticate, async (req: AuthRequest, res) =>
 router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
+    const { tags: tagIds } = req.body;
     const userId = req.user!.userId;
     const db = getDb();
     
@@ -666,6 +760,15 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       .limit(1);
     
     if (contactResult.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
+    
+    // FIX: Check if contactResult[0] exists
+    const contact = contactResult[0];
+    if (!contact) {
       return res.status(404).json({ 
         success: false,
         error: 'Contact not found' 
@@ -683,13 +786,13 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       );
     
     const validTagIds = existingTags.map(tag => tag.id);
-    const currentTagIds = contactResult[0].tagIds || [];
+    const currentTagIds = contact.tagIds || [];  // FIX: Use contact instead of contactResult[0]
     const newTagIds = [...new Set([...currentTagIds, ...validTagIds])];
     
     const [updatedContact] = await db.update(contacts)
       .set({ 
         tagIds: newTagIds,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       })
       .where(
         and(
@@ -698,6 +801,14 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
         )
       )
       .returning();
+    
+    // FIX: Check if updatedContact exists
+    if (!updatedContact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to add tags to contact',
+      });
+    }
     
     // Get tag details for response
     const tagDetails = await getTagsWithDetails(newTagIds, userId);
@@ -710,8 +821,9 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       },
     });
     
-  } catch (error: any) {
-    console.error('Error adding tags to contact:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error adding tags to contact:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to add tags' 
@@ -723,7 +835,15 @@ router.post('/:id/tags', authenticate, async (req: AuthRequest, res) => {
 router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { tags: tagIds } = req.body; // Expecting array of tag UUIDs to remove
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
+    const { tags: tagIds } = req.body;
     const userId = req.user!.userId;
     const db = getDb();
     
@@ -752,13 +872,22 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       });
     }
     
-    const currentTagIds = contactResult[0].tagIds || [];
+    // FIX: Check if contactResult[0] exists
+    const contact = contactResult[0];
+    if (!contact) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Contact not found' 
+      });
+    }
+    
+    const currentTagIds = contact.tagIds || [];  // FIX: Use contact instead of contactResult[0]
     const newTagIds = currentTagIds.filter(tagId => !tagIds.includes(tagId));
     
     const [updatedContact] = await db.update(contacts)
       .set({ 
         tagIds: newTagIds,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       })
       .where(
         and(
@@ -767,6 +896,14 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
         )
       )
       .returning();
+    
+    // FIX: Check if updatedContact exists
+    if (!updatedContact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to remove tags from contact',
+      });
+    }
     
     // Get tag details for response
     const tagDetails = await getTagsWithDetails(newTagIds, userId);
@@ -779,8 +916,9 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
       },
     });
     
-  } catch (error: any) {
-    console.error('Error removing tags from contact:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error removing tags from contact:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to remove tags' 
@@ -792,6 +930,14 @@ router.delete('/:id/tags', authenticate, async (req: AuthRequest, res) => {
 router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Contact ID is required' 
+      });
+    }
+    
     const userId = req.user!.userId;
     const db = getDb();
     
@@ -815,8 +961,8 @@ router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) 
     
     const [updatedContact] = await db.update(contacts)
       .set({ 
-        lastContactedAt: new Date(),
-        updatedAt: new Date(),
+        lastContactedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       })
       .where(
         and(
@@ -826,8 +972,16 @@ router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) 
       )
       .returning();
     
+    // FIX: Check if updatedContact exists
+    if (!updatedContact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update last contacted',
+      });
+    }
+    
     // Get tag details for response
-    let tagDetails = [];
+    let tagDetails: InferSelectModel<typeof tags>[] = [];
     if (updatedContact.tagIds && updatedContact.tagIds.length > 0) {
       tagDetails = await getTagsWithDetails(updatedContact.tagIds, userId);
     }
@@ -840,8 +994,9 @@ router.patch('/:id/last-contacted', authenticate, async (req: AuthRequest, res) 
       },
     });
     
-  } catch (error: any) {
-    console.error('Error updating last contacted:', error);
+  } catch (error: unknown) {
+    const err = error as Error;
+    console.error('Error updating last contacted:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to update last contacted' 

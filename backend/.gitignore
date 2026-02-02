@@ -5,3 +5,10 @@ node_modules
 /src/generated/prisma
 
 /src/generated/prisma
+
+dist/
+*.js
+*.d.ts
+node_modules/
+.env
+.env.production

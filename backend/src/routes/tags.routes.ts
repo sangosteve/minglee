@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { tags } from '../db/schema';
-import { eq, desc, and, inArray, sql,asc } from 'drizzle-orm';
+import { eq, desc, and, sql, asc } from 'drizzle-orm';
 
 const router = Router();
 
@@ -20,7 +20,15 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     
     const db = getDb();
     const offset = (Number(page) - 1) * Number(limit);
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Authentication required' 
+      });
+    }
     
     // Build where conditions
     const conditions = [eq(tags.userId, userId)];
@@ -57,7 +65,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       .from(tags)
       .where(and(...conditions));
     
-    const total = totalResult.length > 0 ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length > 0 ? Number(totalResult[0]?.count) : 0;
     
     // Get counts for each tag
     const enhancedTags = await Promise.all(
@@ -101,7 +109,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// Create new tag - FIXED VERSION
+// Create new tag
 router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
     console.log('Creating tag - Request body:', req.body);
@@ -116,7 +124,16 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     }
     
     const db = getDb();
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Authentication required' 
+      });
+    }
+    
     const tagName = name.trim();
     
     // FIRST: Check if tag with same name already exists for this user
@@ -183,6 +200,14 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { name, color, description } = req.body;
     
+    // Validate id exists
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tag ID is required'
+      });
+    }
+    
     if (!name || name.trim() === '') {
       return res.status(400).json({
         success: false,
@@ -191,7 +216,16 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     }
     
     const db = getDb();
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Authentication required' 
+      });
+    }
+    
     const tagName = name.trim();
     
     // Check if tag exists and belongs to user
@@ -199,7 +233,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       .from(tags)
       .where(
         and(
-          eq(tags.id, id),
+          eq(tags.id, id), // id is guaranteed to exist from req.params
           eq(tags.userId, userId)
         )
       )
@@ -231,13 +265,12 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     const [updatedTag] = await db.update(tags)
       .set({
         name: tagName,
-        description: description || existingTag[0].description || '',
-        color: color || existingTag[0].color,
-        updatedAt: new Date(),
+        description: description || existingTag[0]?.description || '',
+        color: color || existingTag[0]?.color,
       })
       .where(
         and(
-          eq(tags.id, id),
+          eq(tags.id, id), // id is guaranteed to exist from req.params
           eq(tags.userId, userId)
         )
       )
@@ -263,15 +296,31 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     
+    // Validate id exists
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tag ID is required'
+      });
+    }
+    
     const db = getDb();
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Authentication required' 
+      });
+    }
     
     // Check if tag exists and belongs to user
     const existingTag = await db.select()
       .from(tags)
       .where(
         and(
-          eq(tags.id, id),
+          eq(tags.id, id), // id is guaranteed to exist from req.params
           eq(tags.userId, userId)
         )
       )
@@ -288,7 +337,7 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     await db.delete(tags)
       .where(
         and(
-          eq(tags.id, id),
+          eq(tags.id, id), // id is guaranteed to exist from req.params
           eq(tags.userId, userId)
         )
       );
@@ -312,7 +361,15 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
 router.get('/debug/all', authenticate, async (req: AuthRequest, res) => {
   try {
     const db = getDb();
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    // Validate userId exists
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Authentication required' 
+      });
+    }
     
     const allTags = await db.select().from(tags);
     const userTags = await db.select()

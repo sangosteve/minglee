@@ -1,13 +1,14 @@
+// backend/src/routes/broadcasts.routes.ts
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { broadcastService } from '../services/broadcast.service';
 import { getDb } from '../db/client';
-import { contacts, tags } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { tags, contacts } from '../db/schema'; 
+import { eq, and, sql } from 'drizzle-orm';
 
 const router = Router();
 
-// Apply authentication middleware to all routes
+
 router.use(authenticate);
 
 // GET /api/broadcasts - Get all broadcasts
@@ -22,7 +23,14 @@ router.get('/', async (req: AuthRequest, res) => {
       sortOrder = 'desc' 
     } = req.query;
     
-    const userId = req.user!.userId;
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.getBroadcasts(userId, {
       page: Number(page),
@@ -54,7 +62,14 @@ router.get('/', async (req: AuthRequest, res) => {
 // GET /api/broadcasts/stats - Get broadcast statistics
 router.get('/stats', async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.getBroadcastStats(userId);
     
@@ -77,9 +92,18 @@ router.get('/stats', async (req: AuthRequest, res) => {
 });
 
 // GET /api/broadcasts/audience/tags - Get tags for audience selection
+
 router.get('/audience/tags', async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+    
     const db = getDb();
     
     const tagsList = await db.select()
@@ -90,18 +114,24 @@ router.get('/audience/tags', async (req: AuthRequest, res) => {
     // Get contact count for each tag
     const tagsWithCounts = await Promise.all(
       tagsList.map(async (tag) => {
-        const contactCount = await db.execute(`
-          SELECT COUNT(*) as count
-          FROM contacts
-          WHERE user_id = $1
-          AND opt_in = true
-          AND status = 'active'
-          AND tag_ids @> ARRAY[$2]::uuid[]
-        `, [userId, tag.id]);
+        // Use Drizzle query builder instead of raw SQL
+        const contactCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(contacts)
+          .where(
+            and(
+              eq(contacts.userId, userId),
+              eq(contacts.optIn, true),
+              eq(contacts.status, 'active'),
+              sql`${contacts.tagIds} @> ARRAY[${tag.id}]::uuid[]`
+            )
+          );
+        
+        const contactCount = contactCountResult[0]?.count || 0;
         
         return {
           ...tag,
-          contactCount: Number(contactCount.rows[0]?.count || 0),
+          contactCount: Number(contactCount),
         };
       })
     );
@@ -123,7 +153,14 @@ router.get('/audience/tags', async (req: AuthRequest, res) => {
 // POST /api/broadcasts - Create new broadcast
 router.post('/', async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     console.log('Creating broadcast with data:', req.body);
     
@@ -194,7 +231,23 @@ router.post('/', async (req: AuthRequest, res) => {
 router.get('/:id', async (req: AuthRequest, res) => {
   try {
     const broadcastId = req.params.id;
-    const userId = req.user!.userId;
+    
+    // FIX: Check if broadcastId is defined
+    if (!broadcastId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Broadcast ID is required',
+      });
+    }
+    
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.getBroadcast(userId, broadcastId);
     
@@ -220,7 +273,23 @@ router.get('/:id', async (req: AuthRequest, res) => {
 router.put('/:id', async (req: AuthRequest, res) => {
   try {
     const broadcastId = req.params.id;
-    const userId = req.user!.userId;
+    
+    // FIX: Check if broadcastId is defined
+    if (!broadcastId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Broadcast ID is required',
+      });
+    }
+    
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     // Simple validation
     const data = req.body;
@@ -245,11 +314,28 @@ router.put('/:id', async (req: AuthRequest, res) => {
   }
 });
 
+
 // POST /api/broadcasts/:id/start - Start/send broadcast
 router.post('/:id/start', async (req: AuthRequest, res) => {
   try {
     const broadcastId = req.params.id;
-    const userId = req.user!.userId;
+    
+    // FIX: Check if broadcastId is defined
+    if (!broadcastId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Broadcast ID is required',
+      });
+    }
+    
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.startBroadcast(broadcastId);
     
@@ -275,7 +361,23 @@ router.post('/:id/start', async (req: AuthRequest, res) => {
 router.post('/:id/pause', async (req: AuthRequest, res) => {
   try {
     const broadcastId = req.params.id;
-    const userId = req.user!.userId;
+    
+    // FIX: Check if broadcastId is defined
+    if (!broadcastId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Broadcast ID is required',
+      });
+    }
+    
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.updateBroadcast(userId, broadcastId, {
       status: 'paused',
@@ -303,7 +405,23 @@ router.post('/:id/pause', async (req: AuthRequest, res) => {
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const broadcastId = req.params.id;
-    const userId = req.user!.userId;
+    
+    // FIX: Check if broadcastId is defined
+    if (!broadcastId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Broadcast ID is required',
+      });
+    }
+    
+    // FIX: Ensure userId is not undefined
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
     
     const result = await broadcastService.deleteBroadcast(userId, broadcastId);
     

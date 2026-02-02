@@ -1,6 +1,6 @@
 // schema.ts
 import { pgTable, uuid, varchar, text, timestamp, unique, boolean, foreignKey, integer, jsonb, index, doublePrecision, pgEnum } from "drizzle-orm/pg-core"
-import { sql } from "drizzle-orm"
+import { InferInsertModel, InferSelectModel} from "drizzle-orm"
 
 export const automationStatus = pgEnum("automation_status", ['draft', 'active', 'paused', 'archived'])
 export const automationTrigger = pgEnum("automation_trigger", ['manual', 'message_received', 'keyword', 'tag_added', 'campaign_reply', 'time_delay', 'contact_created', 'contact_updated', 'webhook'])
@@ -10,6 +10,19 @@ export const teamRole = pgEnum("team_role", ['owner', 'admin', 'manager', 'membe
 export const teamStatus = pgEnum("team_status", ['active', 'pending', 'inactive', 'suspended'])
 export const broadcastStatus = pgEnum("broadcast_status", ['draft', 'scheduled', 'sending', 'sent', 'failed', 'paused'])
 export const broadcastAudienceType = pgEnum("broadcast_audience_type", ['all', 'tags', 'segments', 'contacts'])
+
+export type User = InferSelectModel<typeof users>;
+export type UserInsert = InferInsertModel<typeof users>;
+export type UserUpdate = Partial<UserInsert>;
+
+export type Contact = InferSelectModel<typeof contacts>;
+export type ContactInsert = InferInsertModel<typeof contacts>;
+export type ContactUpdate = Partial<ContactInsert>; // Use Partial instead of InferUpdateModel
+
+export type Tag = InferSelectModel<typeof tags>;
+export type TagInsert = InferInsertModel<typeof tags>;
+export type TagUpdate = Partial<TagInsert>
+
 
 export const users = pgTable("users", {
 	id: uuid().defaultRandom().primaryKey().notNull(),

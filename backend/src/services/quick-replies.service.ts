@@ -2,7 +2,7 @@
 import { getDb } from '../db/client';
 import { mediaAttachments } from '../db/schema';
 import { CloudinaryService } from './cloudinary.service';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, isNull,desc } from 'drizzle-orm';
 
 export interface MediaUploadData {
   buffer?: Buffer;
@@ -53,28 +53,29 @@ export class QuickReplyMediaService {
     }
 
     // Create media attachment record
-    const [mediaAttachment] = await db.insert(mediaAttachments).values({
-      // messageId can be null for quick replies
-      messageId: null,
-      uploadedByUserId: userId,
-      publicId: cloudinaryResult?.publicId || mediaData.publicId || `qr_${Date.now()}`,
-      secureUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url,
-      thumbnailUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url,
-      originalFilename: mediaData.originalname,
-      mimeType: mediaData.mimetype,
-      fileSize: mediaData.size,
-      width: cloudinaryResult?.width || undefined,
-      height: cloudinaryResult?.height || undefined,
-      duration: cloudinaryResult?.duration || undefined,
-      format: cloudinaryResult?.format || mediaData.originalname.split('.').pop(),
-      resourceType: CloudinaryService.getResourceTypeFromMimeType(mediaData.mimetype),
-      tags: ['quick_reply', 'media'],
-      caption: mediaData.originalname,
-      status: 'active',
-      uploadedAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).returning();
+const [mediaAttachment] = await db.insert(mediaAttachments).values({
+  // messageId can be null for quick replies
+  messageId: null,
+  uploadedByUserId: userId,
+  publicId: cloudinaryResult?.publicId || mediaData.publicId || `qr_${Date.now()}`,
+  // secureUrl is REQUIRED - ensure it's never undefined
+  secureUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url || '',
+  // thumbnailUrl is optional
+  thumbnailUrl: cloudinaryResult?.secureUrl || mediaData.secureUrl || mediaData.url || null,
+  originalFilename: mediaData.originalname,
+  mimeType: mediaData.mimetype,
+  fileSize: mediaData.size,
+  // Use null instead of undefined for optional number fields
+  width: cloudinaryResult?.width || null,
+  height: cloudinaryResult?.height || null,
+  duration: cloudinaryResult?.duration || null,
+  format: cloudinaryResult?.format || mediaData.originalname.split('.').pop() || null,
+  resourceType: CloudinaryService.getResourceTypeFromMimeType(mediaData.mimetype),
+  tags: ['quick_reply', 'media'],
+  caption: mediaData.originalname,
+  status: 'active',
+  // Don't include createdAt/updatedAt if they have defaults
+}).returning();
 
     return mediaAttachment;
   }
@@ -104,21 +105,23 @@ export class QuickReplyMediaService {
   /**
    * Get all quick reply media for a user
    */
-  static async getUserQuickReplyMedia(userId: string) {
-    const db = getDb();
+static async getUserQuickReplyMedia(userId: string) {
+  const db = getDb();
 
-    const attachments = await db.select()
-      .from(mediaAttachments)
-      .where(
-        and(
-          eq(mediaAttachments.uploadedByUserId, userId),
-          eq(mediaAttachments.messageId, null) // Quick reply media have null messageId
-        )
+  const attachments = await db.select()
+    .from(mediaAttachments)
+    .where(
+      and(
+        eq(mediaAttachments.uploadedByUserId, userId),
+        isNull(mediaAttachments.messageId),
+        // Optionally check for quick_reply tag if you're using tags
+        // arrayContains(mediaAttachments.tags, ['quick_reply'])
       )
-      .orderBy(mediaAttachments.createdAt);
+    )
+    .orderBy(desc(mediaAttachments.createdAt));
 
-    return attachments;
-  }
+  return attachments;
+}
 
   /**
    * Delete media attachment
@@ -180,13 +183,13 @@ export class QuickReplyMediaService {
     // Update tags to include quick reply ID
     const updatedTags = [...(attachment.tags || []), `quick_reply_${quickReplyId}`];
     
-    await db.update(mediaAttachments)
-      .set({
-        tags: updatedTags,
-        updatedAt: new Date(),
-      })
-      .where(eq(mediaAttachments.id, attachmentId));
+   await db.update(mediaAttachments)
+  .set({
+    tags: updatedTags,
+    updatedAt: new Date().toISOString(), // Convert Date to ISO string
+  })
+  .where(eq(mediaAttachments.id, attachmentId));
 
-    return { success: true };
+return { success: true };
   }
 }

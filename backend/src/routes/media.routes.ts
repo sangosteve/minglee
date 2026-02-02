@@ -4,9 +4,9 @@ import multer from 'multer';
 import { CloudinaryService } from '../services/cloudinary.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
-import { db, getDb } from '../db/client';
+import { getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments } from '../db/schema';
-import { eq, and ,sql} from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 const router = Router();
 
@@ -14,10 +14,9 @@ const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'), // 50MB default
+    fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'),
   },
-  fileFilter: (req, file, cb) => {
-    // Accept images, videos, audio, and documents
+  fileFilter: (req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const allowedMimes = [
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
       'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
@@ -52,10 +51,18 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
 
     const db = getDb();
     
-    // 1. Get user's WhatsApp configuration
+    // Get user
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not authenticated' 
+      });
+    }
+    
     const userResult = await db.select()
       .from(users)
-      .where(eq(users.id, req.user!.userId))
+      .where(eq(users.id, userId))
       .limit(1);
     
     if (userResult.length === 0) {
@@ -66,6 +73,12 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
     }
     
     const user = userResult[0];
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
     
     if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
       return res.status(400).json({ 
@@ -75,11 +88,8 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
     }
 
     console.log(`📤 Processing media upload for user: ${user.email}`);
-    console.log(`📁 File: ${file.originalname} (${(file.size / 1024).toFixed(2)} KB)`);
 
-    // 2. Upload file to Cloudinary
-    console.log('☁️ Uploading to Cloudinary...');
-    
+    // Upload to Cloudinary
     const cloudinaryResult = await CloudinaryService.uploadFile({
       buffer: file.buffer,
       originalname: file.originalname,
@@ -101,14 +111,15 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
       });
     }
 
-    console.log(`✅ Cloudinary upload successful:`);
-    console.log(`   URL: ${cloudinaryResult.secureUrl}`);
-    console.log(`   Public ID: ${cloudinaryResult.publicId}`);
-    console.log(`   Size: ${(cloudinaryResult.fileSize / 1024).toFixed(2)} KB`);
+    if (!cloudinaryResult.publicId || !cloudinaryResult.secureUrl) {
+      return res.status(500).json({ 
+        success: false,
+        error: 'Cloudinary upload missing required data' 
+      });
+    }
 
-    // 3. Determine WhatsApp media type from file type
+    // Determine WhatsApp media type
     let whatsappMediaType: 'image' | 'video' | 'audio' | 'document' = 'document';
-    
     if (file.mimetype.startsWith('image/')) {
       whatsappMediaType = 'image';
     } else if (file.mimetype.startsWith('video/')) {
@@ -117,70 +128,67 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
       whatsappMediaType = 'audio';
     }
 
-    // 4. Send media message via WhatsApp
-    console.log(`📤 Sending via WhatsApp (${whatsappMediaType}) to ${phoneNumber}...`);
-    
+    // Send via WhatsApp
     const whatsappResult = await WhatsAppService.sendMediaMessage(
-      user.whatsappPhoneNumberId,
+      user.whatsappPhoneNumberId!,
       phoneNumber,
       cloudinaryResult.secureUrl,
       whatsappMediaType,
       caption,
       file.originalname,
-      user.whatsappAccessToken
+      user.whatsappAccessToken!
     );
 
-    console.log(`✅ WhatsApp message sent successfully`);
-    console.log(`   Message ID: ${whatsappResult.messages?.[0]?.id}`);
-
-    // 5. Find or create contact
-    const contact = await findOrCreateContact(phoneNumber, user.id, user.whatsappPhoneNumberId);
+    // Find or create contact
+    const contact = await findOrCreateContact(phoneNumber, user.id, user.whatsappPhoneNumberId!);
     
-    // 6. Find or create conversation
+    // Find or create conversation
     const conversation = await findOrCreateConversation(
       contact.id,
-      user.whatsappPhoneNumberId,
+      user.whatsappPhoneNumberId!,
       user.id
     );
 
-    // 7. Save media attachment record
-    const [mediaAttachment] = await db.insert(mediaAttachments).values({
+    // Save media attachment
+    const mediaAttachmentData = {
       publicId: cloudinaryResult.publicId,
-      cloudinaryUrl: cloudinaryResult.url,
       secureUrl: cloudinaryResult.secureUrl,
-      filename: file.originalname,
+      uploadedByUserId: user.id,
       originalFilename: file.originalname,
       mimeType: file.mimetype,
       fileSize: file.size,
-      width: cloudinaryResult.width,
-      height: cloudinaryResult.height,
-      duration: cloudinaryResult.duration,
-      format: cloudinaryResult.format,
-      assetType: cloudinaryResult.resourceType,
-      resourceType: cloudinaryResult.resourceType,
-      caption: caption,
+      width: cloudinaryResult.width || null,
+      height: cloudinaryResult.height || null,
+      duration: cloudinaryResult.duration || null,
+      format: cloudinaryResult.format || null,
+      resourceType: cloudinaryResult.resourceType || 'image',
+      caption: caption || null,
       tags: ['whatsapp', 'outgoing', `type_${whatsappMediaType}`],
-      transformation: {
-        thumbnail: CloudinaryService.generateThumbnailUrl(cloudinaryResult.publicId),
-        responsive: CloudinaryService.generateResponsiveThumbnails(cloudinaryResult.publicId),
-      },
-      userId: user.id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).returning();
+      status: 'active' as const,
+      uploadedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messageId: null,
+      version: null,
+      thumbnailUrl: null,
+    };
 
-    console.log(`💾 Media attachment saved: ${mediaAttachment.id}`);
+    const mediaAttachmentResult = await db.insert(mediaAttachments).values(mediaAttachmentData).returning();
+    if (!mediaAttachmentResult.length || !mediaAttachmentResult[0]) {
+      throw new Error('Failed to create media attachment');
+    }
+    const mediaAttachment = mediaAttachmentResult[0];
 
-    // 8. Save message record
-    const [savedMessage] = await db.insert(messages).values({
+    // Save message
+    const messageData = {
       conversationId: conversation.id,
       contactId: contact.id,
       whatsappMessageId: whatsappResult.messages?.[0]?.id || `temp_${Date.now()}`,
-      direction: 'outgoing',
+      direction: 'outgoing' as const,
       messageType: whatsappMediaType,
       body: caption || file.originalname,
-      status: 'sent',
-      timestamp: new Date(),
+      status: 'sent' as const,
+      timestamp: new Date().toISOString(),
       mediaAttachmentId: mediaAttachment.id,
       metadata: {
         cloudinaryUrl: cloudinaryResult.secureUrl,
@@ -188,22 +196,24 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
         fileSize: file.size,
         mediaType: whatsappMediaType,
       },
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }).returning();
+      createdAt: new Date().toISOString(),
+      id: undefined as any,
+    };
 
-    console.log(`💾 Message saved: ${savedMessage.id}`);
+    const savedMessageResult = await db.insert(messages).values(messageData).returning();
+    if (!savedMessageResult.length || !savedMessageResult[0]) {
+      throw new Error('Failed to create message');
+    }
+    const savedMessage = savedMessageResult[0];
 
-    // 9. Update conversation
+    // Update conversation
     await db.update(conversations)
       .set({
         lastMessage: caption || file.originalname,
-        lastMessageAt: new Date(),
-        updatedAt: new Date(),
+        lastMessageAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       })
       .where(eq(conversations.id, conversation.id));
-
-    console.log(`✅ All records saved successfully`);
 
     res.json({
       success: true,
@@ -242,10 +252,18 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
  */
 router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not authenticated' 
+      });
+    }
+    
     const db = getDb();
     const userResult = await db.select()
       .from(users)
-      .where(eq(users.id, req.user!.userId))
+      .where(eq(users.id, userId))
       .limit(1);
     
     if (userResult.length === 0) {
@@ -256,6 +274,12 @@ router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
     }
     
     const user = userResult[0];
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
     
     // Create upload parameters
     const timestamp = Math.round(Date.now() / 1000);
@@ -293,24 +317,10 @@ router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
 /**
  * Upload multiple files
  */
-/**
- * Upload multiple files
- */
 router.post('/upload-multiple', authenticate, upload.array('files', 10), async (req: AuthRequest, res) => {
   try {
     const files = req.files as Express.Multer.File[];
-    
-    // DEBUG: Log everything about the request
-    console.log('🔍 /upload-multiple REQUEST DEBUG:');
-    console.log('📋 Headers:', req.headers);
-    console.log('📋 Content-Type:', req.headers['content-type']);
-    console.log('📋 Files received:', files?.length || 0);
-    console.log('📋 Body fields:', Object.keys(req.body || {}));
-    console.log('📋 Body values:', req.body);
-    
-    // Extract folder from FormData - it comes as a field in req.body
     const folder = req.body.folder;
-    console.log('📁 Folder from request:', folder);
 
     if (!files || files.length === 0) {
       return res.status(400).json({ 
@@ -321,7 +331,14 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
     console.log(`📤 Processing ${files.length} file(s) for upload`);
 
-    const db = getDb(); // Use getDb() instead of db
+    const db = getDb();
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not authenticated' 
+      });
+    }
     
     const uploadPromises = files.map(async (file) => {
       try {
@@ -333,10 +350,10 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
           mimetype: file.mimetype,
           size: file.size,
         }, {
-          folder: folder || 'quick_replies', // Default folder
-          tags: ['quick_reply', `user_${req.user!.userId}`],
+          folder: folder || 'quick_replies',
+          tags: ['quick_reply', `user_${userId}`],
           context: {
-            uploaded_by_user: req.user!.userId,
+            uploaded_by_user: userId,
             original_filename: file.originalname,
           },
         });
@@ -350,32 +367,43 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
           };
         }
 
-        console.log(`✅ Cloudinary upload successful for ${file.originalname}:`, cloudinaryResult.publicId);
+        if (!cloudinaryResult.publicId || !cloudinaryResult.secureUrl) {
+          return {
+            success: false,
+            originalname: file.originalname,
+            error: 'Cloudinary upload missing required data',
+          };
+        }
 
         // Save to mediaAttachments table
-        const [mediaAttachment] = await db.insert(mediaAttachments).values({
-          // Note: According to your schema, mediaAttachments doesn't have userId field!
-          // It has uploadedByUserId instead
-          uploadedByUserId: req.user!.userId,
-          messageId: null, // Quick reply media have null messageId
+        const mediaAttachmentData = {
           publicId: cloudinaryResult.publicId,
           secureUrl: cloudinaryResult.secureUrl,
-          thumbnailUrl: cloudinaryResult.secureUrl, // Use same as secureUrl for thumbnail
+          uploadedByUserId: userId,
           originalFilename: file.originalname,
           mimeType: file.mimetype,
           fileSize: file.size,
-          width: cloudinaryResult.width,
-          height: cloudinaryResult.height,
-          duration: cloudinaryResult.duration,
-          format: cloudinaryResult.format,
-          resourceType: cloudinaryResult.resourceType,
-          tags: ['quick_reply', 'uploaded'],
+          width: cloudinaryResult.width || null,
+          height: cloudinaryResult.height || null,
+          duration: cloudinaryResult.duration || null,
+          format: cloudinaryResult.format || null,
+          resourceType: cloudinaryResult.resourceType || 'image',
           caption: file.originalname,
-          status: 'active',
-          uploadedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }).returning();
+          tags: ['quick_reply', 'uploaded'],
+          status: 'active' as const,
+          uploadedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messageId: null,
+          version: null,
+          thumbnailUrl: cloudinaryResult.secureUrl,
+        };
+
+        const mediaAttachmentResult = await db.insert(mediaAttachments).values(mediaAttachmentData).returning();
+        if (!mediaAttachmentResult.length || !mediaAttachmentResult[0]) {
+          throw new Error('Failed to create media attachment');
+        }
+        const mediaAttachment = mediaAttachmentResult[0];
 
         console.log(`✅ Saved media attachment to DB with ID: ${mediaAttachment.id}`);
 
@@ -390,7 +418,6 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
         };
       } catch (error: any) {
         console.error(`❌ Failed to upload ${file.originalname}:`, error);
-        console.error('Stack:', error.stack);
         return {
           success: false,
           originalname: file.originalname,
@@ -418,7 +445,6 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
   } catch (error: any) {
     console.error('❌ Multiple upload error:', error);
-    console.error('Stack:', error.stack);
     res.status(500).json({ 
       success: false,
       error: error.message 
@@ -434,32 +460,36 @@ router.get('/attachments', authenticate, async (req: AuthRequest, res) => {
     const { page = 1, limit = 20, type } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
 
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not authenticated' 
+      });
+    }
+
     const db = getDb();
     
-    let query = db.select()
+    // Build where conditions
+    const conditions = [eq(mediaAttachments.uploadedByUserId, userId)];
+    if (type) {
+      conditions.push(eq(mediaAttachments.resourceType, type as string));
+    }
+    
+    // Get attachments
+    const attachments = await db.select()
       .from(mediaAttachments)
-      .where(eq(mediaAttachments.userId, req.user!.userId))
+      .where(and(...conditions))
       .orderBy(mediaAttachments.createdAt)
       .limit(Number(limit))
       .offset(offset);
 
-    if (type) {
-      query = query.where(eq(mediaAttachments.resourceType, type as string));
-    }
-
-    const attachments = await query;
-
     // Get total count
-    const countQuery = db.select({ count: sql`count(*)` })
+    const countResult = await db.select({ count: sql<number>`count(*)` })
       .from(mediaAttachments)
-      .where(eq(mediaAttachments.userId, req.user!.userId));
-    
-    if (type) {
-      countQuery.where(eq(mediaAttachments.resourceType, type as string));
-    }
+      .where(and(...conditions));
 
-    const totalResult = await countQuery;
-    const total = Number(totalResult[0]?.count || 0);
+    const total = countResult[0]?.count ? Number(countResult[0].count) : 0;
 
     res.json({
       success: true,
@@ -489,6 +519,21 @@ router.get('/attachments', authenticate, async (req: AuthRequest, res) => {
 router.delete('/attachments/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Attachment ID is required' 
+      });
+    }
+    
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'User not authenticated' 
+      });
+    }
 
     const db = getDb();
     
@@ -498,7 +543,7 @@ router.delete('/attachments/:id', authenticate, async (req: AuthRequest, res) =>
       .where(
         and(
           eq(mediaAttachments.id, id),
-          eq(mediaAttachments.userId, req.user!.userId)
+          eq(mediaAttachments.uploadedByUserId, userId)
         )
       )
       .limit(1);
@@ -511,6 +556,19 @@ router.delete('/attachments/:id', authenticate, async (req: AuthRequest, res) =>
     }
 
     const attachment = attachmentResult[0];
+    if (!attachment) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Attachment not found' 
+      });
+    }
+
+    if (!attachment.publicId || !attachment.resourceType) {
+      return res.status(500).json({ 
+        success: false,
+        error: 'Attachment data incomplete' 
+      });
+    }
 
     // Delete from Cloudinary
     const deleteResult = await CloudinaryService.deleteFile(
@@ -564,19 +622,45 @@ async function findOrCreateContact(
     .limit(1);
   
   if (contactResult.length > 0) {
-    return contactResult[0];
+    const contact = contactResult[0];
+    if (!contact) {
+      throw new Error('Contact not found');
+    }
+    return contact;
   }
   
-  const [newContact] = await db.insert(contacts).values({
+  // Create contact data with proper type casting
+  const contactData = {
     phone: formattedPhone,
-    name: `Contact ${formattedPhone}`,
+    name: `Contact ${formattedPhone}` as string | null,
     userId: userId,
     whatsappPhoneNumberId: whatsappPhoneNumberId,
-    source: 'whatsapp' as any,
-    status: 'active' as any,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }).returning();
+    source: 'whatsapp' as const,
+    status: 'active' as const,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    id: undefined as any,
+    email: '' as string | null,
+    note: '' as string | null,
+    isActive: true,
+    optIn: true,
+    address: '' as string | null,
+    city: '' as string | null,
+    state: '' as string | null,
+    country: '' as string | null,
+    postalCode: '' as string | null,
+    latitude: null as number | null,
+    longitude: null as number | null,
+    lastContactedAt: null as string | null,
+    customFields: {} as Record<string, any>,
+    tagIds: [] as string[],
+  };
+  
+  const newContactResult = await db.insert(contacts).values(contactData).returning();
+  if (!newContactResult.length || !newContactResult[0]) {
+    throw new Error('Failed to create contact');
+  }
+  const newContact = newContactResult[0];
   
   return newContact;
 }
@@ -599,20 +683,33 @@ async function findOrCreateConversation(
     .limit(1);
   
   if (conversationResult.length > 0) {
-    return conversationResult[0];
+    const conversation = conversationResult[0];
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+    return conversation;
   }
   
-  const [newConversation] = await db.insert(conversations).values({
+  const conversationData = {
     contactId: contactId,
     userId: userId,
     whatsappPhoneNumberId: whatsappPhoneNumberId,
     lastMessage: 'New conversation',
-    lastMessageAt: new Date(),
+    lastMessageAt: new Date().toISOString(),
     unreadCount: 0,
-    status: 'active',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }).returning();
+    status: 'active' as const, // FIXED: Added "as const" for literal type
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    id: undefined as any,
+    assignedToUserId: null,
+    tagIds: [],
+  };
+  
+  const newConversationResult = await db.insert(conversations).values(conversationData).returning();
+  if (!newConversationResult.length || !newConversationResult[0]) {
+    throw new Error('Failed to create conversation');
+  }
+  const newConversation = newConversationResult[0];
   
   return newConversation;
 }

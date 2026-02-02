@@ -1,7 +1,7 @@
 // backend/src/services/contacts.service.ts
 import { getDb } from '../db/client';
-import { contacts, conversations, messages, users } from '../db/schema'; // ADD users import
-import { eq, and } from 'drizzle-orm';
+import { contacts, conversations, messages, users } from '../db/schema';
+import { eq, and, sql } from 'drizzle-orm';
 import { WhatsAppMessage } from './whatsapp.service';
 
 export interface ContactData {
@@ -9,7 +9,7 @@ export interface ContactData {
   name?: string;
   email?: string;
   tags?: string[];
-  userId: string; // Changed to string for UUID
+  userId: string;
   whatsappBusinessId?: string;
   whatsappPhoneNumberId?: string;
 }
@@ -21,7 +21,7 @@ export class ContactsService {
   static async findOrCreateFromWhatsApp(
     phoneNumber: string,
     name?: string,
-    userId?: string, // Changed to string for UUID
+    userId?: string,
     whatsappBusinessId?: string,
     whatsappPhoneNumberId?: string
   ) {
@@ -49,9 +49,9 @@ export class ContactsService {
           throw new Error('No users found in database');
         }
         
-        userId = anyUser[0].id;
+        userId = anyUser[0]?.id || '';
       } else {
-        userId = defaultUser[0].id;
+        userId = defaultUser[0]?.id || '';
       }
     }
     
@@ -60,7 +60,7 @@ export class ContactsService {
       .from(contacts)
       .where(
         and(
-          eq(contacts.phone, formattedPhone), // Changed from phoneNumber to phone
+          eq(contacts.phone, formattedPhone),
           eq(contacts.userId, userId)
         )
       )
@@ -68,34 +68,37 @@ export class ContactsService {
     
     let contact;
     
-    if (contactResult.length === 0) {
-      // Create new contact
-      const [newContact] = await db.insert(contacts).values({
-        phone: formattedPhone, // Changed from phoneNumber to phone
-        name: name || `Contact ${formattedPhone}`,
-        email: '',
-        note: '',
-        userId: userId,
-        whatsappBusinessId: whatsappBusinessId || null,
-        whatsappPhoneNumberId: whatsappPhoneNumberId || null,
-        tags: [],
-        status: 'active',
-        source: 'whatsapp',
-        isActive: true,
-        optIn: true,
-      }).returning();
-      
-      contact = newContact;
-    } else {
+if (contactResult.length === 0 || !contactResult[0]) {
+  // Create new contact
+  const [newContact] = await db.insert(contacts).values({
+    phone: formattedPhone, // This field exists according to the error
+    name: name || `Contact ${formattedPhone}`,
+    email: '',
+    note: '',
+    userId: userId,
+    whatsappBusinessId: whatsappBusinessId || null,
+    whatsappPhoneNumberId: whatsappPhoneNumberId || null,
+    tagIds: [], // Changed from 'tags' to 'tagIds'
+    status: 'active',
+    source: 'whatsapp',
+    isActive: true,
+    optIn: true,
+    // Add missing required fields that might have defaults
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }).returning();
+  
+  contact = newContact;
+} else {
       contact = contactResult[0];
       
       // Update name if provided and different
-      if (name && name !== contact.name) {
+      if (name && name !== contact?.name) {
         await db.update(contacts)
           .set({ 
             name, 
-            updatedAt: new Date(),
-            source: 'whatsapp' // Update source
+            updatedAt: new Date().toISOString(),
+            source: 'whatsapp'
           })
           .where(eq(contacts.id, contact.id));
         contact.name = name;
@@ -109,9 +112,9 @@ export class ContactsService {
    * Create or update conversation for a contact
    */
   static async findOrCreateConversation(
-    contactId: string, // Changed to string for UUID
+    contactId: string,
     whatsappPhoneNumberId: string,
-    userId?: string // Changed to string for UUID
+    userId?: string
   ) {
     const db = getDb();
     
@@ -128,15 +131,17 @@ export class ContactsService {
     
     let conversation;
     
-    if (conversationResult.length === 0) {
+    if (conversationResult.length === 0 || !conversationResult[0]) {
       // Create new conversation
       const [newConversation] = await db.insert(conversations).values({
         contactId,
         whatsappPhoneNumberId,
         status: 'active',
-        lastMessageAt: new Date(),
+        lastMessageAt: new Date().toISOString(),
         unreadCount: 0,
         userId: userId || null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       }).returning();
       
       conversation = newConversation;
@@ -152,8 +157,8 @@ export class ContactsService {
    */
   static async saveIncomingMessage(
     message: WhatsAppMessage,
-    contactId: string, // Changed to string for UUID
-    conversationId: string, // Changed to string for UUID
+    contactId: string,
+    conversationId: string,
     direction: 'incoming' | 'outgoing' = 'incoming'
   ) {
     const db = getDb();
@@ -162,27 +167,37 @@ export class ContactsService {
       conversationId,
       contactId,
       whatsappMessageId: message.id,
-      content: message.text?.body || '',
+      body: message.text?.body || '',
       messageType: message.type,
       direction,
       status: direction === 'incoming' ? 'received' : 'sent',
-      timestamp: new Date(parseInt(message.timestamp) * 1000),
+      timestamp: new Date(parseInt(message.timestamp) * 1000).toISOString(),
       metadata: {
         type: message.type,
         ...(message.text && { text: message.text }),
         ...(message.image && { image: message.image }),
         ...(message.location && { location: message.location }),
       },
+
     }).returning();
     
     // Update conversation's last message timestamp
-    await db.update(conversations)
-      .set({ 
-        lastMessageAt: new Date(),
-        unreadCount: direction === 'incoming' ? 
-          conversations.unreadCount + 1 : conversations.unreadCount 
-      })
-      .where(eq(conversations.id, conversationId));
+    if (direction === 'incoming') {
+      await db.update(conversations)
+        .set({ 
+          lastMessageAt: new Date().toISOString(),
+          unreadCount: sql`${conversations.unreadCount} + 1`,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(conversations.id, conversationId));
+    } else {
+      await db.update(conversations)
+        .set({ 
+          lastMessageAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(conversations.id, conversationId));
+    }
     
     return savedMessage;
   }
@@ -190,7 +205,7 @@ export class ContactsService {
   /**
    * Get all contacts for a user
    */
-  static async getUserContacts(userId: string, page: number = 1, limit: number = 20) { // Changed to string
+  static async getUserContacts(userId: string, page: number = 1, limit: number = 20) {
     const db = getDb();
     const offset = (page - 1) * limit;
     
@@ -201,17 +216,19 @@ export class ContactsService {
       .offset(offset)
       .orderBy(contacts.createdAt);
     
-    const total = await db.select({ count: contacts.id })
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
       .from(contacts)
       .where(eq(contacts.userId, userId));
+    
+    const total = totalResult.length > 0 ? Number(totalResult[0]?.count || 0) : 0;
     
     return {
       contacts: contactsList,
       pagination: {
         page,
         limit,
-        total: total.length > 0 ? Number(total[0].count) : 0,
-        pages: Math.ceil((total.length > 0 ? Number(total[0].count) : 0) / limit),
+        total,
+        pages: Math.ceil(total / limit),
       },
     };
   }

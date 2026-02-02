@@ -101,13 +101,21 @@ export class VariableService {
   /**
    * Extract all variables from a template
    */
-  static extractVariables(template: string): string[] {
-    if (!template) return [];
-    
-    const regex = /\{\{([^{}]+)\}\}/g;
-    const matches = [...template.matchAll(regex)];
-    return [...new Set(matches.map(match => match[1].trim()))];
-  }
+static extractVariables(template: string): string[] {
+  if (!template) return [];
+  
+  const regex = /\{\{([^{}]+)\}\}/g;
+  const matches = [...template.matchAll(regex)];
+  
+  // Filter out any undefined or empty matches and ensure they're strings
+  return [...new Set(
+    matches
+      .map(match => match[1]?.trim())
+      .filter((variable): variable is string => 
+        typeof variable === 'string' && variable.length > 0
+      )
+  )];
+}
 
   /**
    * Get all available variable names (for UI display)

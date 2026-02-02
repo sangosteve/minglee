@@ -2,7 +2,15 @@
 import { getDb } from '../db/client';
 import { automations } from '../db/schema';
 import { eq, and, or, like, sql } from 'drizzle-orm';
-import { TRIGGER_TYPES, TriggerType } from './types/triggers';
+
+// Define trigger types inline since the module doesn't exist
+export type TriggerType = 'new_conversation' | 'message_received' | 'keyword';
+
+export const TRIGGER_TYPES: { value: TriggerType; label: string; description: string }[] = [
+  { value: 'new_conversation', label: 'New Conversation', description: 'Triggers when a contact messages for the first time' },
+  { value: 'message_received', label: 'Message Received', description: 'Triggers on any incoming message' },
+  { value: 'keyword', label: 'Keyword', description: 'Triggers when specific keywords are detected' }
+];
 
 export interface TriggerCheckResult {
   shouldExecute: boolean;
@@ -163,23 +171,112 @@ export class TriggerMatchingService {
     
     try {
       // Check if there are any previous messages from this contact
-      const previousMessages = await db.execute(sql`
-        SELECT COUNT(*) as count
-        FROM messages m
-        JOIN conversations c ON m.conversation_id = c.id
-        WHERE c.contact_id = ${contactId}
-        AND c.user_id = ${userId}
-        AND c.whatsapp_phone_number_id = ${phoneNumberId}
-        AND m.direction = 'incoming'
-      `);
-      
-      const count = previousMessages.rows[0]?.count || 0;
-      return count === 0;
+      // Note: You need to have messages and conversations tables
+      try {
+        const previousMessages = await db.execute(sql`
+          SELECT COUNT(*) as count
+          FROM messages m
+          JOIN conversations c ON m.conversation_id = c.id
+          WHERE c.contact_id = ${contactId}
+          AND c.user_id = ${userId}
+          AND c.whatsapp_phone_number_id = ${phoneNumberId}
+          AND m.direction = 'incoming'
+        `);
+        
+        const count = previousMessages.rows[0]?.count || 0;
+        return count === 0;
+      } catch (tableError) {
+        // If tables don't exist yet, assume it's the first message
+        console.warn('[Trigger] Messages/conversations tables not found, assuming first message');
+        return true;
+      }
       
     } catch (error) {
       console.error('[Trigger] Error checking first message:', error);
       return false;
     }
+  }
+
+  /**
+   * Check time-based triggers (for future implementation)
+   */
+  async checkTimeTrigger(
+    userId: string,
+    automationId: string
+  ): Promise<boolean> {
+    // TODO: Implement time-based triggers (e.g., "send at specific time", "after X days")
+    return false;
+  }
+
+  /**
+   * Check event-based triggers (for future implementation)
+   */
+  async checkEventTrigger(
+    userId: string,
+    eventType: string,
+    eventData: any
+  ): Promise<TriggerCheckResult[]> {
+    // TODO: Implement event-based triggers (e.g., "contact tagged", "form submitted")
+    return [];
+  }
+
+  /**
+   * Validate trigger configuration
+   */
+  validateTriggerConfig(
+    triggerType: TriggerType,
+    config: any
+  ): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    switch (triggerType) {
+      case 'keyword':
+        if (!config.keywords || !Array.isArray(config.keywords) || config.keywords.length === 0) {
+          errors.push('At least one keyword is required for keyword triggers');
+        }
+        if (config.keywords && config.keywords.some((k: string) => k.trim().length === 0)) {
+          errors.push('Keywords cannot be empty');
+        }
+        break;
+
+      case 'new_conversation':
+        // No specific config needed
+        break;
+
+      case 'message_received':
+        // No specific config needed
+        break;
+
+      default:
+        errors.push(`Unknown trigger type: ${triggerType}`);
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Get trigger description for display
+   */
+  getTriggerDescription(triggerType: TriggerType, config?: any): string {
+    const trigger = TRIGGER_TYPES.find(t => t.value === triggerType);
+    let description = trigger?.description || 'Unknown trigger';
+    
+    if (triggerType === 'keyword' && config?.keywords) {
+      const keywords = config.keywords.join(', ');
+      description += ` (Keywords: ${keywords})`;
+    }
+    
+    return description;
+  }
+
+  /**
+   * Get all trigger types for UI dropdown
+   */
+  getTriggerTypes(): { value: TriggerType; label: string; description: string }[] {
+    return TRIGGER_TYPES;
   }
 }
 

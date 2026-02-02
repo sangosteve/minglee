@@ -53,6 +53,13 @@ function safeParseNumber(value: any, defaultValue: number = 0): number {
   return isNaN(num) ? defaultValue : num;
 }
 
+// Helper function to safely extract count from query result
+function safeExtractCount(result: { count: number | bigint | null | undefined } | undefined): number {
+  if (!result) return 0;
+  if (result.count === null || result.count === undefined) return 0;
+  return Number(result.count);
+}
+
 // GET /api/analytics/overview - Get dashboard overview
 router.get('/overview', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -79,7 +86,7 @@ router.get('/overview', authenticate, async (req: AuthRequest, res) => {
       .where(
         and(
           eq(conversations.userId, userId),
-          gte(conversations.lastMessageAt, yesterday)
+          gte(conversations.lastMessageAt, yesterday.toISOString()) // Convert to ISO string
         )
       );
 
@@ -189,8 +196,8 @@ router.get('/overview', authenticate, async (req: AuthRequest, res) => {
     // Format the response data
     const responseData = {
       summary: {
-        totalConversations: safeParseNumber(totalConversations.count),
-        activeConversations: safeParseNumber(activeConversations.count),
+        totalConversations: safeExtractCount(totalConversations),
+        activeConversations: safeExtractCount(activeConversations),
         totalMessages: totalMessages,
         avgResponseTime: parseFloat(avgResponseTime.toFixed(2)), // Now safe to call toFixed
       },
@@ -592,8 +599,8 @@ router.get('/health', authenticate, async (req: AuthRequest, res) => {
       data: {
         user: userId,
         counts: {
-          conversations: safeParseNumber(conversationCount.count),
-          contacts: safeParseNumber(contactCount.count),
+          conversations: safeExtractCount(conversationCount),
+          contacts: safeExtractCount(contactCount),
           messages: safeParseNumber(messageCountResult.rows[0]?.count),
         },
         services: {

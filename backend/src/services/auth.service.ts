@@ -1,4 +1,4 @@
-//backend/src/services/auth.service.ts
+// backend/src/services/auth.service.ts
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../db/client';
@@ -34,7 +34,7 @@ export class AuthService {
     return jwt.sign(
       payload,
       process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' } as jwt.SignOptions
     );
   }
 
@@ -43,7 +43,7 @@ export class AuthService {
     return jwt.sign(
       { userId },
       process.env.JWT_REFRESH_SECRET!,
-      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' }
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
   }
 
@@ -79,9 +79,10 @@ export class AuthService {
     await db.insert(refreshTokens).values({
       userId,
       token,
-      expiresAt,
-      userAgent,
-      ipAddress,
+      expiresAt: expiresAt.toISOString(), // Convert to string
+      userAgent: userAgent || null,
+      ipAddress: ipAddress || null,
+      isRevoked: false,
     });
   }
 
@@ -102,9 +103,15 @@ export class AuthService {
       .where(eq(refreshTokens.token, token))
       .limit(1);
 
-    if (tokenRecord.length === 0) return false;
+    if (tokenRecord.length === 0 || !tokenRecord[0]) return false;
     
     const record = tokenRecord[0];
+    
+    // Check if record exists and has required properties
+    if (!record || !record.expiresAt || record.isRevoked === undefined) {
+      return false;
+    }
+    
     return !record.isRevoked && new Date(record.expiresAt) > new Date();
   }
 
@@ -121,9 +128,12 @@ export class AuthService {
       .where(eq(users.email, email))
       .limit(1);
 
-    if (userResult.length === 0) return null;
+    if (userResult.length === 0 || !userResult[0]) return null;
     
     const user = userResult[0];
+    
+    // Check if user has password hash
+    if (!user.passwordHash) return null;
     
     // Verify password
     const isValid = await this.verifyPassword(password, user.passwordHash);
@@ -151,15 +161,13 @@ export class AuthService {
     };
   }
 
-  
-
   // Register new user
   static async register(
     email: string, 
     password: string, 
     name: string, 
     phone?: string
-  ) {
+  ): Promise<{ user: any; tokens: AuthTokens }> {
     const db = getDb();
     
     // Check if user exists
@@ -176,12 +184,20 @@ export class AuthService {
     const passwordHash = await this.hashPassword(password);
     
     // Create user
-    const [newUser] = await db.insert(users).values({
+    const newUserResult = await db.insert(users).values({
       email,
       passwordHash,
       name,
-      phone,
+      phone: phone || null,
+      isActive: true,
+      isAdmin: false,
     }).returning();
+
+    if (newUserResult.length === 0 || !newUserResult[0]) {
+      throw new Error('Failed to create user');
+    }
+    
+    const newUser = newUserResult[0];
     
     // Generate tokens
     const payload: TokenPayload = {

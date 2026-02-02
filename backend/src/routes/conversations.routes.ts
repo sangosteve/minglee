@@ -14,10 +14,14 @@ const router = Router();
 // GET unread count
 router.get('/unread/count', authenticate, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
     const db = getDb();
 
-    const result = await db.select({ count: sql`sum(${conversations.unreadCount})` })
+    const result = await db.select({ count: sql<number>`sum(${conversations.unreadCount})` })
       .from(conversations)
       .where(eq(conversations.userId, userId));
 
@@ -35,7 +39,12 @@ router.get('/assigned/me', authenticate, async (req: AuthRequest, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
     const db = getDb();
 
     const assignedConversations = await db.select({
@@ -57,11 +66,11 @@ router.get('/assigned/me', authenticate, async (req: AuthRequest, res) => {
       assignedUser: assignedUser ? { name: assignedUser.name, email: assignedUser.email } : null,
     }));
 
-    const totalResult = await db.select({ count: sql`count(*)` })
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
       .from(conversations)
       .where(and(eq(conversations.userId, userId), eq(conversations.assignedToUserId, userId)));
 
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0]?.count) : 0;
 
     res.json({
       success: true,
@@ -79,7 +88,12 @@ router.get('/unassigned', authenticate, async (req: AuthRequest, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
     const db = getDb();
 
     const unassignedConversations = await db.select({ conversation: conversations, contact: contacts })
@@ -96,11 +110,11 @@ router.get('/unassigned', authenticate, async (req: AuthRequest, res) => {
       assignedUser: null,
     }));
 
-    const totalResult = await db.select({ count: sql`count(*)` })
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
       .from(conversations)
       .where(and(eq(conversations.userId, userId), isNull(conversations.assignedToUserId)));
 
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0]?.count) : 0;
 
     res.json({
       success: true,
@@ -118,7 +132,12 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
     const { page = 1, limit = 20, status, search } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
     const db = getDb();
 
     const whereConditions: any[] = [eq(conversations.userId, userId)];
@@ -151,12 +170,12 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       assignedUser: assignedUser ? { name: assignedUser.name, email: assignedUser.email } : null,
     }));
 
-    const totalResult = await db.select({ count: sql`count(*)` })
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .where(and(...whereConditions));
 
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+    const total = totalResult.length ? Number(totalResult[0]?.count) : 0;
 
     res.json({
       success: true,
@@ -174,7 +193,16 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 50 } = req.query;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Conversation ID is required' });
+    }
+    
     const db = getDb();
 
     const conversationResult = await db.select({ conversation: conversations, contact: contacts })
@@ -185,9 +213,14 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 
     if (!conversationResult.length) return res.status(404).json({ success: false, error: 'Conversation not found' });
 
+    const conversationData = conversationResult[0];
+    if (!conversationData) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
+
     // Get total count first
-    const totalResult = await db.select({ count: sql`count(*)` }).from(messages).where(eq(messages.conversationId, id));
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+    const totalResult = await db.select({ count: sql<number>`count(*)` }).from(messages).where(eq(messages.conversationId, id));
+    const total = totalResult.length ? Number(totalResult[0]?.count) : 0;
 
     // Calculate offset for DESCENDING order (newest first)
     const offset = (Number(page) - 1) * Number(limit);
@@ -201,8 +234,8 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 
     res.json({
       success: true,
-      conversation: conversationResult[0].conversation,
-      contact: conversationResult[0].contact,
+      conversation: conversationData.conversation,
+      contact: conversationData.contact,
       messages: messagesList,
       pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
     });
@@ -217,7 +250,16 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { message, attachments = [] } = req.body;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Conversation ID is required' });
+    }
+    
     const db = getDb();
 
     console.log('📦 Received message payload:', {
@@ -237,16 +279,30 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
     }
 
     // Get conversation, contact, and user
-    const [conversationData] = await db.select({ conversation: conversations, contact: contacts, user: users })
+    const conversationResult = await db.select({ conversation: conversations, contact: contacts, user: users })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .leftJoin(users, eq(conversations.userId, users.id))
       .where(and(eq(conversations.id, id), eq(conversations.userId, userId)))
       .limit(1);
 
-    if (!conversationData) return res.status(404).json({ success: false, error: 'Conversation not found' });
+    if (!conversationResult.length) return res.status(404).json({ success: false, error: 'Conversation not found' });
+
+    const conversationData = conversationResult[0];
+    if (!conversationData) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
 
     const { conversation, contact, user } = conversationData;
+    
+    // Check if contact and user exist
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
 
     if (!contact.phone) return res.status(400).json({ success: false, error: 'Contact does not have a phone number' });
     if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
@@ -315,20 +371,43 @@ router.post('/:id/messages', authenticate, async (req: AuthRequest, res) => {
 router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async (req: AuthRequest, res) => {
   try {
     const { conversationId, quickReplyId } = req.params;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
+    if (!conversationId || !quickReplyId) {
+      return res.status(400).json({ success: false, error: 'Conversation ID and Quick Reply ID are required' });
+    }
+    
     const db = getDb();
 
     // Get conversation, contact, and user
-    const [conversationData] = await db.select({ conversation: conversations, contact: contacts, user: users })
+    const conversationResult = await db.select({ conversation: conversations, contact: contacts, user: users })
       .from(conversations)
       .leftJoin(contacts, eq(conversations.contactId, contacts.id))
       .leftJoin(users, eq(conversations.userId, users.id))
       .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)))
       .limit(1);
 
-    if (!conversationData) return res.status(404).json({ success: false, error: 'Conversation not found' });
+    if (!conversationResult.length) return res.status(404).json({ success: false, error: 'Conversation not found' });
+
+    const conversationData = conversationResult[0];
+    if (!conversationData) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' });
+    }
 
     const { conversation, contact, user } = conversationData;
+    
+    // Check if contact and user exist
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
 
     // Get quick reply with media attachments
     const quickReplyResult = await db.select()
@@ -343,6 +422,9 @@ router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async 
     if (!quickReplyResult.length) return res.status(404).json({ success: false, error: 'Quick reply not found' });
 
     const quickReply = quickReplyResult[0];
+    if (!quickReply) {
+      return res.status(404).json({ success: false, error: 'Quick reply not found' });
+    }
 
     // Get media attachments if any
     let mediaAttachmentsList: any[] = [];
@@ -434,9 +516,9 @@ router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async 
         ? 'Quick reply with media sent successfully' 
         : 'Quick reply sent successfully',
       data: {
-    ...result,
-    mediaAttachmentId: result.mediaAttachmentId, // Include media attachment ID
-  },
+        ...result,
+        mediaAttachmentId: result.mediaAttachmentId, // Include media attachment ID
+      },
       preview: { 
         original: quickReply.message, 
         personalized: personalizedMessage,
@@ -453,16 +535,22 @@ router.post('/:conversationId/quick-replies/:quickReplyId', authenticate, async 
     });
   }
 });
+
 // ---------------------- PATCH ROUTES ---------------------- //
 
 // Mark conversation as read
 router.patch('/:id/read', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Conversation ID is required' });
+    }
+    
     const db = getDb();
 
     await db.update(conversations)
-      .set({ unreadCount: 0, updatedAt: new Date() })
+      .set({ unreadCount: 0, updatedAt: new Date().toISOString() }) // FIX: Use ISO string instead of Date
       .where(eq(conversations.id, id));
 
     res.json({ success: true });
@@ -477,10 +565,15 @@ router.patch('/:id/status', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Conversation ID is required' });
+    }
+    
     const db = getDb();
 
     await db.update(conversations)
-      .set({ status, updatedAt: new Date() })
+      .set({ status, updatedAt: new Date().toISOString() }) // FIX: Use ISO string instead of Date
       .where(eq(conversations.id, id));
 
     res.json({ success: true });
@@ -495,6 +588,11 @@ router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { assignedToUserId } = req.body; // Changed from userId to assignedToUserId
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Conversation ID is required' });
+    }
+    
     const db = getDb();
     
     console.log('📝 Assignment request:', {
@@ -505,11 +603,19 @@ router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
     });
 
     // Get the conversation first to ensure it exists
-    const [conversation] = await db.select()
+    const conversationResult = await db.select()
       .from(conversations)
       .where(eq(conversations.id, id))
       .limit(1);
 
+    if (!conversationResult.length) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Conversation not found' 
+      });
+    }
+
+    const conversation = conversationResult[0];
     if (!conversation) {
       return res.status(404).json({ 
         success: false, 
@@ -521,12 +627,12 @@ router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
     await db.update(conversations)
       .set({ 
         assignedToUserId: assignedToUserId || null, // Allow null to unassign
-        updatedAt: new Date() 
+        updatedAt: new Date().toISOString() // FIX: Use ISO string instead of Date
       })
       .where(eq(conversations.id, id));
 
     // Get the updated conversation with assigned user info
-    const [updatedConversation] = await db.select({
+    const updatedConversationResult = await db.select({
       conversation: conversations,
       assignedUser: users,
     })
@@ -535,21 +641,38 @@ router.patch('/:id/assign', authenticate, async (req: AuthRequest, res) => {
     .where(eq(conversations.id, id))
     .limit(1);
 
+    if (!updatedConversationResult.length) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Conversation not found after update' 
+      });
+    }
+
+    const updatedConversationData = updatedConversationResult[0];
+    if (!updatedConversationData) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Conversation not found after update' 
+      });
+    }
+
+    const { conversation: updatedConversation, assignedUser } = updatedConversationData;
+
     console.log('✅ Assignment updated:', {
       conversationId: id,
       assignedToUserId,
-      assignedUser: updatedConversation.assignedUser ? {
-        id: updatedConversation.assignedUser.id,
-        name: updatedConversation.assignedUser.name
+      assignedUser: assignedUser ? {
+        id: assignedUser.id,
+        name: assignedUser.name
       } : null
     });
 
     res.json({ 
       success: true, 
-      conversation: updatedConversation.conversation,
-      assignedUser: updatedConversation.assignedUser ? {
-        name: updatedConversation.assignedUser.name,
-        email: updatedConversation.assignedUser.email
+      conversation: updatedConversation,
+      assignedUser: assignedUser ? {
+        name: assignedUser.name,
+        email: assignedUser.email
       } : undefined
     });
   } catch (error: any) {

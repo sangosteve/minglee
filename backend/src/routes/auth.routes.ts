@@ -5,8 +5,11 @@ import { getDb } from '../db/client';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { InferSelectModel } from 'drizzle-orm';
 
 const router = Router();
+
+type UserSelect = InferSelectModel<typeof users>;
 
 // Register
 router.post('/register', async (req, res) => {
@@ -68,6 +71,7 @@ router.post('/register', async (req, res) => {
     });
   }
 });
+
 // Login
 router.post('/login', async (req, res) => {
   try {
@@ -143,6 +147,9 @@ router.post('/refresh', async (req, res) => {
     }
     
     const user = userResult[0];
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
     
     // Generate new tokens
     const newAccessToken = AuthService.generateAccessToken({
@@ -170,7 +177,24 @@ router.post('/refresh', async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    const { passwordHash, ...userWithoutPassword } = user;
+    // Create user object without sensitive fields
+    const userWithoutPassword = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      avatarUrl: user.avatarUrl,
+      googleId: user.googleId,
+      googleAccessToken: user.googleAccessToken,
+      googleRefreshToken: user.googleRefreshToken,
+      whatsappBusinessId: user.whatsappBusinessId,
+      whatsappPhoneNumberId: user.whatsappPhoneNumberId,
+      whatsappAccessToken: user.whatsappAccessToken,
+      isActive: user.isActive,
+      isAdmin: user.isAdmin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
 
     res.json({
       success: true,
@@ -207,7 +231,6 @@ router.post('/logout', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-
 router.get('/google', (req, res) => {
   try {
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback')}&response_type=code&scope=profile email&access_type=offline&prompt=consent`;
@@ -222,7 +245,6 @@ router.get('/google', (req, res) => {
     res.status(500).json({ error: 'Failed to generate Google auth URL' });
   }
 });
-
 
 router.get('/google/callback', async (req, res) => {
   try {
@@ -244,11 +266,11 @@ router.get('/google/callback', async (req, res) => {
       .where(eq(users.email, userInfo.email))
       .limit(1);
 
-    let user;
+    let user: UserSelect;
     
     if (userResult.length === 0) {
       // Create new user
-      const [newUser] = await db.insert(users).values({
+      const newUsers = await db.insert(users).values({
         email: userInfo.email,
         name: userInfo.name,
         googleId: userInfo.id,
@@ -257,22 +279,30 @@ router.get('/google/callback', async (req, res) => {
         avatarUrl: userInfo.picture,
         isActive: true,
         isAdmin: false,
-      }).returning({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        phone: users.phone,
-        avatarUrl: users.avatarUrl,
-        isActive: users.isActive,
-        isAdmin: users.isAdmin,
-        createdAt: users.createdAt,
-        updatedAt: users.updatedAt,
-      });
+        passwordHash: null,
+      }).returning();
       
-      user = newUser;
+      // Check if insertion was successful
+      if (!newUsers || newUsers.length === 0) {
+        return res.status(500).json({ 
+          success: false,
+          error: 'Failed to create user' 
+        });
+      }
+      
+      // Use non-null assertion since we just checked the array
+      user = newUsers[0]!;
     } else {
       // Update existing user
-      user = userResult[0];
+      const existingUser = userResult[0];
+      if (!existingUser) {
+        return res.status(500).json({ 
+          success: false,
+          error: 'User not found' 
+        });
+      }
+      
+      user = existingUser;
       
       await db.update(users)
         .set({
@@ -280,7 +310,7 @@ router.get('/google/callback', async (req, res) => {
           googleAccessToken: tokens.access_token,
           googleRefreshToken: tokens.refresh_token,
           avatarUrl: userInfo.picture || user.avatarUrl,
-          updatedAt: new Date(),
+          updatedAt: new Date().toISOString(),
         })
         .where(eq(users.id, user.id));
     }
@@ -292,7 +322,7 @@ router.get('/google/callback', async (req, res) => {
       isAdmin: user.isAdmin || false,
     };
     
-    const accessToken = AuthService.generateAccessToken(payload);
+    const jwtAccessToken = AuthService.generateAccessToken(payload);
     const refreshToken = AuthService.generateRefreshToken(user.id);
     
     // Store refresh token server-side
@@ -311,14 +341,31 @@ router.get('/google/callback', async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    const { passwordHash, ...userWithoutPassword } = user;
+    // Create user object without sensitive fields
+    const userWithoutPassword = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      avatarUrl: user.avatarUrl,
+      isActive: user.isActive,
+      isAdmin: user.isAdmin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      googleId: user.googleId,
+      googleAccessToken: user.googleAccessToken,
+      googleRefreshToken: user.googleRefreshToken,
+      whatsappBusinessId: user.whatsappBusinessId,
+      whatsappPhoneNumberId: user.whatsappPhoneNumberId,
+      whatsappAccessToken: user.whatsappAccessToken,
+    };
 
     // In production, redirect to frontend
     // For development, return JSON
     res.json({
       success: true,
       user: userWithoutPassword,
-      accessToken,
+      accessToken: jwtAccessToken,
     });
     
   } catch (error: any) {
@@ -329,20 +376,19 @@ router.get('/google/callback', async (req, res) => {
   }
 });
 
-
 // Google OAuth frontend flow (receives access token from frontend)
 router.post('/google/frontend', async (req, res) => {
   try {
-    const { accessToken } = req.body;
+    const { accessToken: googleAccessToken } = req.body; // Rename to avoid conflict
     
-    console.log('Received Google access token:', accessToken ? 'Present' : 'Missing');
+    console.log('Received Google access token:', googleAccessToken ? 'Present' : 'Missing');
     
-    if (!accessToken) {
+    if (!googleAccessToken) {
       return res.status(400).json({ error: 'Google access token is required' });
     }
     
     // Verify token and get user info from Google
-    const userInfo = await getUserInfo(accessToken);
+    const userInfo = await getUserInfo(googleAccessToken);
     console.log('Google user info:', userInfo);
     
     const db = getDb();
@@ -353,41 +399,49 @@ router.post('/google/frontend', async (req, res) => {
       .where(eq(users.email, userInfo.email))
       .limit(1);
 
-    let user;
+    let user: UserSelect;
     
     if (userResult.length === 0) {
       // Create new user
-      const [newUser] = await db.insert(users).values({
+      const newUsers = await db.insert(users).values({
         email: userInfo.email,
         name: userInfo.name,
         googleId: userInfo.id,
-        googleAccessToken: accessToken,
+        googleAccessToken: googleAccessToken,
         avatarUrl: userInfo.picture,
         isActive: true,
         isAdmin: false,
-      }).returning({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        phone: users.phone,
-        avatarUrl: users.avatarUrl,
-        isActive: users.isActive,
-        isAdmin: users.isAdmin,
-        createdAt: users.createdAt,
-        updatedAt: users.updatedAt,
-      });
+        passwordHash: null,
+      }).returning();
       
-      user = newUser;
+      // Check if insertion was successful
+      if (!newUsers || newUsers.length === 0) {
+        return res.status(500).json({ 
+          success: false,
+          error: 'Failed to create user' 
+        });
+      }
+      
+      // Use non-null assertion since we just checked the array
+      user = newUsers[0]!;
     } else {
       // Update existing user
-      user = userResult[0];
+      const existingUser = userResult[0];
+      if (!existingUser) {
+        return res.status(500).json({ 
+          success: false,
+          error: 'User not found' 
+        });
+      }
+      
+      user = existingUser;
       
       await db.update(users)
         .set({
           googleId: userInfo.id,
-          googleAccessToken: accessToken,
+          googleAccessToken: googleAccessToken,
           avatarUrl: userInfo.picture || user.avatarUrl,
-          updatedAt: new Date(),
+          updatedAt: new Date().toISOString(),
         })
         .where(eq(users.id, user.id));
     }
@@ -401,7 +455,7 @@ router.post('/google/frontend', async (req, res) => {
       isAdmin: user.isAdmin || false,
     };
     
-    const jwtAccessToken = AuthService.generateAccessToken(payload);
+    const jwtAccessToken = AuthService.generateAccessToken(payload); // Different variable name
     const refreshToken = AuthService.generateRefreshToken(user.id);
     
     // Store refresh token server-side and set cookie
@@ -419,10 +473,29 @@ router.post('/google/frontend', async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
+    // Create user object without sensitive fields
+    const userWithoutPassword = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      avatarUrl: user.avatarUrl,
+      isActive: user.isActive,
+      isAdmin: user.isAdmin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      googleId: user.googleId,
+      googleAccessToken: user.googleAccessToken,
+      googleRefreshToken: user.googleRefreshToken,
+      whatsappBusinessId: user.whatsappBusinessId,
+      whatsappPhoneNumberId: user.whatsappPhoneNumberId,
+      whatsappAccessToken: user.whatsappAccessToken,
+    };
+
     // Return accessToken and user (no refresh token in body)
     res.json({
       success: true,
-      user,
+      user: userWithoutPassword,
       accessToken: jwtAccessToken,
     });
     
@@ -459,7 +532,6 @@ async function exchangeCodeForTokens(code: string) {
   return response.json();
 }
 
-
 async function getUserInfo(accessToken: string) {
   const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
     headers: {
@@ -475,7 +547,6 @@ async function getUserInfo(accessToken: string) {
   return response.json();
 }
 
-
 // Get current user
 router.get('/me', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -490,7 +561,29 @@ router.get('/me', authenticate, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    const { passwordHash, ...userWithoutPassword } = userResult[0];
+    const user = userResult[0];
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Create user object without sensitive fields
+    const userWithoutPassword = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      avatarUrl: user.avatarUrl,
+      isActive: user.isActive,
+      isAdmin: user.isAdmin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      googleId: user.googleId,
+      googleAccessToken: user.googleAccessToken,
+      googleRefreshToken: user.googleRefreshToken,
+      whatsappBusinessId: user.whatsappBusinessId,
+      whatsappPhoneNumberId: user.whatsappPhoneNumberId,
+      whatsappAccessToken: user.whatsappAccessToken,
+    };
     
     res.json({
       success: true,

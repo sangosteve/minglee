@@ -11,7 +11,7 @@ import {
   quickReplies,
   messages,
 } from '../db/schema';
-import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, isNotNull } from 'drizzle-orm';
 import { VariableService } from './variable.service';
 import { messageService } from './message/message.service';
 
@@ -21,6 +21,27 @@ export interface ExecutionContext {
   executionId: string;
   currentData: Record<string, any>;
   userData?: any;
+}
+
+// Type definitions for flow data
+interface FlowNode {
+  id: string;
+  type: string;
+  data?: any;
+  position: { x: number; y: number };
+}
+
+interface FlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
+interface FlowData {
+  nodes: FlowNode[];
+  edges: FlowEdge[];
 }
 
 export class AutomationExecutionService {
@@ -44,7 +65,7 @@ export class AutomationExecutionService {
       console.log(`[Automation] Automation: ${automationId}, Contact: ${contactId}, User: ${userId}`);
 
       // 1. Get automation with flow data
-      const [automation] = await db.select({
+      const automationResult = await db.select({
         id: automations.id,
         name: automations.name,
         flowData: automations.flowData,
@@ -54,10 +75,12 @@ export class AutomationExecutionService {
         .where(eq(automations.id, automationId))
         .limit(1);
 
-      if (!automation) {
+      if (!automationResult.length || !automationResult[0]) {
         console.error(`[Automation] ❌ Automation not found: ${automationId}`);
         return { success: false, error: 'Automation not found' };
       }
+
+      const automation = automationResult[0];
 
       // Verify ownership
       if (automation.userId !== userId) {
@@ -66,7 +89,7 @@ export class AutomationExecutionService {
       }
 
       // 2. Get user
-      const [user] = await db.select({
+      const userResult = await db.select({
         id: users.id,
         email: users.email,
         whatsappPhoneNumberId: users.whatsappPhoneNumberId,
@@ -76,13 +99,15 @@ export class AutomationExecutionService {
         .where(eq(users.id, userId))
         .limit(1);
 
-      if (!user) {
+      if (!userResult.length || !userResult[0]) {
         console.error(`[Automation] ❌ User not found: ${userId}`);
         return { success: false, error: 'User not found' };
       }
 
+      const user = userResult[0];
+
       // 3. Get contact
-      const [contact] = await db.select({
+      const contactResult = await db.select({
         id: contacts.id,
         phone: contacts.phone,
         name: contacts.name,
@@ -93,20 +118,24 @@ export class AutomationExecutionService {
         .where(eq(contacts.id, contactId))
         .limit(1);
 
-      if (!contact) {
+      if (!contactResult.length || !contactResult[0]) {
         console.error(`[Automation] ❌ Contact not found: ${contactId}`);
         return { success: false, error: 'Contact not found' };
       }
 
+      const contact = contactResult[0];
+
       // 4. Get conversation
       let conversation = null;
       if (triggerData?.metadata?.conversation_id) {
-        const [convo] = await db.select()
+        const conversationResult = await db.select()
           .from(conversations)
           .where(eq(conversations.id, triggerData.metadata.conversation_id))
           .limit(1);
 
-        conversation = convo;
+        if (conversationResult.length && conversationResult[0]) {
+          conversation = conversationResult[0];
+        }
       }
 
       // 5. Create execution context
@@ -155,7 +184,7 @@ export class AutomationExecutionService {
       }
 
       // 7. Execute flow data
-      const flowData = automation.flowData as any;
+      const flowData = automation.flowData as FlowData;
       if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
         console.error(`[Automation] ❌ Invalid flow data`);
         return { success: false, error: 'Invalid flow data' };
@@ -164,11 +193,11 @@ export class AutomationExecutionService {
       console.log(`[Automation] Processing ${flowData.nodes.length} nodes`);
 
       // Create a map of nodes by ID for quick lookup
-      const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
+      const nodeMap = new Map<string, FlowNode>(flowData.nodes.map((n: FlowNode) => [n.id, n]));
 
       // Create a map of edges by source node AND by sourceHandle for branching
-      const edgeMap = new Map<string, any[]>();
-      flowData.edges.forEach((edge: any) => {
+      const edgeMap = new Map<string, FlowEdge[]>();
+      (flowData.edges || []).forEach((edge: FlowEdge) => {
         if (!edgeMap.has(edge.source)) {
           edgeMap.set(edge.source, []);
         }
@@ -179,9 +208,9 @@ export class AutomationExecutionService {
       const visitedNodes = new Set<string>();
 
       // Start from trigger node OR from the interactive/list node if continuing
-      let currentNode = startingNodeId
-        ? flowData.nodes.find((n: any) => n.id === startingNodeId)
-        : flowData.nodes.find((n: any) => n.type === 'triggerNode');
+      let currentNode: FlowNode | undefined = startingNodeId
+        ? flowData.nodes.find((n: FlowNode) => n.id === startingNodeId)
+        : flowData.nodes.find((n: FlowNode) => n.type === 'triggerNode');
 
       if (!currentNode) {
         console.error(`[Automation] ❌ No starting node found`);
@@ -207,11 +236,11 @@ export class AutomationExecutionService {
 
         const nodeStartTime = Date.now();
         let nodeSuccess = false;
-        let nodeError = null;
-        let conditionResult = null;
-        let keywordResult = null;
-        let listResult = null;
-        let interactiveResult = null;
+        let nodeError: string | null = null;
+        let conditionResult: boolean | null = null;
+        let keywordResult: boolean | null = null;
+        let listResult: string | null = null;
+        let interactiveResult: string | null = null;
 
         try {
           switch (currentNode.type) {
@@ -398,7 +427,7 @@ export class AutomationExecutionService {
           } else {
             // Fallback: follow first edge
             nextEdge = outgoingEdges[0];
-            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
           }
 
           if (nextEdge) {
@@ -422,7 +451,7 @@ export class AutomationExecutionService {
           } else {
             // Fallback: follow first edge
             nextEdge = outgoingEdges[0];
-            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+            console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
           }
 
           if (nextEdge) {
@@ -466,9 +495,9 @@ export class AutomationExecutionService {
         // For regular nodes, follow the first outgoing edge
         if (outgoingEdges.length > 0) {
           const nextEdge = outgoingEdges[0];
-          currentNode = nodeMap.get(nextEdge.target);
+          currentNode = nodeMap.get(nextEdge?.target||'');
         } else {
-          currentNode = null;
+          currentNode = undefined;
         }
       }
 
@@ -525,265 +554,494 @@ export class AutomationExecutionService {
   /**
    * Execute Interactive Message Node
    */
-private async executeInteractiveMessageNode(
-  node: any, 
-  context: ExecutionContext
-): Promise<{ 
-  success: boolean; 
-  pendingAction?: any;
-  sentMessageId?: string;
-}> {
-  const nodeData = node.data || {};
-  
-  console.log(`[Automation] 🎮 Interactive message node: ${node.id}`);
-  console.log(`[Automation] Type: ${nodeData.type}, Actions:`, nodeData.actions?.map((a: any) => ({
-    type: a.type,
-    title: a.title,
-    id: a.id
-  })));
+  private async executeInteractiveMessageNode(
+    node: FlowNode,
+    context: ExecutionContext
+  ): Promise<{
+    success: boolean;
+    pendingAction?: any;
+    sentMessageId?: string | undefined;
+  }> {
+    const nodeData = node.data || {};
 
-  // Personalize message with variables
-  let personalizedBody = nodeData.body || '';
-  let personalizedHeader = nodeData.header?.content || '';
-  let personalizedFooter = nodeData.footer || '';
-  
-  if (personalizedBody.includes('{{') || personalizedHeader.includes('{{') || personalizedFooter.includes('{{')) {
-    const allVariables = VariableService.getAvailableVariables(
-      context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
-      context.currentData.contact,
-      context.currentData.user
-    );
+    console.log(`[Automation] 🎮 Interactive message node: ${node.id}`);
+    console.log(`[Automation] Type: ${nodeData.type}, Actions:`, nodeData.actions?.map((a: any) => ({
+      type: a.type,
+      title: a.title,
+      id: a.id
+    })));
 
-    personalizedBody = VariableService.replaceVariables(personalizedBody, allVariables);
-    personalizedHeader = VariableService.replaceVariables(personalizedHeader, allVariables);
-    personalizedFooter = VariableService.replaceVariables(personalizedFooter, allVariables);
+    // Personalize message with variables
+    let personalizedBody = nodeData.body || '';
+    let personalizedHeader = nodeData.header?.content || '';
+    let personalizedFooter = nodeData.footer || '';
 
-    console.log(`[Automation] Personalized interactive message`);
-  }
+    if (personalizedBody.includes('{{') || personalizedHeader.includes('{{') || personalizedFooter.includes('{{')) {
+      const allVariables = VariableService.getAvailableVariables(
+        context.currentData.conversation || { id: 'temp', status: 'active', unreadCount: 0 },
+        context.currentData.contact,
+        context.currentData.user
+      );
 
-  // Format interactive data for WhatsApp API
-  const interactiveData = this.formatInteractiveData(nodeData, personalizedBody, personalizedHeader, personalizedFooter);
+      personalizedBody = VariableService.replaceVariables(personalizedBody, allVariables);
+      personalizedHeader = VariableService.replaceVariables(personalizedHeader, allVariables);
+      personalizedFooter = VariableService.replaceVariables(personalizedFooter, allVariables);
 
-  console.log(`[Automation] Interactive data prepared:`, JSON.stringify(interactiveData, null, 2));
-
-  // Send via WhatsApp
-  try {
-    const result = await messageService.sendMessage({
-      contactId: context.contactId,
-      userId: context.userData.id,
-      conversationId: context.currentData.conversation?.id,
-      body: personalizedBody,
-      direction: 'outgoing',
-      messageType: 'interactive',
-      metadata: {
-        automation: true,
-        automationId: context.workflowId,
-        automationName: 'Automation',
-        nodeId: node.id,
-        executionId: context.executionId,
-        interactiveData: interactiveData,
-        // Store action IDs for later action tracking
-        actionIds: (nodeData.actions || []).map((action: any) => ({
-          id: action.id,
-          type: action.type,
-          title: action.title,  // Make sure title is included
-          payload: action.payload,
-          url: action.url,
-          phoneNumber: action.phoneNumber,
-        })),
-        isInteractive: true,
-        interactiveType: interactiveData.type,
-      },
-    });
-
-    console.log(`[Automation] ✅ Interactive message sent successfully`);
-    
-    // For CTA_URL messages, we don't need to pause (user clicks URL, not a reply)
-    // For REPLY buttons, we need to pause and wait for user response
-    if (interactiveData.type === 'button') {
-      return {
-        success: true,
-        pendingAction: {
-          nodeId: node.id,
-          actionIds: (nodeData.actions || [])
-            .filter((action: any) => action.type === 'reply')
-            .map((action: any) => ({
-              id: action.id,
-              type: action.type,
-              title: action.title,  // Include title here too
-              payload: action.payload,
-            })),
-          sentMessageId: result.message.id
-        },
-        sentMessageId: result.message.id
-      };
-    } else {
-      // For CTA_URL, no pause needed
-      return {
-        success: true,
-        sentMessageId: result.message.id
-      };
+      console.log(`[Automation] Personalized interactive message`);
     }
 
-  } catch (error: any) {
-    console.error(`[Automation] ❌ Error sending interactive message:`, error);
-    console.error(`[Automation] ❌ Error details:`, error.response?.data || error.message);
-    return { success: false };
+    // Format interactive data for WhatsApp API
+    const interactiveData = this.formatInteractiveData(nodeData, personalizedBody, personalizedHeader, personalizedFooter);
+
+    console.log(`[Automation] Interactive data prepared:`, JSON.stringify(interactiveData, null, 2));
+
+    // Send via WhatsApp
+    try {
+      const result = await messageService.sendMessage({
+        contactId: context.contactId,
+        userId: context.userData.id,
+        conversationId: context.currentData.conversation?.id,
+        body: personalizedBody,
+        direction: 'outgoing',
+        messageType: 'interactive',
+        metadata: {
+          automation: true,
+          automationId: context.workflowId,
+          automationName: 'Automation',
+          nodeId: node.id,
+          executionId: context.executionId,
+          interactiveData: interactiveData,
+          // Store action IDs for later action tracking
+          actionIds: (nodeData.actions || []).map((action: any) => ({
+            id: action.id,
+            type: action.type,
+            title: action.title,  // Make sure title is included
+            payload: action.payload,
+            url: action.url,
+            phoneNumber: action.phoneNumber,
+          })),
+          isInteractive: true,
+          interactiveType: interactiveData.type,
+        },
+      });
+
+      console.log(`[Automation] ✅ Interactive message sent successfully`);
+
+      // For CTA_URL messages, we don't need to pause (user clicks URL, not a reply)
+      // For REPLY buttons, we need to pause and wait for user response
+      if (interactiveData.type === 'button') {
+        return {
+          success: true,
+          pendingAction: {
+            nodeId: node.id,
+            actionIds: (nodeData.actions || [])
+              .filter((action: any) => action.type === 'reply')
+              .map((action: any) => ({
+                id: action.id,
+                type: action.type,
+                title: action.title,  // Include title here too
+                payload: action.payload,
+              })),
+            sentMessageId: result.message?.id || undefined
+          },
+          sentMessageId: result.message?.id || undefined
+        };
+      } else {
+        // For CTA_URL, no pause needed
+        return {
+          success: true,
+          sentMessageId: result?.message?.id || undefined
+        };
+      }
+
+    } catch (error: any) {
+      console.error(`[Automation] ❌ Error sending interactive message:`, error);
+      console.error(`[Automation] ❌ Error details:`, error.response?.data || error.message);
+      return { success: false };
+    }
   }
-}
 
   /**
    * Format interactive data for WhatsApp API
    */
-private formatInteractiveData(nodeData: any, body: string, header: string, footer: string): any {
-  const type = nodeData.type || 'reply_buttons';
-  
-  console.log("🚀 FORMAT INTERACTIVE DATA");
-  console.log("Type:", type);
-  console.log("Full nodeData received:", JSON.stringify({
-    type: nodeData.type,
-    body: nodeData.body?.substring(0, 50),
-    actions: nodeData.actions?.map((a: any, i: number) => ({
-      index: i,
-      type: a.type,
-      title: a.title || 'MISSING TITLE',
-      titleExists: !!a.title,
-      titleLength: a.title?.length || 0,
-      url: a.url,
-      phoneNumber: a.phoneNumber,
-      payload: a.payload
-    }))
-  }, null, 2));
-  
-  // Force check EVERY field
-  if (nodeData.actions) {
-    nodeData.actions.forEach((action: any, index: number) => {
-      console.log(`🔍 Action ${index} deep inspection:`, {
+  private formatInteractiveData(nodeData: any, body: string, header: string, footer: string): any {
+    const type = nodeData.type || 'reply_buttons';
+
+    console.log("🚀 FORMAT INTERACTIVE DATA");
+    console.log("Type:", type);
+    console.log("Full nodeData received:", JSON.stringify({
+      type: nodeData.type,
+      body: nodeData.body?.substring(0, 50),
+      actions: nodeData.actions?.map((a: any, i: number) => ({
+        index: i,
+        type: a.type,
+        title: a.title || 'MISSING TITLE',
+        titleExists: !!a.title,
+        titleLength: a.title?.length || 0,
+        url: a.url,
+        phoneNumber: a.phoneNumber,
+        payload: a.payload
+      }))
+    }, null, 2));
+
+    // Force check EVERY field
+    if (nodeData.actions) {
+      nodeData.actions.forEach((action: any, index: number) => {
+        console.log(`🔍 Action ${index} deep inspection:`, {
+          id: action.id,
+          type: action.type,
+          title: action.title,
+          'title === "Open Link"': action.title === 'Open Link',
+          'title === "Call Us"': action.title === 'Call Us',
+          'title === "Button 1"': action.title === 'Button 1',
+          'title?.includes("Open")': action.title?.includes('Open'),
+          'title?.includes("Call")': action.title?.includes('Call'),
+          'title?.includes("Button")': action.title?.includes('Button'),
+          url: action.url,
+          phoneNumber: action.phoneNumber,
+          payload: action.payload,
+          'ALL KEYS': Object.keys(action)
+        });
+      });
+    }
+
+    const allActions = nodeData.actions || [];
+    const replyActions = allActions.filter((action: any) => action.type === 'reply');
+    const urlActions = allActions.filter((action: any) => action.type === 'url');
+    const callActions = allActions.filter((action: any) => action.type === 'call');
+
+    console.log(`[Automation] Action breakdown:`, {
+      total: allActions.length,
+      reply: replyActions.length,
+      url: urlActions.length,
+      call: callActions.length
+    });
+
+    // Helper function to get button text from various possible fields
+    const getButtonText = (action: any, index: number, defaultPrefix: string = 'Button'): string => {
+      console.log(`🔍 Getting button text for action:`, {
         id: action.id,
         type: action.type,
         title: action.title,
-        'title === "Open Link"': action.title === 'Open Link',
-        'title === "Call Us"': action.title === 'Call Us',
-        'title === "Button 1"': action.title === 'Button 1',
-        'title?.includes("Open")': action.title?.includes('Open'),
-        'title?.includes("Call")': action.title?.includes('Call'),
-        'title?.includes("Button")': action.title?.includes('Button'),
-        url: action.url,
-        phoneNumber: action.phoneNumber,
-        payload: action.payload,
-        'ALL KEYS': Object.keys(action)
+        'title exists': !!action.title,
+        'title string': typeof action.title,
+        'title value': action.title
       });
-    });
-  }
-  
-  const allActions = nodeData.actions || [];
-  const replyActions = allActions.filter((action: any) => action.type === 'reply');
-  const urlActions = allActions.filter((action: any) => action.type === 'url');
-  const callActions = allActions.filter((action: any) => action.type === 'call');
-  
-  console.log(`[Automation] Action breakdown:`, {
-    total: allActions.length,
-    reply: replyActions.length,
-    url: urlActions.length,
-    call: callActions.length
-  });
 
-  // Helper function to get button text from various possible fields
-  const getButtonText = (action: any, index: number, defaultPrefix: string = 'Button'): string => {
-    console.log(`🔍 Getting button text for action:`, {
-      id: action.id,
-      type: action.type,
-      title: action.title,
-      'title exists': !!action.title,
-      'title string': typeof action.title,
-      'title value': action.title
-    });
-    
-    // Priority 1: Use user's custom title if provided and valid
-    if (action.title !== undefined && action.title !== null && action.title.toString().trim() !== '') {
-      const titleStr = action.title.toString();
-      console.log(`✅ Using user's custom title: "${titleStr}"`);
-      return titleStr.substring(0, 20);
-    }
-    
-    // Priority 2: For reply actions, use payload if no title
-    if (action.type === 'reply' && action.payload && action.payload.toString().trim() !== '') {
-      const payloadStr = action.payload.toString();
-      console.log(`⚠️ No custom title, using payload: "${payloadStr}"`);
-      return payloadStr.substring(0, 20);
-    }
-    
-    // Priority 3: For URL actions, use URL hostname
-    if (action.type === 'url' && action.url) {
-      try {
-        const urlObj = new URL(action.url);
-        const hostname = urlObj.hostname.replace('www.', '');
-        console.log(`⚠️ No custom title, using hostname: "${hostname}"`);
-        return hostname.substring(0, 20);
-      } catch {
-        console.log(`⚠️ No custom title, using default: "${defaultPrefix} ${index + 1}"`);
-        return `${defaultPrefix} ${index + 1}`;
+      // Priority 1: Use user's custom title if provided and valid
+      if (action.title !== undefined && action.title !== null && action.title.toString().trim() !== '') {
+        const titleStr = action.title.toString();
+        console.log(`✅ Using user's custom title: "${titleStr}"`);
+        return titleStr.substring(0, 20);
       }
-    }
-    
-    // Priority 4: For call actions, use phone number
-    if (action.type === 'call' && action.phoneNumber) {
-      const phoneStr = action.phoneNumber.toString();
-      console.log(`⚠️ No custom title, using phone: "${phoneStr}"`);
-      return phoneStr.substring(0, 20);
-    }
-    
-    // Final fallback with better debugging
-    console.log(`⚠️ No usable text found for action:`, {
-      actionType: action.type,
-      hasTitle: !!action.title,
-      hasPayload: !!action.payload,
-      hasUrl: !!action.url,
-      hasPhone: !!action.phoneNumber,
-      usingDefault: `${defaultPrefix} ${index + 1}`
-    });
-    return `${defaultPrefix} ${index + 1}`;
-  };
-  
-  switch (type) {
-    case 'reply_buttons':
-      // Reply buttons message - up to 3 REPLY buttons
-      if (replyActions.length > 0) {
-        const buttons = replyActions.slice(0, 3).map((action: any, index: number) => {
-          const buttonTitle = getButtonText(action, index, 'Button');
-          console.log(`[Automation] Button ${index + 1}: "${buttonTitle}" (ID: ${action.id})`);
-          
+
+      // Priority 2: For reply actions, use payload if no title
+      if (action.type === 'reply' && action.payload && action.payload.toString().trim() !== '') {
+        const payloadStr = action.payload.toString();
+        console.log(`⚠️ No custom title, using payload: "${payloadStr}"`);
+        return payloadStr.substring(0, 20);
+      }
+
+      // Priority 3: For URL actions, use URL hostname
+      if (action.type === 'url' && action.url) {
+        try {
+          const urlObj = new URL(action.url);
+          const hostname = urlObj.hostname.replace('www.', '');
+          console.log(`⚠️ No custom title, using hostname: "${hostname}"`);
+          return hostname.substring(0, 20);
+        } catch {
+          console.log(`⚠️ No custom title, using default: "${defaultPrefix} ${index + 1}"`);
+          return `${defaultPrefix} ${index + 1}`;
+        }
+      }
+
+      // Priority 4: For call actions, use phone number
+      if (action.type === 'call' && action.phoneNumber) {
+        const phoneStr = action.phoneNumber.toString();
+        console.log(`⚠️ No custom title, using phone: "${phoneStr}"`);
+        return phoneStr.substring(0, 20);
+      }
+
+      // Final fallback with better debugging
+      console.log(`⚠️ No usable text found for action:`, {
+        actionType: action.type,
+        hasTitle: !!action.title,
+        hasPayload: !!action.payload,
+        hasUrl: !!action.url,
+        hasPhone: !!action.phoneNumber,
+        usingDefault: `${defaultPrefix} ${index + 1}`
+      });
+      return `${defaultPrefix} ${index + 1}`;
+    };
+
+    switch (type) {
+      case 'reply_buttons':
+        // Reply buttons message - up to 3 REPLY buttons
+        if (replyActions.length > 0) {
+          const buttons = replyActions.slice(0, 3).map((action: any, index: number) => {
+            const buttonTitle = getButtonText(action, index, 'Button');
+            console.log(`[Automation] Button ${index + 1}: "${buttonTitle}" (ID: ${action.id})`);
+
+            return {
+              type: "reply",
+              reply: {
+                id: `btn_${action.id || `button_${index}`}`,
+                title: buttonTitle
+              }
+            };
+          });
+
+          console.log(`[Automation] Creating REPLY buttons:`, buttons.map((b: any) => b.reply.title));
+
           return {
-            type: "reply",
-            reply: {
-              id: `btn_${action.id || `button_${index}`}`,
-              title: buttonTitle
+            type: "button",
+            header: header ? {
+              type: "text",
+              text: header.substring(0, 60)
+            } : undefined,
+            body: {
+              text: body.substring(0, 1024)
+            },
+            footer: footer ? {
+              text: footer.substring(0, 60)
+            } : undefined,
+            action: {
+              buttons: buttons
             }
           };
-        });
-        
-        console.log(`[Automation] Creating REPLY buttons:`, buttons.map((b: any) => b.reply.title));
-        
-        return {
-          type: "button",
-          header: header ? {
-            type: "text",
-            text: header.substring(0, 60)
-          } : undefined,
-          body: {
-            text: body.substring(0, 1024)
-          },
-          footer: footer ? {
-            text: footer.substring(0, 60)
-          } : undefined,
-          action: {
-            buttons: buttons
-          }
-        };
-      } else {
-        // No reply actions - shouldn't happen if UI is working correctly
-        console.warn(`[Automation] No reply actions found for reply_buttons type`);
-        
+        } else {
+          // No reply actions - shouldn't happen if UI is working correctly
+          console.warn(`[Automation] No reply actions found for reply_buttons type`);
+
+          return {
+            type: "button",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              buttons: [{
+                type: "reply",
+                reply: {
+                  id: "btn_default",
+                  title: "OK"
+                }
+              }]
+            }
+          };
+        }
+
+      case 'quick_replies':
+        // Quick replies - only REPLY type
+        if (replyActions.length > 0) {
+          const quickReplyButtons = replyActions.slice(0, 10).map((action: any, index: number) => {
+            const buttonTitle = getButtonText(action, index, 'Reply');
+            console.log(`[Automation] Quick Reply ${index + 1}: "${buttonTitle}"`);
+
+            return {
+              type: "reply",
+              reply: {
+                id: `qr_${action.id || `reply_${index}`}`,
+                title: buttonTitle
+              }
+            };
+          });
+
+          return {
+            type: "button",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              buttons: quickReplyButtons
+            }
+          };
+        } else {
+          console.warn(`[Automation] No reply actions found for quick_replies type`);
+
+          return {
+            type: "button",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              buttons: [{
+                type: "reply",
+                reply: {
+                  id: "qr_default",
+                  title: "OK"
+                }
+              }]
+            }
+          };
+        }
+
+      case 'list':
+        // List messages - include all actions as list items
+        if (allActions.length > 0) {
+          const listRows = allActions.slice(0, 10).map((action: any, index: number) => {
+            let description = '';
+
+            if (action.type === 'url') {
+              description = `🔗 ${action.url?.substring(0, 70) || 'Open link'}`;
+            } else if (action.type === 'call') {
+              description = `📞 ${action.phoneNumber || 'Call'}`;
+            } else if (action.type === 'reply') {
+              description = action.payload?.substring(0, 72) || '';
+            }
+
+            // Use the same getButtonText helper for list item titles
+            const rowTitle = getButtonText(action, index, 'Option');
+            console.log(`[Automation] List Row ${index + 1}: "${rowTitle}" (Type: ${action.type})`);
+
+            return {
+              id: `list_${action.id || `option_${index}`}`,
+              title: rowTitle,
+              description: description
+            };
+          });
+
+          return {
+            type: "list",
+            header: header ? {
+              type: "text",
+              text: header.substring(0, 60)
+            } : undefined,
+            body: {
+              text: body.substring(0, 1024)
+            },
+            footer: footer ? {
+              text: footer.substring(0, 60)
+            } : undefined,
+            action: {
+              button: nodeData.buttonText?.substring(0, 20) || "Options",
+              sections: [{
+                title: "Options",
+                rows: listRows
+              }]
+            }
+          };
+        } else {
+          console.warn(`[Automation] No actions found for list type`);
+
+          return {
+            type: "list",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              button: "Options",
+              sections: [{
+                title: "Options",
+                rows: [{
+                  id: "list_default",
+                  title: "Default Option",
+                  description: "No options configured"
+                }]
+              }]
+            }
+          };
+        }
+
+      case 'url_button':
+        // Single URL button (CTA)
+        if (urlActions.length > 0) {
+          const urlAction = urlActions[0];
+          const buttonTitle = getButtonText(urlAction, 0, 'Open Link');
+          const buttonUrl = urlAction.url || "https://example.com";
+
+          console.log(`[Automation] URL Button: "${buttonTitle}" -> ${buttonUrl}`);
+
+          return {
+            type: "cta_url",
+            header: header ? {
+              type: "text",
+              text: header.substring(0, 60)
+            } : undefined,
+            body: {
+              text: body.substring(0, 1024)
+            },
+            footer: footer ? {
+              text: footer.substring(0, 60)
+            } : undefined,
+            action: {
+              name: "cta_url",
+              parameters: {
+                display_text: buttonTitle,
+                url: buttonUrl
+              }
+            }
+          };
+        } else {
+          console.warn(`[Automation] No URL action found for url_button type`);
+
+          return {
+            type: "cta_url",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              name: "cta_url",
+              parameters: {
+                display_text: "Open Link",
+                url: "https://example.com"
+              }
+            }
+          };
+        }
+
+      case 'call_button':
+        // Single Call button (CTA)
+        if (callActions.length > 0) {
+          const callAction = callActions[0];
+          const buttonTitle = getButtonText(callAction, 0, 'Call Us');
+          const phoneNumber = callAction.phoneNumber || "+1234567890";
+
+          console.log(`[Automation] Call Button: "${buttonTitle}" -> ${phoneNumber}`);
+
+          // Note: WhatsApp doesn't have a direct "cta_call" type
+          // We'll send as a regular text message with phone number
+          // Or use URL with tel: protocol
+          return {
+            type: "cta_url",
+            header: header ? {
+              type: "text",
+              text: header.substring(0, 60)
+            } : undefined,
+            body: {
+              text: body.substring(0, 1024)
+            },
+            footer: footer ? {
+              text: footer.substring(0, 60)
+            } : undefined,
+            action: {
+              name: "cta_url",
+              parameters: {
+                display_text: buttonTitle,
+                url: `tel:${phoneNumber.replace(/\D/g, '')}`
+              }
+            }
+          };
+        } else {
+          console.warn(`[Automation] No call action found for call_button type`);
+
+          return {
+            type: "cta_url",
+            body: {
+              text: body.substring(0, 1024)
+            },
+            action: {
+              name: "cta_url",
+              parameters: {
+                display_text: "Call Us",
+                url: "tel:+1234567890"
+              }
+            }
+          };
+        }
+
+      default:
+        console.warn(`[Automation] Unknown interactive type: ${type}, defaulting to button`);
+
         return {
           type: "button",
           body: {
@@ -799,237 +1057,8 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
             }]
           }
         };
-      }
-      
-    case 'quick_replies':
-      // Quick replies - only REPLY type
-      if (replyActions.length > 0) {
-        const quickReplyButtons = replyActions.slice(0, 10).map((action: any, index: number) => {
-          const buttonTitle = getButtonText(action, index, 'Reply');
-          console.log(`[Automation] Quick Reply ${index + 1}: "${buttonTitle}"`);
-          
-          return {
-            type: "reply",
-            reply: {
-              id: `qr_${action.id || `reply_${index}`}`,
-              title: buttonTitle
-            }
-          };
-        });
-        
-        return {
-          type: "button",
-          body: {
-            text: body.substring(0, 1024)
-          },
-          action: {
-            buttons: quickReplyButtons
-          }
-        };
-      } else {
-        console.warn(`[Automation] No reply actions found for quick_replies type`);
-        
-        return {
-          type: "button",
-          body: {
-            text: body.substring(0, 1024)
-          },
-          action: {
-            buttons: [{
-              type: "reply",
-              reply: {
-                id: "qr_default",
-                title: "OK"
-              }
-            }]
-          }
-        };
-      }
-      
-    case 'list':
-      // List messages - include all actions as list items
-      if (allActions.length > 0) {
-        const listRows = allActions.slice(0, 10).map((action: any, index: number) => {
-          let description = '';
-          
-          if (action.type === 'url') {
-            description = `🔗 ${action.url?.substring(0, 70) || 'Open link'}`;
-          } else if (action.type === 'call') {
-            description = `📞 ${action.phoneNumber || 'Call'}`;
-          } else if (action.type === 'reply') {
-            description = action.payload?.substring(0, 72) || '';
-          }
-          
-          // Use the same getButtonText helper for list item titles
-          const rowTitle = getButtonText(action, index, 'Option');
-          console.log(`[Automation] List Row ${index + 1}: "${rowTitle}" (Type: ${action.type})`);
-          
-          return {
-            id: `list_${action.id || `option_${index}`}`,
-            title: rowTitle,
-            description: description
-          };
-        });
-        
-        return {
-          type: "list",
-          header: header ? {
-            type: "text",
-            text: header.substring(0, 60)
-          } : undefined,
-          body: {
-            text: body.substring(0, 1024)
-          },
-          footer: footer ? {
-            text: footer.substring(0, 60)
-          } : undefined,
-          action: {
-            button: nodeData.buttonText?.substring(0, 20) || "Options",
-            sections: [{
-              title: "Options",
-              rows: listRows
-            }]
-          }
-        };
-      } else {
-        console.warn(`[Automation] No actions found for list type`);
-        
-        return {
-          type: "list",
-          body: {
-            text: body.substring(0, 1024)
-          },
-          action: {
-            button: "Options",
-            sections: [{
-              title: "Options",
-              rows: [{
-                id: "list_default",
-                title: "Default Option",
-                description: "No options configured"
-              }]
-            }]
-          }
-        };
-      }
-      
-    case 'url_button':
-      // Single URL button (CTA)
-      if (urlActions.length > 0) {
-        const urlAction = urlActions[0];
-        const buttonTitle = getButtonText(urlAction, 0, 'Open Link');
-        const buttonUrl = urlAction.url || "https://example.com";
-        
-        console.log(`[Automation] URL Button: "${buttonTitle}" -> ${buttonUrl}`);
-        
-        return {
-          type: "cta_url",
-          header: header ? {
-            type: "text",
-            text: header.substring(0, 60)
-          } : undefined,
-          body: {
-            text: body.substring(0, 1024)
-          },
-          footer: footer ? {
-            text: footer.substring(0, 60)
-          } : undefined,
-          action: {
-            name: "cta_url",
-            parameters: {
-              display_text: buttonTitle,
-              url: buttonUrl
-            }
-          }
-        };
-      } else {
-        console.warn(`[Automation] No URL action found for url_button type`);
-        
-        return {
-          type: "cta_url",
-          body: {
-            text: body.substring(0, 1024)
-          },
-          action: {
-            name: "cta_url",
-            parameters: {
-              display_text: "Open Link",
-              url: "https://example.com"
-            }
-          }
-        };
-      }
-      
-    case 'call_button':
-      // Single Call button (CTA)
-      if (callActions.length > 0) {
-        const callAction = callActions[0];
-        const buttonTitle = getButtonText(callAction, 0, 'Call Us');
-        const phoneNumber = callAction.phoneNumber || "+1234567890";
-        
-        console.log(`[Automation] Call Button: "${buttonTitle}" -> ${phoneNumber}`);
-        
-        // Note: WhatsApp doesn't have a direct "cta_call" type
-        // We'll send as a regular text message with phone number
-        // Or use URL with tel: protocol
-        return {
-          type: "cta_url",
-          header: header ? {
-            type: "text",
-            text: header.substring(0, 60)
-          } : undefined,
-          body: {
-            text: body.substring(0, 1024)
-          },
-          footer: footer ? {
-            text: footer.substring(0, 60)
-          } : undefined,
-          action: {
-            name: "cta_url",
-            parameters: {
-              display_text: buttonTitle,
-              url: `tel:${phoneNumber.replace(/\D/g, '')}`
-            }
-          }
-        };
-      } else {
-        console.warn(`[Automation] No call action found for call_button type`);
-        
-        return {
-          type: "cta_url",
-          body: {
-            text: body.substring(0, 1024)
-          },
-          action: {
-            name: "cta_url",
-            parameters: {
-              display_text: "Call Us",
-              url: "tel:+1234567890"
-            }
-          }
-        };
-      }
-      
-    default:
-      console.warn(`[Automation] Unknown interactive type: ${type}, defaulting to button`);
-      
-      return {
-        type: "button",
-        body: {
-          text: body.substring(0, 1024)
-        },
-        action: {
-          buttons: [{
-            type: "reply",
-            reply: {
-              id: "btn_default",
-              title: "OK"
-            }
-          }]
-        }
-      };
+    }
   }
-}
 
   /**
    * Continue execution from an interactive action
@@ -1050,7 +1079,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     // First, get the automation flow data
     const db = getDb();
-    const [automation] = await db.select({
+    const automationResult = await db.select({
       id: automations.id,
       name: automations.name,
       flowData: automations.flowData,
@@ -1060,20 +1089,22 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(automations.id, automationId))
       .limit(1);
 
-    if (!automation) {
+    if (!automationResult.length || !automationResult[0]) {
       console.error(`[Automation] ❌ Automation not found: ${automationId}`);
       return { success: false, error: 'Automation not found' };
     }
 
+    const automation = automationResult[0];
+
     // Get the flow data
-    const flowData = automation.flowData as any;
+    const flowData = automation.flowData as FlowData;
     if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
       console.error(`[Automation] ❌ Invalid flow data`);
       return { success: false, error: 'Invalid flow data' };
     }
 
     // Find the interactive message node
-    const interactiveNode = flowData.nodes.find((n: any) => n.id === interactiveAction.nodeId);
+    const interactiveNode = flowData.nodes.find((n: FlowNode) => n.id === interactiveAction.nodeId);
     if (!interactiveNode) {
       console.error(`[Automation] ❌ Interactive message node not found: ${interactiveAction.nodeId}`);
       return { success: false, error: 'Interactive message node not found' };
@@ -1082,8 +1113,8 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     console.log(`[Automation] Found interactive node: ${interactiveNode.id}, edges: ${flowData.edges?.length || 0}`);
 
     // Find edges connected FROM the interactive node
-    const edgesFromNode = flowData.edges.filter((edge: any) => edge.source === interactiveAction.nodeId);
-    console.log(`[Automation] Edges from interactive node:`, edgesFromNode.map((e: any) => ({
+    const edgesFromNode = (flowData.edges || []).filter((edge: FlowEdge) => edge.source === interactiveAction.nodeId);
+    console.log(`[Automation] Edges from interactive node:`, edgesFromNode.map((e: FlowEdge) => ({
       sourceHandle: e.sourceHandle,
       target: e.target,
       actionId: e.sourceHandle
@@ -1093,7 +1124,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     let selectedEdge = null;
 
     // Try exact match first
-    selectedEdge = edgesFromNode.find((edge: any) =>
+    selectedEdge = edgesFromNode.find((edge: FlowEdge) =>
       edge.sourceHandle === interactiveAction.actionId
     );
 
@@ -1102,7 +1133,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       console.log(`[Automation] No exact match for ${interactiveAction.actionId}, trying pattern match...`);
 
       // Look for edges with sourceHandle containing the action ID
-      selectedEdge = edgesFromNode.find((edge: any) => {
+      selectedEdge = edgesFromNode.find((edge: FlowEdge) => {
         if (!edge.sourceHandle) return false;
 
         // Handle different edge ID patterns
@@ -1117,21 +1148,21 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     if (!selectedEdge) {
       console.error(`[Automation] ❌ No edge found for selected action: ${interactiveAction.actionId}`);
-      console.error(`[Automation] Available edges:`, edgesFromNode.map((e: any) => e.sourceHandle));
+      console.error(`[Automation] Available edges:`, edgesFromNode.map((e: FlowEdge) => e.sourceHandle));
       return { success: false, error: 'No branch found for selected action' };
     }
 
     console.log(`[Automation] ✅ Found edge for action:`, {
       sourceHandle: selectedEdge.sourceHandle,
       target: selectedEdge.target,
-      targetNodeType: flowData.nodes.find((n: any) => n.id === selectedEdge.target)?.type
+      targetNodeType: flowData.nodes.find((n: FlowNode) => n.id === selectedEdge.target)?.type
     });
 
     // Create a new execution ID for the continuation
     const continuationExecutionId = `exec-continue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // Get user
-    const [user] = await db.select({
+    const userResult = await db.select({
       id: users.id,
       email: users.email,
       whatsappPhoneNumberId: users.whatsappPhoneNumberId,
@@ -1141,13 +1172,15 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(users.id, userId))
       .limit(1);
 
-    if (!user) {
+    if (!userResult.length || !userResult[0]) {
       console.error(`[Automation] ❌ User not found: ${userId}`);
       return { success: false, error: 'User not found' };
     }
 
+    const user = userResult[0];
+
     // Get contact
-    const [contact] = await db.select({
+    const contactResult = await db.select({
       id: contacts.id,
       phone: contacts.phone,
       name: contacts.name,
@@ -1158,28 +1191,38 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(contacts.id, contactId))
       .limit(1);
 
-    if (!contact) {
+    if (!contactResult.length || !contactResult[0]) {
       console.error(`[Automation] ❌ Contact not found: ${contactId}`);
       return { success: false, error: 'Contact not found' };
     }
 
+    const contact = contactResult[0];
+
     // Get conversation from the original message
     let conversation = null;
     if (interactiveAction.messageId) {
-      const [message] = await db.select({
+      const messageResult = await db.select({
         conversationId: messages.conversationId
       })
         .from(messages)
         .where(eq(messages.id, interactiveAction.messageId))
         .limit(1);
 
-      if (message) {
-        const [convo] = await db.select()
-          .from(conversations)
-          .where(eq(conversations.id, message.conversationId))
-          .limit(1);
-        conversation = convo;
-      }
+if (messageResult.length && messageResult[0]) {
+  const conversationResult = await db.select()
+    .from(conversations)
+    .where(
+      and(
+        eq(conversations.id, messageResult[0].conversationId as string), // Type assertion
+        isNotNull(conversations.id)
+      )
+    )
+    .limit(1);
+    
+  if (conversationResult.length && conversationResult[0]) {
+    conversation = conversationResult[0];
+  }
+}
     }
 
     // Create execution context for continuation
@@ -1206,10 +1249,10 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     };
 
     // Now execute starting from the TARGET node of the selected edge
-    const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
-    const edgeMap = new Map<string, any[]>();
+    const nodeMap = new Map<string, FlowNode>(flowData.nodes.map((n: FlowNode) => [n.id, n]));
+    const edgeMap = new Map<string, FlowEdge[]>();
 
-    flowData.edges.forEach((edge: any) => {
+    (flowData.edges || []).forEach((edge: FlowEdge) => {
       if (!edgeMap.has(edge.source)) {
         edgeMap.set(edge.source, []);
       }
@@ -1250,9 +1293,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
       const nodeStartTime = Date.now();
       let nodeSuccess = false;
-      let nodeError = null;
-      let conditionResult = null;
-      let keywordResult = null;
+      let nodeError: string | null = null;
+      let conditionResult: boolean | null = null;
+      let keywordResult: boolean | null = null;
 
       try {
         switch (currentNode.type) {
@@ -1424,7 +1467,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
         } else {
           nextEdge = outgoingEdges[0];
-          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
         }
 
         if (nextEdge) {
@@ -1447,7 +1490,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
         } else {
           nextEdge = outgoingEdges[0];
-          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
         }
 
         if (nextEdge) {
@@ -1459,9 +1502,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       // For regular nodes, follow the first outgoing edge
       if (outgoingEdges.length > 0) {
         const nextEdge = outgoingEdges[0];
-        currentNode = nodeMap.get(nextEdge.target);
+        currentNode = nodeMap.get(nextEdge?.target||'');
       } else {
-        currentNode = null;
+        currentNode = undefined;
       }
     }
 
@@ -1514,15 +1557,17 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       const db = getDb();
 
       // Get the original message that this action is responding to
-      const [originalMessage] = await db.select()
+      const messageResult = await db.select()
         .from(messages)
         .where(eq(messages.id, messageId))
         .limit(1);
 
-      if (!originalMessage) {
+      if (!messageResult.length || !messageResult[0]) {
         console.error(`[Automation] ❌ Original message not found: ${messageId}`);
         return { success: false, error: 'Original message not found' };
       }
+
+      const originalMessage = messageResult[0];
 
       // Check if this message is from an automation with interactive data
       const metadata = originalMessage.metadata as any;
@@ -1587,7 +1632,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute text message node
    */
-  private async executeTextMessageNode(node: any, context: ExecutionContext): Promise<void> {
+  private async executeTextMessageNode(node: FlowNode, context: ExecutionContext): Promise<void> {
     const nodeData = node.data || {};
     let message = nodeData.message || '';
 
@@ -1629,7 +1674,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute media message node
    */
-  private async executeMediaMessageNode(node: any, context: ExecutionContext): Promise<void> {
+  private async executeMediaMessageNode(node: FlowNode, context: ExecutionContext): Promise<void> {
     const nodeData = node.data || {};
     const media = nodeData.media || {};
     const mediaAttachmentId = nodeData.mediaAttachmentId;
@@ -1646,15 +1691,17 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     const db = getDb();
 
     // 1. Get media attachment details
-    const [mediaAttachment] = await db.select()
+    const mediaAttachmentResult = await db.select()
       .from(mediaAttachments)
       .where(eq(mediaAttachments.id, mediaAttachmentId))
       .limit(1);
 
-    if (!mediaAttachment) {
+    if (!mediaAttachmentResult.length || !mediaAttachmentResult[0]) {
       console.error(`[Automation] ❌ Media attachment ${mediaAttachmentId} not found`);
       throw new Error('Media attachment not found in database');
     }
+
+    const mediaAttachment = mediaAttachmentResult[0];
 
     // 2. Personalize caption
     let personalizedCaption = caption;
@@ -1682,13 +1729,13 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
         id: mediaAttachmentId,
         secureUrl: mediaAttachment.secureUrl,
         url: mediaAttachment.secureUrl,
-        mimeType: mediaAttachment.mimeType,
-        originalFilename: mediaAttachment.originalFilename,
-        filename: mediaAttachment.filename || mediaAttachment.originalFilename,
-        fileSize: mediaAttachment.fileSize,
-        width: mediaAttachment.width,
-        height: mediaAttachment.height,
-        duration: mediaAttachment.duration,
+        mimeType: mediaAttachment.mimeType|| 'application/octet-stream',
+        originalFilename: mediaAttachment.originalFilename|| 'attachment',
+        filename:mediaAttachment.originalFilename || 'attachment',
+        fileSize: mediaAttachment.fileSize|| 0,
+        width: mediaAttachment.width|| 0,
+        height: mediaAttachment.height||0,
+        duration: mediaAttachment.duration|| 0,
         caption: personalizedCaption,
       }],
       direction: 'outgoing',
@@ -1709,7 +1756,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute quick replies node
    */
-  private async executeQuickRepliesNode(node: any, context: ExecutionContext): Promise<void> {
+  private async executeQuickRepliesNode(node: FlowNode, context: ExecutionContext): Promise<void> {
     const nodeData = node.data || {};
     const quickReplyId = nodeData.quickReplyId;
 
@@ -1723,7 +1770,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     const db = getDb();
 
     // 1. Get quick reply
-    const [quickReply] = await db.select()
+    const quickReplyResult = await db.select()
       .from(quickReplies)
       .where(and(
         eq(quickReplies.id, quickReplyId),
@@ -1732,10 +1779,12 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       ))
       .limit(1);
 
-    if (!quickReply) {
+    if (!quickReplyResult.length || !quickReplyResult[0]) {
       console.error(`[Automation] ❌ Quick reply ${quickReplyId} not found or inactive`);
       throw new Error('Quick reply not found');
     }
+
+    const quickReply = quickReplyResult[0];
 
     // 2. Get media attachments if any
     let mediaAttachmentsList: any[] = [];
@@ -1818,7 +1867,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute tag node
    */
-  private async executeTagNode(node: any, context: ExecutionContext): Promise<void> {
+  private async executeTagNode(node: FlowNode, context: ExecutionContext): Promise<void> {
     const db = getDb();
     const nodeData = node.data || {};
     const action = nodeData.action || 'add';
@@ -1859,22 +1908,22 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
             )
             .limit(1);
 
-          if (existingTags.length > 0) {
+          if (existingTags.length > 0 && existingTags[0]) {
             foundTagIds.push(existingTags[0].id);
             console.log(`[Automation] Found existing tag "${tagName}": ${existingTags[0].id}`);
           } else {
             // Create new tag
             console.log(`[Automation] Creating new tag "${tagName}"...`);
-            const [newTag] = await db.insert(tags).values({
+            const newTagResult = await db.insert(tags).values({
               name: tagName,
               color: this.generateRandomColor(),
               userId: userId,
-              createdAt: new Date(),
-              updatedAt: new Date(),
             }).returning();
 
-            foundTagIds.push(newTag.id);
-            console.log(`[Automation] ✅ Created new tag "${tagName}": ${newTag.id}`);
+            if (newTagResult.length && newTagResult[0]) {
+              foundTagIds.push(newTagResult[0].id);
+              console.log(`[Automation] ✅ Created new tag "${tagName}": ${newTagResult[0].id}`);
+            }
           }
         } catch (error: any) {
           console.error(`[Automation] ❌ Error processing tag "${tagName}":`, error.message);
@@ -1883,7 +1932,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           if (error.code === '23505' || error.message?.includes('unique constraint')) {
             console.log(`[Automation] Tag "${tagName}" already exists, trying to find it...`);
 
-            const [duplicateTag] = await db.select()
+            const duplicateTagResult = await db.select()
               .from(tags)
               .where(
                 and(
@@ -1893,9 +1942,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
               )
               .limit(1);
 
-            if (duplicateTag) {
-              foundTagIds.push(duplicateTag.id);
-              console.log(`[Automation] Found duplicate tag: ${duplicateTag.id}`);
+            if (duplicateTagResult.length && duplicateTagResult[0]) {
+              foundTagIds.push(duplicateTagResult[0].id);
+              console.log(`[Automation] Found duplicate tag: ${duplicateTagResult[0].id}`);
             }
           }
         }
@@ -1921,7 +1970,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       for (const tagName of temporaryTagNames) {
         try {
           // Check if tag already exists
-          const [existingTag] = await db.select()
+          const existingTagResult = await db.select()
             .from(tags)
             .where(
               and(
@@ -1931,28 +1980,29 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
             )
             .limit(1);
 
-          if (existingTag) {
-            validTagIds.push(existingTag.id);
-            console.log(`[Automation] Temporary tag "${tagName}" already exists: ${existingTag.id}`);
+          if (existingTagResult.length && existingTagResult[0]) {
+            validTagIds.push(existingTagResult[0].id);
+            console.log(`[Automation] Temporary tag "${tagName}" already exists: ${existingTagResult[0].id}`);
           } else {
             // Create new tag
-            const [newTag] = await db.insert(tags).values({
+            const newTagResult = await db.insert(tags).values({
               name: tagName,
               color: this.generateRandomColor(),
               userId: userId,
-              createdAt: new Date(),
-              updatedAt: new Date(),
+  
             }).returning();
 
-            validTagIds.push(newTag.id);
-            console.log(`[Automation] ✅ Created temporary tag "${tagName}": ${newTag.id}`);
+            if (newTagResult.length && newTagResult[0]) {
+              validTagIds.push(newTagResult[0].id);
+              console.log(`[Automation] ✅ Created temporary tag "${tagName}": ${newTagResult[0].id}`);
+            }
           }
         } catch (error: any) {
           console.error(`[Automation] ❌ Failed to create tag "${tagName}":`, error.message);
 
           // If duplicate, find it
           if (error.code === '23505' || error.message?.includes('unique constraint')) {
-            const [duplicateTag] = await db.select()
+            const duplicateTagResult = await db.select()
               .from(tags)
               .where(
                 and(
@@ -1962,9 +2012,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
               )
               .limit(1);
 
-            if (duplicateTag) {
-              validTagIds.push(duplicateTag.id);
-              console.log(`[Automation] Found duplicate temporary tag: ${duplicateTag.id}`);
+            if (duplicateTagResult.length && duplicateTagResult[0]) {
+              validTagIds.push(duplicateTagResult[0].id);
+              console.log(`[Automation] Found duplicate temporary tag: ${duplicateTagResult[0].id}`);
             }
           }
         }
@@ -1979,7 +2029,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     }
 
     // Verify all tag IDs belong to the user
-    let userTags;
+    let userTags: any[];
 
     try {
       userTags = await db.select()
@@ -1987,7 +2037,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
         .where(
           and(
             eq(tags.userId, userId),
-            sql`${tags.id} IN (${sql.join(validTagIds.map(id => sql`${id}`), sql`, `)})`
+            inArray(tags.id, validTagIds)
           )
         );
     } catch (error) {
@@ -2008,7 +2058,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     }
 
     // Get current contact with tags
-    const [contact] = await db.select({
+    const contactResult = await db.select({
       id: contacts.id,
       name: contacts.name,
       phone: contacts.phone,
@@ -2018,9 +2068,11 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(contacts.id, contactId))
       .limit(1);
 
-    if (!contact) {
+    if (!contactResult.length || !contactResult[0]) {
       throw new Error(`Contact not found: ${contactId}`);
     }
+
+    const contact = contactResult[0];
 
     console.log(`[Automation] Contact: ${contact.name} (${contact.phone})`);
     console.log(`[Automation] Current contact tag IDs:`, contact.tagIds || []);
@@ -2064,7 +2116,6 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
       case 'remove':
         // Remove specified tags
-        const beforeRemove = newTagIds.length;
         const removedTags: string[] = [];
 
         newTagIds = newTagIds.filter(tagId => {
@@ -2133,7 +2184,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     await db.update(contacts)
       .set({
         tagIds: newTagIds,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       })
       .where(eq(contacts.id, contactId));
 
@@ -2153,7 +2204,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute delay node
    */
-  private async executeDelayNode(node: any, context: ExecutionContext): Promise<void> {
+  private async executeDelayNode(node: FlowNode, context: ExecutionContext): Promise<void> {
     const nodeData = node.data || {};
     const delayValue = nodeData.delayValue || 0;
     const delayUnit = nodeData.delayUnit || 'minutes';
@@ -2186,7 +2237,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute condition node
    */
-  private async executeConditionNode(node: any, context: ExecutionContext): Promise<{ success: boolean }> {
+  private async executeConditionNode(node: FlowNode, context: ExecutionContext): Promise<{ success: boolean }> {
     console.log(`[Automation] 🔍 Condition node: ${node.id}`);
 
     const nodeData = node.data || {};
@@ -2240,10 +2291,10 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     let finalResult: boolean;
 
     if (logic === 'all') {
-      finalResult = ruleResults.every(result => result === true);
+      finalResult = ruleResults.every((result: boolean) => result === true);
       console.log(`[Automation] ALL logic: ${finalResult ? '✅ ALL rules passed' : '❌ Some rules failed'}`);
     } else {
-      finalResult = ruleResults.some(result => result === true);
+      finalResult = ruleResults.some((result: boolean) => result === true);
       console.log(`[Automation] ANY logic: ${finalResult ? '✅ At least one rule passed' : '❌ No rules passed'}`);
     }
 
@@ -2264,10 +2315,10 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Execute List Option Node
    */
-  private async executeListMessageNode(node: any, context: ExecutionContext): Promise<{
+  private async executeListMessageNode(node: FlowNode, context: ExecutionContext): Promise<{
     success: boolean;
     pendingSelection?: any;
-    sentMessageId?: string;
+    sentMessageId?: string|null;
   }> {
     const nodeData = node.data || {};
 
@@ -2329,61 +2380,64 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     // Send via WhatsApp
     try {
-      const result = await messageService.sendMessage({
-        contactId: context.contactId,
-        userId: context.userData.id,
-        conversationId: context.currentData.conversation?.id,
-        body: personalizedBody,
-        direction: 'outgoing',
-        messageType: 'interactive',
-        metadata: {
-          automation: true,
-          automationId: context.workflowId,
-          automationName: 'Automation',
-          nodeId: node.id,
-          executionId: context.executionId,
-          listData: interactiveData,
-          // Store row IDs for later selection tracking
-          rowIds: (nodeData.sections || []).flatMap((section: any) =>
-            (section.rows || []).map((row: any, index: number) => ({
-              originalId: row.id,
-              whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
-              title: row.title
-            }))
-          ),
-          isInteractiveList: true,
-        },
-      });
+  const result = await messageService.sendMessage({
+    contactId: context.contactId,
+    userId: context.userData.id,
+    conversationId: context.currentData.conversation?.id,
+    body: personalizedBody,
+    direction: 'outgoing',
+    messageType: 'interactive',
+    metadata: {
+      automation: true,
+      automationId: context.workflowId,
+      automationName: 'Automation',
+      nodeId: node.id,
+      executionId: context.executionId,
+      listData: interactiveData,
+      // Store row IDs for later selection tracking
+      rowIds: (nodeData.sections || []).flatMap((section: any) =>
+        (section.rows || []).map((row: any, index: number) => ({
+          originalId: row.id,
+          whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
+          title: row.title
+        }))
+      ),
+      isInteractiveList: true,
+    },
+  });
 
-      console.log(`[Automation] ✅ List message sent successfully`);
+  console.log(`[Automation] ✅ List message sent successfully`);
 
-      // Return pending selection to pause execution
-      return {
-        success: true,
-        pendingSelection: {
-          nodeId: node.id,
-          rowIds: (nodeData.sections || []).flatMap((section: any) =>
-            (section.rows || []).map((row: any, index: number) => ({
-              originalId: row.id,
-              whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
-              title: row.title
-            }))
-          ),
-          sentMessageId: result.message.id
-        },
-        sentMessageId: result.message.id
-      };
+  // SAFE ACCESS: Check if result and message exist
+  const sentMessageId = result?.message?.id || null;
 
-    } catch (error: any) {
-      console.error(`[Automation] ❌ Error sending list message:`, error);
-      return { success: false };
-    }
+  // Return pending selection to pause execution
+  return {
+    success: true,
+    pendingSelection: {
+      nodeId: node.id,
+      rowIds: (nodeData.sections || []).flatMap((section: any) =>
+        (section.rows || []).map((row: any, index: number) => ({
+          originalId: row.id,
+          whatsappId: `row_${row.id || `option_${Date.now()}_${index}`}`,
+          title: row.title
+        }))
+      ),
+      sentMessageId: sentMessageId,
+    },
+    sentMessageId: sentMessageId
+  };
+
+} catch (error: any) {
+  console.error(`[Automation] ❌ Error sending list message:`, error);
+  return { success: false };
+}
   }
 
   /**
    * Execute keyword action node
    */
-  private async executeKeywordActionNode(node: any, context: ExecutionContext): Promise<{ success: boolean; matched: boolean }> {
+  private async executeKeywordActionNode(node: FlowNode, context: ExecutionContext): Promise<{ success: boolean; matched: boolean }> {
     const nodeData = node.data || {};
     const keywords = nodeData.keywords || [];
     const matchType = nodeData.matchType || 'contains';
@@ -2400,7 +2454,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     // Get the last message from the contact
     const db = getDb();
-    const lastMessage = await db.select()
+    const lastMessageResult = await db.select()
       .from(messages)
       .where(
         and(
@@ -2411,12 +2465,12 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .orderBy(desc(messages.timestamp))
       .limit(1);
 
-    if (lastMessage.length === 0) {
+    if (!lastMessageResult.length || !lastMessageResult[0]) {
       console.log(`[Automation] ⚠️ No incoming messages found for keyword check`);
       return { success: true, matched: false };
     }
 
-    const messageText = lastMessage[0].body || '';
+    const messageText = lastMessageResult[0].body || '';
 
     // Use the same matching logic
     const matched = this.evaluateKeywords(
@@ -2595,24 +2649,51 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       const now = new Date();
       const relativeMatch = dateStr.match(/^(\d+)\s+(day|week|month|year)s?\s+(ago|from now)$/i);
 
-      if (relativeMatch) {
-        const amount = parseInt(relativeMatch[1], 10);
-        const unit = relativeMatch[2].toLowerCase();
-        const direction = relativeMatch[3].toLowerCase();
+if (relativeMatch) {
+  // Extract with safe defaults
+  const amountStr = relativeMatch[1];
+  const unitStr = relativeMatch[2];
+  const directionStr = relativeMatch[3];
+  
+  // Check if all required groups exist
+  if (!amountStr || !unitStr || !directionStr) {
+    return null;
+  }
+  
+  const amount = parseInt(amountStr, 10);
+  
+  // Check if parsing succeeded
+  if (isNaN(amount)) {
+    return null;
+  }
+  
+  const unit = unitStr.toLowerCase();
+  const direction = directionStr.toLowerCase();
 
-        const multiplier = direction === 'ago' ? -1 : 1;
+  const multiplier = direction === 'ago' ? -1 : 1;
 
-        switch (unit) {
-          case 'day':
-            return new Date(now.setDate(now.getDate() + (amount * multiplier)));
-          case 'week':
-            return new Date(now.setDate(now.getDate() + (amount * 7 * multiplier)));
-          case 'month':
-            return new Date(now.setMonth(now.getMonth() + (amount * multiplier)));
-          case 'year':
-            return new Date(now.setFullYear(now.getFullYear() + (amount * multiplier)));
-        }
-      }
+  // Create a new Date object to avoid mutating the original
+  const resultDate = new Date(now);
+  
+  switch (unit) {
+    case 'day':
+      resultDate.setDate(resultDate.getDate() + (amount * multiplier));
+      break;
+    case 'week':
+      resultDate.setDate(resultDate.getDate() + (amount * 7 * multiplier));
+      break;
+    case 'month':
+      resultDate.setMonth(resultDate.getMonth() + (amount * multiplier));
+      break;
+    case 'year':
+      resultDate.setFullYear(resultDate.getFullYear() + (amount * multiplier));
+      break;
+    default:
+      return null;
+  }
+  
+  return resultDate;
+}
 
       // Try common date formats
       const parsedDate = new Date(dateStr);
@@ -2759,7 +2840,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Sort nodes by position (top to bottom, left to right)
    */
-  private sortNodesByPosition(nodes: any[]): any[] {
+  private sortNodesByPosition(nodes: FlowNode[]): FlowNode[] {
     return [...nodes].sort((a, b) => {
       if (a.position.y !== b.position.y) {
         return a.position.y - b.position.y;
@@ -2771,13 +2852,19 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Generate random color for tags
    */
-  private generateRandomColor(): string {
-    const colors = [
-      '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
-      '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'
-    ];
-    return colors[Math.floor(Math.random() * colors.length)];
-  }
+private generateRandomColor(): string {
+  const colors = [
+    '#3B82F6', '#10B981', '#F59E0B', '#EF4444',
+    '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'
+  ];
+  
+  // Add a fallback to ensure we always return a string
+  const randomIndex = Math.floor(Math.random() * colors.length);
+  const color = colors[randomIndex];
+  
+  // Ensure we always have a valid color
+  return color || '#3B82F6'; // Fallback to blue
+}
 
   /**
    * Update automation statistics
@@ -2790,8 +2877,8 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           totalRuns: sql`${automations.totalRuns} + 1`,
           successfulRuns: sql`${automations.successfulRuns} + ${success ? 1 : 0}`,
           failedRuns: sql`${automations.failedRuns} + ${success ? 0 : 1}`,
-          lastRunAt: new Date(),
-          updatedAt: new Date(),
+          lastRunAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         })
         .where(eq(automations.id, automationId));
 
@@ -2804,39 +2891,60 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
   /**
    * Save execution record
    */
-  private async saveExecutionRecord(data: {
-    automationId: string;
-    contactId: string;
-    userId: string;
-    status: string;
-    triggerData?: any;
-    nodeExecutions?: any[];
-    executionData?: any;
-    error?: string;
-    startedAt: Date;
-    completedAt: Date;
-  }): Promise<void> {
-    try {
-      const db = getDb();
-      await db.insert(automationRuns).values({
-        automationId: data.automationId,
-        contactId: data.contactId,
-        userId: data.userId,
-        status: data.status,
-        triggerData: data.triggerData || {},
-        executionData: data.executionData || {},
-        nodeExecutions: data.nodeExecutions || [],
-        error: data.error,
-        startedAt: data.startedAt,
-        completedAt: data.completedAt,
-        createdAt: new Date(),
-      });
-
-      console.log(`[Automation] 📝 Execution record saved`);
-    } catch (error) {
-      console.warn('[Automation] Could not save execution record:', error);
+private async saveExecutionRecord(data: {
+  automationId: string;
+  contactId: string;
+  userId: string;
+  status: string;
+  triggerData?: any;
+  nodeExecutions?: any[];
+  executionData?: any;
+  error?: string;
+  startedAt: Date;
+  completedAt: Date;
+}): Promise<void> {
+  try {
+    const db = getDb();
+    
+    // First, let's check what fields are actually available in automationRuns
+    // by looking at a sample or logging the structure
+    console.log('[Automation] Available fields in automationRuns:', Object.keys(automationRuns));
+    
+    // Create a properly typed insert based on your schema
+    // Adjust field names based on your actual schema
+    const insertData: any = {
+      // Common field mappings (adjust based on your schema)
+      automation_id: data.automationId,
+      contact_id: data.contactId,
+      user_id: data.userId,
+      status: data.status,
+      trigger_data: data.triggerData || {},
+      execution_data: data.executionData || {},
+      node_executions: data.nodeExecutions || [],
+      error: data.error || null,
+      started_at: data.startedAt.toISOString(),
+      completed_at: data.completedAt.toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    
+    // Remove any undefined values
+    Object.keys(insertData).forEach(key => {
+      if (insertData[key] === undefined) {
+        delete insertData[key];
+      }
+    });
+    
+    await db.insert(automationRuns).values(insertData);
+    
+    console.log(`[Automation] 📝 Execution record saved`);
+  } catch (error) {
+    console.warn('[Automation] Could not save execution record:', error);
+    // For debugging, log the actual error details
+    if (error instanceof Error) {
+      console.warn('[Automation] Error details:', error.message);
     }
   }
+}
 
   /**
    * Manually trigger an automation for a contact
@@ -2869,7 +2977,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     // First, get the automation flow data
     const db = getDb();
-    const [automation] = await db.select({
+    const automationResult = await db.select({
       id: automations.id,
       name: automations.name,
       flowData: automations.flowData,
@@ -2879,20 +2987,22 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(automations.id, automationId))
       .limit(1);
 
-    if (!automation) {
+    if (!automationResult.length || !automationResult[0]) {
       console.error(`[Automation] ❌ Automation not found: ${automationId}`);
       return { success: false, error: 'Automation not found' };
     }
 
+    const automation = automationResult[0];
+
     // Get the flow data
-    const flowData = automation.flowData as any;
+    const flowData = automation.flowData as FlowData;
     if (!flowData?.nodes || !Array.isArray(flowData.nodes)) {
       console.error(`[Automation] ❌ Invalid flow data`);
       return { success: false, error: 'Invalid flow data' };
     }
 
     // Find the list message node
-    const listNode = flowData.nodes.find((n: any) => n.id === listSelection.nodeId);
+    const listNode = flowData.nodes.find((n: FlowNode) => n.id === listSelection.nodeId);
     if (!listNode) {
       console.error(`[Automation] ❌ List message node not found: ${listSelection.nodeId}`);
       return { success: false, error: 'List message node not found' };
@@ -2901,8 +3011,8 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     console.log(`[Automation] Found list node: ${listNode.id}, edges: ${flowData.edges?.length || 0}`);
 
     // Find edges connected FROM the list node
-    const edgesFromListNode = flowData.edges.filter((edge: any) => edge.source === listSelection.nodeId);
-    console.log(`[Automation] Edges from list node:`, edgesFromListNode.map((e: any) => ({
+    const edgesFromListNode = (flowData.edges || []).filter((edge: FlowEdge) => edge.source === listSelection.nodeId);
+    console.log(`[Automation] Edges from list node:`, edgesFromListNode.map((e: FlowEdge) => ({
       sourceHandle: e.sourceHandle,
       target: e.target,
       rowId: e.sourceHandle
@@ -2912,7 +3022,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     let selectedEdge = null;
 
     // Try exact match first
-    selectedEdge = edgesFromListNode.find((edge: any) =>
+    selectedEdge = edgesFromListNode.find((edge: FlowEdge) =>
       edge.sourceHandle === listSelection.selectedRowId
     );
 
@@ -2921,7 +3031,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       console.log(`[Automation] No exact match for ${listSelection.selectedRowId}, trying pattern match...`);
 
       // Look for edges with sourceHandle containing the row ID
-      selectedEdge = edgesFromListNode.find((edge: any) => {
+      selectedEdge = edgesFromListNode.find((edge: FlowEdge) => {
         if (!edge.sourceHandle) return false;
 
         // Handle different edge ID patterns
@@ -2936,21 +3046,21 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
     if (!selectedEdge) {
       console.error(`[Automation] ❌ No edge found for selected row: ${listSelection.selectedRowId}`);
-      console.error(`[Automation] Available edges:`, edgesFromListNode.map((e: any) => e.sourceHandle));
+      console.error(`[Automation] Available edges:`, edgesFromListNode.map((e: FlowEdge) => e.sourceHandle));
       return { success: false, error: 'No branch found for selected option' };
     }
 
     console.log(`[Automation] ✅ Found edge for selection:`, {
       sourceHandle: selectedEdge.sourceHandle,
       target: selectedEdge.target,
-      targetNodeType: flowData.nodes.find((n: any) => n.id === selectedEdge.target)?.type
+      targetNodeType: flowData.nodes.find((n: FlowNode) => n.id === selectedEdge.target)?.type
     });
 
     // Create a new execution ID for the continuation
     const continuationExecutionId = `exec-continue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     // Get user
-    const [user] = await db.select({
+    const userResult = await db.select({
       id: users.id,
       email: users.email,
       whatsappPhoneNumberId: users.whatsappPhoneNumberId,
@@ -2960,13 +3070,15 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(users.id, userId))
       .limit(1);
 
-    if (!user) {
+    if (!userResult.length || !userResult[0]) {
       console.error(`[Automation] ❌ User not found: ${userId}`);
       return { success: false, error: 'User not found' };
     }
 
+    const user = userResult[0];
+
     // Get contact
-    const [contact] = await db.select({
+    const contactResult = await db.select({
       id: contacts.id,
       phone: contacts.phone,
       name: contacts.name,
@@ -2977,29 +3089,39 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       .where(eq(contacts.id, contactId))
       .limit(1);
 
-    if (!contact) {
+    if (!contactResult.length || !contactResult[0]) {
       console.error(`[Automation] ❌ Contact not found: ${contactId}`);
       return { success: false, error: 'Contact not found' };
     }
 
-    // Get conversation from the original list message
-    let conversation = null;
-    if (listSelection.messageId) {
-      const [message] = await db.select({
-        conversationId: messages.conversationId
-      })
-        .from(messages)
-        .where(eq(messages.id, listSelection.messageId))
-        .limit(1);
+    const contact = contactResult[0];
 
-      if (message) {
-        const [convo] = await db.select()
-          .from(conversations)
-          .where(eq(conversations.id, message.conversationId))
-          .limit(1);
-        conversation = convo;
+    // Get conversation from the original list message
+let conversation = null;
+if (listSelection.messageId) {
+  const messageResult = await db.select({
+    conversationId: messages.conversationId
+  })
+    .from(messages)
+    .where(eq(messages.id, listSelection.messageId))
+    .limit(1);
+
+  if (messageResult.length && messageResult[0]) {
+    const conversationId = messageResult[0].conversationId;
+    
+    // ADD THIS NULL CHECK
+    if (conversationId) {
+      const conversationResult = await db.select()
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      
+      if (conversationResult.length && conversationResult[0]) {
+        conversation = conversationResult[0];
       }
     }
+  }
+}
 
     // Create execution context for continuation
     const context: ExecutionContext = {
@@ -3026,10 +3148,10 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
     };
 
     // Now execute starting from the TARGET node of the selected edge
-    const nodeMap = new Map(flowData.nodes.map((n: any) => [n.id, n]));
-    const edgeMap = new Map<string, any[]>();
+    const nodeMap = new Map<string, FlowNode>(flowData.nodes.map((n: FlowNode) => [n.id, n]));
+    const edgeMap = new Map<string, FlowEdge[]>();
 
-    flowData.edges.forEach((edge: any) => {
+    (flowData.edges || []).forEach((edge: FlowEdge) => {
       if (!edgeMap.has(edge.source)) {
         edgeMap.set(edge.source, []);
       }
@@ -3070,9 +3192,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
 
       const nodeStartTime = Date.now();
       let nodeSuccess = false;
-      let nodeError = null;
-      let conditionResult = null;
-      let keywordResult = null;
+      let nodeError: string | null = null;
+      let conditionResult: boolean | null = null;
+      let keywordResult: boolean | null = null;
 
       try {
         switch (currentNode.type) {
@@ -3244,7 +3366,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           console.log(`[Automation] ↪️ Keyword NO MATCH, following no-match branch to ${noMatchEdge.target}`);
         } else {
           nextEdge = outgoingEdges[0];
-          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
         }
 
         if (nextEdge) {
@@ -3267,7 +3389,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           console.log(`[Automation] ↪️ Condition FALSE, following false branch to ${falseEdge.target}`);
         } else {
           nextEdge = outgoingEdges[0];
-          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge.target}`);
+          console.log(`[Automation] ↪️ No matching branch, following first edge to ${nextEdge?.target}`);
         }
 
         if (nextEdge) {
@@ -3279,9 +3401,9 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       // For regular nodes, follow the first outgoing edge
       if (outgoingEdges.length > 0) {
         const nextEdge = outgoingEdges[0];
-        currentNode = nodeMap.get(nextEdge.target);
+        currentNode = nodeMap.get(nextEdge?.target || '');
       } else {
-        currentNode = null;
+        currentNode = undefined;
       }
     }
 
@@ -3330,7 +3452,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
       const offset = (page - 1) * limit;
 
       // Verify automation belongs to user
-      const [automation] = await db
+      const automationResult = await db
         .select()
         .from(automations)
         .where(and(
@@ -3338,7 +3460,7 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
           eq(automations.userId, userId)
         ));
 
-      if (!automation) {
+      if (!automationResult.length || !automationResult[0]) {
         return {
           success: false,
           error: 'Automation not found',
@@ -3353,10 +3475,12 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
         .limit(limit)
         .offset(offset);
 
-      const total = await db
+      const totalResult = await db
         .select({ count: sql<number>`count(*)` })
         .from(automationRuns)
         .where(eq(automationRuns.automationId, automationId));
+
+      const total = totalResult[0]?.count || 0;
 
       return {
         success: true,
@@ -3364,11 +3488,11 @@ private formatInteractiveData(nodeData: any, body: string, header: string, foote
         pagination: {
           page,
           limit,
-          total: total[0]?.count || 0,
-          pages: Math.ceil((total[0]?.count || 0) / limit),
+          total,
+          pages: Math.ceil(total / limit),
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching automation runs:', error);
       return {
         success: false,

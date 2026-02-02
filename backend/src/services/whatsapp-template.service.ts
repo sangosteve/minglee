@@ -630,10 +630,10 @@ public convertComponentsToWhatsAppFormat(
 // ============================================================================
 
 export class WhatsAppTemplateError extends Error {
-  public readonly statusCode?: number;
-  public readonly errorCode?: number;
-  public readonly errorType?: string;
-  public readonly fbTraceId?: string;
+  public readonly statusCode?: number | undefined;
+  public readonly errorCode?: number | undefined;
+  public readonly errorType?: string | undefined;
+  public readonly fbTraceId?: string | undefined;
 
   constructor(
     message: string,
@@ -650,6 +650,5 @@ export class WhatsAppTemplateError extends Error {
     this.fbTraceId = fbTraceId;
   }
 }
-
 // Export instance for easy use
 export const whatsappTemplateService = new WhatsAppTemplateAPIClient();

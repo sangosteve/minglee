@@ -259,9 +259,10 @@ static async sendInteractiveMessage(
     to: string,
     cloudinaryUrl: string,
     mediaType: 'image' | 'video' | 'audio' | 'document',
+    accessToken: string,
     caption?: string,
     filename?: string,
-    accessToken: string
+
   ): Promise<any> {
     try {
       let payload: any;
@@ -700,9 +701,10 @@ static async sendTemplateMessage(
     to: string,
     latitude: number,
     longitude: number,
+    accessToken: string,
     name?: string,
     address?: string,
-    accessToken: string
+
   ): Promise<any> {
     try {
       return await this.sendMessage(phoneNumberId, {

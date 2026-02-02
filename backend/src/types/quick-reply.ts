@@ -1,5 +1,5 @@
 
-import { mediaAttachments } from '../db/schema';
+import { mediaAttachments, quickReplies } from '../db/schema';
 
 export type QuickReply = typeof quickReplies.$inferSelect;
 export type NewQuickReply = typeof quickReplies.$inferInsert;

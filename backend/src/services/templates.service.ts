@@ -76,10 +76,7 @@ export class TemplatesService {
         .limit(1);
 
       if (!user?.whatsappAccessToken) {
-        return {
-          success: false,
-          error: 'WhatsApp access token not found',
-        };
+        throw new Error('WhatsApp access token not found');
       }
 
       const statusResult = await MetaTemplateService.getTemplateStatus(
@@ -88,28 +85,33 @@ export class TemplatesService {
       );
 
       if (!statusResult.success) {
-        return {
-          success: false,
-          error: statusResult.error,
-        };
+        throw new Error(statusResult.error || 'Failed to get template status');
       }
 
-      const updatedTemplate = await getDb()
+      const updateData: any = {
+        status: statusResult.status?.toLowerCase() || template.status,
+        metaStatus: statusResult.status,
+        lastSyncedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Only add these fields if they exist in the response
+      if (statusResult.quality_rating !== undefined) {
+        updateData.qualityRating = statusResult.quality_rating;
+      }
+      if (statusResult.review_feedback !== undefined) {
+        updateData.metaReviewFeedback = statusResult.review_feedback;
+      }
+
+      const [updatedTemplate] = await getDb()
         .update(messageTemplates)
-        .set({
-          status: statusResult.status?.toLowerCase() || template.status,
-          metaStatus: statusResult.status,
-          quality_rating: statusResult.quality_rating,
-          meta_review_feedback: statusResult.review_feedback,
-          lastSyncedAt: new Date(),
-          updatedAt: new Date(),
-        })
+        .set(updateData)
         .where(eq(messageTemplates.id, templateId))
         .returning();
 
       return {
         success: true,
-        data: updatedTemplate[0],
+        data: updatedTemplate,
         message: 'Template status refreshed',
       };
 
@@ -247,9 +249,6 @@ export class TemplatesService {
     return metaData;
   }
 
-
-  
-
   /**
    * Extract variables from components
    */
@@ -312,7 +311,7 @@ export class TemplatesService {
             .set({
               status: status.status?.toLowerCase(),
               metaStatus: status.status,
-              updatedAt: new Date(),
+              updatedAt: new Date().toISOString(),
             })
             .where(eq(messageTemplates.id, localId));
         }
@@ -376,10 +375,13 @@ export class TemplatesService {
         .limit(limitNum)
         .offset(offset);
 
-      const [{ count }] = await getDb()
-        .select({ count: sql`count(*)` })
+      // FIXED: Use proper array access instead of destructuring
+      const countResult = await getDb()
+        .select({ count: sql<number>`count(*)` })
         .from(messageTemplates)
         .where(and(...conditions));
+
+      const count = countResult.length > 0 ? Number(countResult[0]?.count) : 0;
 
       return {
         success: true,
@@ -387,8 +389,8 @@ export class TemplatesService {
         pagination: {
           page: pageNum,
           limit: limitNum,
-          total: Number(count),
-          pages: Math.ceil(Number(count) / limitNum),
+          total: count,
+          pages: Math.ceil(count / limitNum),
         },
       };
     } catch (error) {
@@ -459,13 +461,21 @@ export class TemplatesService {
         };
       }
 
+      const updateData: any = {
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.category !== undefined) updateData.category = data.category;
+      if (data.language !== undefined) updateData.language = data.language;
+      if (data.components !== undefined) updateData.components = data.components;
+      if (data.variables !== undefined) updateData.variables = data.variables;
+      if (data.status !== undefined) updateData.status = data.status;
+
       if (existing.metaTemplateId && data.status) {
         const [template] = await getDb()
           .update(messageTemplates)
-          .set({
-            status: data.status,
-            updatedAt: new Date(),
-          })
+          .set(updateData)
           .where(
             and(
               eq(messageTemplates.id, templateId),
@@ -483,10 +493,7 @@ export class TemplatesService {
 
       const [template] = await getDb()
         .update(messageTemplates)
-        .set({
-          ...data,
-          updatedAt: new Date(),
-        })
+        .set(updateData)
         .where(
           and(
             eq(messageTemplates.id, templateId),
@@ -526,10 +533,10 @@ export class TemplatesService {
 
       const template = templateResult.data;
 
-      if (template.metaStatus !== 'APPROVED' && template.status !== 'approved') {
+      if (template?.metaStatus !== 'APPROVED' && template?.status !== 'approved') {
         return {
           success: false,
-          error: 'Template is not approved in WhatsApp. Status: ' + (template.metaStatus || template.status),
+          error: 'Template is not approved in WhatsApp. Status: ' + (template?.metaStatus || template?.status),
         };
       }
 
@@ -556,7 +563,7 @@ export class TemplatesService {
         .select({
           status: messageTemplates.status,
           category: messageTemplates.category,
-          count: sql`count(*)`,
+          count: sql<number>`count(*)`,
         })
         .from(messageTemplates)
         .where(eq(messageTemplates.userId, userId))
@@ -564,11 +571,12 @@ export class TemplatesService {
 
       const totalTemplates = stats.reduce((acc, stat) => acc + Number(stat.count), 0);
 
-      const categories = stats.reduce((acc: any, stat) => {
-        if (!acc[stat.category || 'uncategorized']) {
-          acc[stat.category || 'uncategorized'] = 0;
+      const categories = stats.reduce((acc: Record<string, number>, stat) => {
+        const categoryKey = stat.category || 'uncategorized';
+        if (!acc[categoryKey]) {
+          acc[categoryKey] = 0;
         }
-        acc[stat.category || 'uncategorized'] += Number(stat.count);
+        acc[categoryKey] += Number(stat.count);
         return acc;
       }, {});
 
@@ -585,7 +593,7 @@ export class TemplatesService {
             count,
           })),
           approvedCount: stats
-            .filter(stat => stat.status === 'approved' || stat.metaStatus === 'APPROVED')
+            .filter(stat => stat.status === 'approved' || stat.status === 'APPROVED')
             .reduce((acc, stat) => acc + Number(stat.count), 0),
         },
       };
@@ -635,7 +643,15 @@ export class TemplatesService {
 
       const template = templateResult.data;
       
-      const previewComponents = template.components.map((component: any) => {
+      // Type guard to check if components exist and is an array
+      if (!template?.components || !Array.isArray(template.components)) {
+        return {
+          success: false,
+          error: 'Template components not found or invalid format',
+        };
+      }
+      
+      const previewComponents = (template.components as any[]).map((component: any) => {
         if (component.text) {
           const previewText = VariableService.replaceVariables(component.text, sampleData);
           return {
@@ -668,364 +684,381 @@ export class TemplatesService {
   /**
    * Duplicate template
    */
-  async duplicateTemplate(userId: string, templateId: string, name?: string) {
-    try {
-      const originalResult = await this.getTemplate(userId, templateId);
-      if (!originalResult.success) {
-        return originalResult;
-      }
+async duplicateTemplate(userId: string, templateId: string, name?: string) {
+  try {
+    const originalResult = await this.getTemplate(userId, templateId);
+    if (!originalResult.success) {
+      return originalResult;
+    }
 
-      const original = originalResult.data;
-      const newName = name || `${original.name}_copy`;
-
-      let metaTemplateId = null;
-      let metaResult = null;
-
-      if (original.metaTemplateId) {
-        const [user] = await getDb()
-          .select()
-          .from(users)
-          .where(eq(users.id, userId))
-          .limit(1);
-
-        if (user?.whatsappBusinessId && user?.whatsappAccessToken) {
-          metaResult = await MetaTemplateService.createTemplate(
-            user.whatsappBusinessId,
-            user.whatsappAccessToken,
-            {
-              name: newName,
-              category: (original.category as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION') || 'UTILITY',
-              language: original.language || 'en_US',
-              components: original.components,
-            }
-          );
-
-          if (metaResult.success) {
-            metaTemplateId = metaResult.data?.id;
-          }
-        }
-      }
-
-      const [duplicate] = await getDb()
-        .insert(messageTemplates)
-        .values({
-          name: newName,
-          category: original.category,
-          language: original.language,
-          status: metaTemplateId ? 'pending' : 'draft',
-          components: original.components,
-          variables: original.variables || [],
-          whatsappTemplateId: metaTemplateId,
-          metaTemplateId,
-          metaStatus: metaTemplateId ? 'PENDING' : null,
-          userId,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          lastSyncedAt: new Date(),
-        })
-        .returning();
-
-      return {
-        success: true,
-        data: duplicate,
-        message: metaTemplateId 
-          ? 'Template duplicated and submitted for WhatsApp review'
-          : 'Template duplicated locally',
-      };
-
-    } catch (error) {
-      console.error('Error duplicating template:', error);
+    const original = originalResult.data;
+    if (!original) {
       return {
         success: false,
-        error: 'Failed to duplicate template',
+        error: 'Template not found',
       };
     }
+
+    const newName = name || `${original.name}_copy`;
+
+    let metaTemplateId: string | null = null;
+    let metaResult = null;
+
+    if (original.metaTemplateId) {
+      const [user] = await getDb()
+        .select()
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (user?.whatsappBusinessId && user?.whatsappAccessToken) {
+        // FIX: Ensure components is always an array, not an object
+        let components: any[] = [];
+        
+        if (original.components) {
+          if (Array.isArray(original.components)) {
+            components = original.components;
+          } else if (typeof original.components === 'object' && original.components !== null) {
+            // If it's an object, try to convert it to an array
+            components = Object.values(original.components);
+          }
+        }
+        
+        metaResult = await MetaTemplateService.createTemplate(
+          user.whatsappBusinessId,
+          user.whatsappAccessToken,
+          {
+            name: newName,
+            category: (original.category as 'MARKETING' | 'UTILITY' | 'AUTHENTICATION') || 'UTILITY',
+            language: original.language || 'en_US',
+            components: components, // Now guaranteed to be an array
+          }
+        );
+
+        if (metaResult.success) {
+          metaTemplateId = metaResult.data?.id || null;
+        }
+      }
+    }
+
+    const [duplicate] = await getDb()
+      .insert(messageTemplates)
+      .values({
+        name: newName,
+        category: original.category || 'UTILITY',
+        language: original.language || 'en_US',
+        status: metaTemplateId ? 'pending' : 'draft',
+        components: Array.isArray(original.components) ? original.components : [],
+        variables: original.variables || [],
+        whatsappTemplateId: metaTemplateId,
+        metaTemplateId,
+        metaStatus: metaTemplateId ? 'PENDING' : null,
+        userId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastSyncedAt: new Date().toISOString(),
+      })
+      .returning();
+
+    return {
+      success: true,
+      data: duplicate,
+      message: metaTemplateId 
+        ? 'Template duplicated and submitted for WhatsApp review'
+        : 'Template duplicated locally',
+    };
+
+  } catch (error) {
+    console.error('Error duplicating template:', error);
+    return {
+      success: false,
+      error: 'Failed to duplicate template',
+    };
   }
+}
 
   /**
    * Get WhatsApp credentials from environment
    */
-private getWhatsAppCredentials() {
-  const businessId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  
-  // Log what's available for debugging
-  console.log('🔍 [getWhatsAppCredentials] Environment check:', {
-    hasBusinessId: !!businessId,
-    hasAccessToken: !!accessToken,
-    hasPhoneNumberId: !!phoneNumberId,
-    businessIdLength: businessId?.length,
-    accessTokenLength: accessToken?.length,
-    phoneNumberIdLength: phoneNumberId?.length,
-  });
-  
-  if (!businessId || !accessToken) {
-    console.error('❌ [getWhatsAppCredentials] Missing required WhatsApp credentials');
-    return null;
+  private getWhatsAppCredentials() {
+    const businessId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    
+    // Log what's available for debugging
+    console.log('🔍 [getWhatsAppCredentials] Environment check:', {
+      hasBusinessId: !!businessId,
+      hasAccessToken: !!accessToken,
+      hasPhoneNumberId: !!phoneNumberId,
+      businessIdLength: businessId?.length,
+      accessTokenLength: accessToken?.length,
+      phoneNumberIdLength: phoneNumberId?.length,
+    });
+    
+    if (!businessId || !accessToken) {
+      console.error('❌ [getWhatsAppCredentials] Missing required WhatsApp credentials');
+      return null;
+    }
+    
+    return {
+      businessId,
+      accessToken,
+      phoneNumberId, // Can be undefined if not configured
+    };
   }
-  
-  return {
-    businessId,
-    accessToken,
-    phoneNumberId, // Can be undefined if not configured
-  };
-}
 
   /**
    * CREATE TEMPLATE - FIXED WITH PROPER SERIALIZATION
    */
-async createTemplate(userId: string, data: CreateTemplateDto) {
-  try {
-    console.log('🚀 [createTemplate] Starting template creation for user:', userId);
-    console.log('📝 [createTemplate] Raw incoming data:', JSON.stringify(data, null, 2));
+  async createTemplate(userId: string, data: CreateTemplateDto) {
+    try {
+      console.log('🚀 [createTemplate] Starting template creation for user:', userId);
+      console.log('📝 [createTemplate] Raw incoming data:', JSON.stringify(data, null, 2));
 
-    // 1. Get WhatsApp credentials from environment
-    const credentials = this.getWhatsAppCredentials();
-    if (!credentials) {
-      return {
-        success: false,
-        error: 'WhatsApp Business account not configured in environment variables',
-      };
-    }
-
-    console.log('✅ [createTemplate] Using WhatsApp credentials:', {
-      businessId: credentials.businessId.substring(0, 10) + '...',
-      hasAccessToken: !!credentials.accessToken,
-      hasPhoneNumberId: !!credentials.phoneNumberId,
-    });
-
-    // 2. Check if we need phoneNumberId for media upload
-    const hasMediaHeader = data.components.some(
-      comp => comp.type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(comp.format)
-    );
-
-    if (hasMediaHeader && !credentials.phoneNumberId) {
-      console.error('❌ [createTemplate] Media header found but no phoneNumberId configured');
-      return {
-        success: false,
-        error: 'Phone Number ID is required for templates with media headers (IMAGE/VIDEO/DOCUMENT). Please configure WHATSAPP_PHONE_NUMBER_ID in environment variables.',
-      };
-    }
-
-    // 3. Convert to Meta format
-    const metaData: MetaCreateTemplateData = this.convertToMetaFormat(data);
-    
-    console.log('🔧 [createTemplate] Converted to Meta format');
-
-    // 4. Send to Meta API - PASS phoneNumberId for media upload
-    console.log('📤 [createTemplate] Calling MetaTemplateService.createTemplate...');
-    console.log('   Business ID:', credentials.businessId);
-    console.log('   Phone Number ID:', credentials.phoneNumberId || 'Not provided (no media headers)');
-    
-    const metaResult = await MetaTemplateService.createTemplate(
-      credentials.businessId,
-      credentials.accessToken,
-      metaData,
-      credentials.phoneNumberId // <-- PASS phoneNumberId here!
-    );
-
-    console.log('📥 [createTemplate] Meta API result:', {
-      success: metaResult.success,
-      templateId: metaResult.data?.id,
-      error: metaResult.error,
-      code: metaResult.code,
-    });
-
-    // 5. Handle Meta API failure
-    if (!metaResult.success) {
-      let errorMessage = metaResult.error || 'Failed to create template in WhatsApp';
-      
-      // Provide more helpful error messages
-      if (metaResult.code === 100 && errorMessage.includes('Invalid parameter')) {
-        errorMessage = 'Template validation failed. Please check: 1) Template name format (lowercase, underscores only), 2) Media files are valid and accessible, 3) Button types match category rules.';
+      // 1. Get WhatsApp credentials from environment
+      const credentials = this.getWhatsAppCredentials();
+      if (!credentials) {
+        return {
+          success: false,
+          error: 'WhatsApp Business account not configured in environment variables',
+        };
       }
+
+      console.log('✅ [createTemplate] Using WhatsApp credentials:', {
+        businessId: credentials.businessId.substring(0, 10) + '...',
+        hasAccessToken: !!credentials.accessToken,
+        hasPhoneNumberId: !!credentials.phoneNumberId,
+      });
+
+      // 2. Check if we need phoneNumberId for media upload
+      const hasMediaHeader = data.components.some(
+        (comp: any) => comp.type === 'HEADER' && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(comp.format)
+      );
+
+      if (hasMediaHeader && !credentials.phoneNumberId) {
+        console.error('❌ [createTemplate] Media header found but no phoneNumberId configured');
+        return {
+          success: false,
+          error: 'Phone Number ID is required for templates with media headers (IMAGE/VIDEO/DOCUMENT). Please configure WHATSAPP_PHONE_NUMBER_ID in environment variables.',
+        };
+      }
+
+      // 3. Convert to Meta format
+      const metaData: MetaCreateTemplateData = this.convertToMetaFormat(data);
+      
+      console.log('🔧 [createTemplate] Converted to Meta format');
+
+      // 4. Send to Meta API - PASS phoneNumberId for media upload
+      console.log('📤 [createTemplate] Calling MetaTemplateService.createTemplate...');
+      console.log('   Business ID:', credentials.businessId);
+      console.log('   Phone Number ID:', credentials.phoneNumberId || 'Not provided (no media headers)');
+      
+      const metaResult = await MetaTemplateService.createTemplate(
+        credentials.businessId,
+        credentials.accessToken,
+        metaData,
+        credentials.phoneNumberId // <-- PASS phoneNumberId here!
+      );
+
+      console.log('📥 [createTemplate] Meta API result:', {
+        success: metaResult.success,
+        templateId: metaResult.data?.id,
+        error: metaResult.error,
+        code: metaResult.code,
+      });
+
+      // 5. Handle Meta API failure
+      if (!metaResult.success) {
+        let errorMessage = metaResult.error || 'Failed to create template in WhatsApp';
+        
+        // Provide more helpful error messages
+        if (metaResult.code === 100 && errorMessage.includes('Invalid parameter')) {
+          errorMessage = 'Template validation failed. Please check: 1) Template name format (lowercase, underscores only), 2) Media files are valid and accessible, 3) Button types match category rules.';
+        }
+        
+        return {
+          success: false,
+          error: errorMessage,
+          metaError: true,
+          code: metaResult.code,
+          fbtrace_id: metaResult.fbtrace_id,
+        };
+      }
+
+      // 6. Extract variables from components
+      const variables = this.extractVariablesFromComponents(data.components);
+
+      // 7. Save to local database with Meta ID
+      const [template] = await getDb()
+        .insert(messageTemplates)
+        .values({
+          name: data.name,
+          category: data.category?.toUpperCase() || 'UTILITY',
+          language: data.language || 'en_US',
+          status: 'pending',
+          components: data.components,
+          variables: variables,
+          whatsappTemplateId: metaResult.data?.id,
+          metaTemplateId: metaResult.data?.id,
+          metaStatus: 'PENDING',
+          userId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastSyncedAt: new Date().toISOString(),
+        })
+        .returning();
+
+      console.log('✅ [createTemplate] Saved to local DB:', template?.id);
+
+      return {
+        success: true,
+        data: {
+          ...template,
+          metaTemplateId: metaResult.data?.id,
+          metaStatus: 'PENDING',
+        },
+        message: '✅ Template submitted to WhatsApp for review. Approval usually takes 1-24 hours.',
+        metaResponse: metaResult.data,
+      };
+
+    } catch (error: any) {
+      console.error('❌ [createTemplate] Template creation error:', {
+        error: error.message,
+        stack: error.stack,
+        userId,
+      });
       
       return {
         success: false,
-        error: errorMessage,
-        metaError: true,
-        code: metaResult.code,
-        fbtrace_id: metaResult.fbtrace_id,
+        error: 'Internal server error. Please try again.',
+        details: error.message,
       };
     }
-
-    // 6. Extract variables from components
-    const variables = this.extractVariablesFromComponents(data.components);
-
-    // 7. Save to local database with Meta ID
-    const [template] = await getDb()
-      .insert(messageTemplates)
-      .values({
-        name: data.name,
-        category: data.category?.toUpperCase() || 'UTILITY',
-        language: data.language || 'en_US',
-        status: 'pending',
-        components: data.components,
-        variables: variables,
-        whatsappTemplateId: metaResult.data?.id,
-        metaTemplateId: metaResult.data?.id,
-        metaStatus: 'PENDING',
-        userId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        lastSyncedAt: new Date(),
-      })
-      .returning();
-
-    console.log('✅ [createTemplate] Saved to local DB:', template.id);
-
-    return {
-      success: true,
-      data: {
-        ...template,
-        metaTemplateId: metaResult.data?.id,
-        metaStatus: 'PENDING',
-      },
-      message: '✅ Template submitted to WhatsApp for review. Approval usually takes 1-24 hours.',
-      metaResponse: metaResult.data,
-    };
-
-  } catch (error: any) {
-    console.error('❌ [createTemplate] Template creation error:', {
-      error: error.message,
-      stack: error.stack,
-      userId,
-    });
-    
-    return {
-      success: false,
-      error: 'Internal server error. Please try again.',
-      details: error.message,
-    };
   }
-}
 
   /**
    * SYNC TEMPLATES FROM META - Use environment variables
    */
-async syncWhatsAppTemplates(userId: string, userData?: any) {
-  try {
-    console.log('🔄 Syncing templates from Meta for user:', userId);
+  async syncWhatsAppTemplates(userId: string, userData?: any) {
+    try {
+      console.log('🔄 Syncing templates from Meta for user:', userId);
 
-    const credentials = this.getWhatsAppCredentials();
-    if (!credentials) {
-      return {
-        success: false,
-        error: 'WhatsApp Business account not configured in environment variables',
-      };
-    }
-
-    console.log('✅ Using WhatsApp credentials from environment for sync');
-
-    // FIX: Remove the status parameter entirely to get ALL templates
-    const metaResult = await MetaTemplateService.getAllTemplates(
-      credentials.businessId,
-      credentials.accessToken
-      // Don't pass status parameter - defaults to getting all templates
-    );
-
-    if (!metaResult.success) {
-      return {
-        success: false,
-        error: metaResult.error,
-      };
-    }
-
-    const metaTemplates = metaResult.data || [];
-    console.log(`✅ Found ${metaTemplates.length} templates in Meta`);
-
-    const syncedTemplates = [];
-    const errors = [];
-
-    for (const metaTemplate of metaTemplates) {
-      try {
-        const variables = this.extractVariablesFromMetaComponents(metaTemplate.components);
-
-        const templateData = {
-          name: metaTemplate.name,
-          category: metaTemplate.category,
-          language: metaTemplate.language,
-          status: metaTemplate.status.toLowerCase(),
-          components: metaTemplate.components,
-          variables,
-          whatsappTemplateId: metaTemplate.id,
-          metaTemplateId: metaTemplate.id,
-          metaStatus: metaTemplate.status,
-          quality_rating: metaTemplate.quality_rating,
-          userId,
-          updatedAt: new Date(),
-          lastSyncedAt: new Date(),
+      const credentials = this.getWhatsAppCredentials();
+      if (!credentials) {
+        return {
+          success: false,
+          error: 'WhatsApp Business account not configured in environment variables',
         };
+      }
 
-        const existing = await getDb()
-          .select()
-          .from(messageTemplates)
-          .where(
-            and(
-              eq(messageTemplates.metaTemplateId, metaTemplate.id),
-              eq(messageTemplates.userId, userId)
+      console.log('✅ Using WhatsApp credentials from environment for sync');
+
+      // FIX: Remove the status parameter entirely to get ALL templates
+      const metaResult = await MetaTemplateService.getAllTemplates(
+        credentials.businessId,
+        credentials.accessToken
+        // Don't pass status parameter - defaults to getting all templates
+      );
+
+      if (!metaResult.success) {
+        return {
+          success: false,
+          error: metaResult.error,
+        };
+      }
+
+      const metaTemplates = metaResult.data || [];
+      console.log(`✅ Found ${metaTemplates.length} templates in Meta`);
+
+      const syncedTemplates = [];
+      const errors = [];
+
+      for (const metaTemplate of metaTemplates) {
+        try {
+          const variables = this.extractVariablesFromMetaComponents(metaTemplate.components || []);
+
+          const templateData = {
+            name: metaTemplate.name,
+            category: metaTemplate.category,
+            language: metaTemplate.language,
+            status: metaTemplate.status?.toLowerCase() || 'unknown',
+            components: metaTemplate.components || [],
+            variables,
+            whatsappTemplateId: metaTemplate.id,
+            metaTemplateId: metaTemplate.id,
+            metaStatus: metaTemplate.status,
+            qualityRating: metaTemplate.quality_rating,
+            userId,
+            updatedAt: new Date().toISOString(),
+            lastSyncedAt: new Date().toISOString(),
+          };
+
+          const existing = await getDb()
+            .select()
+            .from(messageTemplates)
+            .where(
+              and(
+                eq(messageTemplates.metaTemplateId, metaTemplate.id),
+                eq(messageTemplates.userId, userId)
+              )
             )
-          )
-          .limit(1);
+            .limit(1);
 
-        if (existing.length > 0) {
-          await getDb()
-            .update(messageTemplates)
-            .set(templateData)
-            .where(eq(messageTemplates.id, existing[0].id));
-          
-          syncedTemplates.push({
-            id: existing[0].id,
+          if (existing.length > 0 && existing[0]) {
+            await getDb()
+              .update(messageTemplates)
+              .set(templateData)
+              .where(eq(messageTemplates.id, existing[0].id));
+            
+            syncedTemplates.push({
+              id: existing[0].id,
+              name: metaTemplate.name,
+              action: 'updated',
+              status: metaTemplate.status,
+            });
+          } else {
+            const [newTemplate] = await getDb()
+              .insert(messageTemplates)
+              .values({
+                ...templateData,
+                createdAt: new Date().toISOString(),
+              })
+              .returning();
+            
+            syncedTemplates.push({
+              id: newTemplate?.id || '',
+              name: metaTemplate.name,
+              action: 'created',
+              status: metaTemplate.status,
+            });
+          }
+        } catch (templateError) {
+          console.error(`❌ Error syncing template ${metaTemplate.name}:`, templateError);
+          errors.push({
             name: metaTemplate.name,
-            action: 'updated',
-            status: metaTemplate.status,
-          });
-        } else {
-          const [newTemplate] = await getDb()
-            .insert(messageTemplates)
-            .values({
-              ...templateData,
-              createdAt: new Date(),
-            })
-            .returning();
-          
-          syncedTemplates.push({
-            id: newTemplate.id,
-            name: metaTemplate.name,
-            action: 'created',
-            status: metaTemplate.status,
+            error: templateError instanceof Error ? templateError.message : 'Unknown error',
           });
         }
-      } catch (templateError) {
-        console.error(`❌ Error syncing template ${metaTemplate.name}:`, templateError);
-        errors.push({
-          name: metaTemplate.name,
-          error: templateError instanceof Error ? templateError.message : 'Unknown error',
-        });
       }
+
+      return {
+        success: true,
+        data: {
+          synced: syncedTemplates,
+          total: metaTemplates.length,
+          errors,
+        },
+        message: `✅ Synced ${syncedTemplates.length} templates from WhatsApp. ${errors.length} errors.`,
+      };
+
+    } catch (error: any) {
+      console.error('❌ Sync error:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to sync templates from WhatsApp',
+      };
     }
-
-    return {
-      success: true,
-      data: {
-        synced: syncedTemplates,
-        total: metaTemplates.length,
-        errors,
-      },
-      message: `✅ Synced ${syncedTemplates.length} templates from WhatsApp. ${errors.length} errors.`,
-    };
-
-  } catch (error: any) {
-    console.error('❌ Sync error:', error);
-    return {
-      success: false,
-      error: error.message || 'Failed to sync templates from WhatsApp',
-    };
   }
 }
-}
-
-
 
 export const templatesService = new TemplatesService();

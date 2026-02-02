@@ -1,13 +1,13 @@
 // backend/src/routes/templates.routes.ts
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth.middleware';
-import { templatesService } from '../services/templates.service';
+import { CreateTemplateDto, templatesService } from '../services/templates.service';
 import { z } from 'zod';
 import { getDb } from '../db/client';
 import { eq, sql, and, like, desc, asc } from 'drizzle-orm';
-import { messageTemplates, users, contacts } from '../db/schema';
+import { messageTemplates, users, contacts, mediaAttachments } from '../db/schema';
 import { MetaTemplateService } from '../services/meta-template.service';
-import { messageService } from '../services/message/message.service';
+import { messageService, SendMessageParams } from '../services/message/message.service';
 import { 
   WhatsAppTemplateBuilder, 
   whatsappTemplateService,
@@ -104,12 +104,22 @@ router.get('/:id', async (req: AuthRequest, res) => {
     const templateId = req.params.id;
     const userId = req.user!.userId;
     
+    // FIX 1: Ensure templateId is string, not undefined
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
+    
     const result = await templatesService.getTemplate(userId, templateId);
     
+    // FIX 2: Check if result has error property
     if (!result.success) {
+      const errorMessage = (result as any).error || 'Template not found';
       return res.status(404).json({
         success: false,
-        error: result.error,
+        error: errorMessage,
       });
     }
     
@@ -132,12 +142,34 @@ router.post('/', async (req: AuthRequest, res) => {
     // Validate request body
     const validatedData = createTemplateSchema.parse(req.body);
     
-    const result = await templatesService.createTemplate(userId, validatedData);
+    // Create properly typed cleaned data
+    const cleanedData: Partial<CreateTemplateDto> = {};
     
+    // Add required fields (these should always exist after validation)
+    cleanedData.name = validatedData.name;
+    cleanedData.components = validatedData.components;
+    
+    // Add optional fields only if they exist and are not undefined
+    if (validatedData.category !== undefined) {
+      cleanedData.category = validatedData.category;
+    }
+    
+    if (validatedData.language !== undefined) {
+      cleanedData.language = validatedData.language;
+    }
+    
+    if (validatedData.variables !== undefined) {
+      cleanedData.variables = validatedData.variables;
+    }
+    
+    const result = await templatesService.createTemplate(userId, cleanedData as CreateTemplateDto);
+    
+    // Type-safe error handling
     if (!result.success) {
+      const errorMessage = 'error' in result ? result.error : 'Failed to create template';
       return res.status(400).json({
         success: false,
-        error: result.error,
+        error: errorMessage,
       });
     }
     
@@ -147,7 +179,7 @@ router.post('/', async (req: AuthRequest, res) => {
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
-        details: error.errors,
+        details: error.issues,
       });
     }
     
@@ -159,22 +191,39 @@ router.post('/', async (req: AuthRequest, res) => {
     });
   }
 });
-
 // PUT /api/templates/:id - Update template
 router.put('/:id', async (req: AuthRequest, res) => {
   try {
     const templateId = req.params.id;
     const userId = req.user!.userId;
     
+    if (!templateId || typeof templateId !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
+    
     // Validate request body
     const validatedData = updateTemplateSchema.parse(req.body);
     
-    const result = await templatesService.updateTemplate(userId, templateId, validatedData);
+    // Remove undefined values to satisfy TypeScript's exactOptionalPropertyTypes
+    const cleanedData: Record<string, any> = {};
+    for (const [key, value] of Object.entries(validatedData)) {
+      if (value !== undefined) {
+        cleanedData[key] = value;
+      }
+    }
     
+    const result = await templatesService.updateTemplate(userId, templateId, cleanedData);
+    
+    // Type-safe error handling
     if (!result.success) {
-      return res.status(result.error === 'Template not found' ? 404 : 400).json({
+      const errorMessage = 'error' in result ? result.error : 'Failed to update template';
+      const statusCode = errorMessage === 'Template not found' ? 404 : 400;
+      return res.status(statusCode).json({
         success: false,
-        error: result.error,
+        error: errorMessage,
       });
     }
     
@@ -184,7 +233,7 @@ router.put('/:id', async (req: AuthRequest, res) => {
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
-        details: error.errors,
+        details: error.issues,
       });
     }
     
@@ -202,6 +251,13 @@ router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const templateId = req.params.id;
     const userId = req.user!.userId;
+    
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
     
     const result = await templatesService.deleteTemplate(userId, templateId);
     
@@ -259,15 +315,41 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
   console.log('🚀 DEBUG - Starting template send process with media handling');
   
   try {
+    // Validate required parameters before using them in eq()
     const templateId = req.params.id;
     const userId = req.user!.userId;
-    const { contactId, parameters, media: mediaFromRequest } = req.body;
+    const { contactId, parameters: reqParameters, media: mediaFromRequest } = req.body;
     
+    // Validate all required IDs
+    if (!templateId || typeof templateId !== 'string') {
+      console.error('❌ Template ID is required');
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
+    
+    if (!userId || typeof userId !== 'string') {
+      console.error('❌ User ID is required');
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+    
+    if (!contactId || typeof contactId !== 'string') {
+      console.error('❌ Contact ID is required');
+      return res.status(400).json({
+        success: false,
+        error: 'Contact ID is required'
+      });
+    }
+
     console.log('📥 Received request:', { 
       templateId, 
       userId, 
       contactId, 
-      hasParameters: !!parameters,
+      hasParameters: !!reqParameters,
       hasMedia: !!mediaFromRequest
     });
 
@@ -279,8 +361,8 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
       .from(messageTemplates)
       .where(
         and(
-          eq(messageTemplates.id, templateId),
-          eq(messageTemplates.userId, userId)
+          eq(messageTemplates.id, templateId), // Now templateId is guaranteed to be string
+          eq(messageTemplates.userId, userId)  // Now userId is guaranteed to be string
         )
       )
       .limit(1);
@@ -296,11 +378,14 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
     console.log('✅ Template found:', {
       name: template.name,
       language: template.language,
-      componentsCount: template.components?.length || 0
+      componentsCount: Array.isArray(template.components) ? template.components.length : 0
     });
 
+    // Cast components to proper type and handle null
+    const templateComponents = (template.components as any[]) || [];
+    
     // 2. Check template media requirements
-    const headerComponent = (template.components || []).find((c: any) => c.type === 'HEADER');
+    const headerComponent = templateComponents.find((c: any) => c.type === 'HEADER');
     const hasMediaHeader = headerComponent && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerComponent.format || '');
     
     console.log('📊 Template Media Analysis:', {
@@ -311,7 +396,8 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
     });
 
     // 3. Handle media for templates with media headers
-    let mediaData = parameters?.media || mediaFromRequest;
+    let mediaData = reqParameters?.media || mediaFromRequest;
+    let parameters = reqParameters;
     
     if (hasMediaHeader && !mediaData?.url) {
       console.log('🔍 Looking for recently uploaded media...');
@@ -321,7 +407,7 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
         .from(mediaAttachments)
         .where(
           and(
-            eq(mediaAttachments.uploadedByUserId, userId),
+            eq(mediaAttachments.uploadedByUserId, userId), // userId is guaranteed string
             sql`${mediaAttachments.tags} && array['quick_reply']::text[]`
           )
         )
@@ -330,13 +416,13 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
       
       if (recentMedia.length > 0) {
         const recentMediaItem = recentMedia[0];
-        console.log(`✅ Found recent media: ${recentMediaItem.originalFilename}`);
+        console.log(`✅ Found recent media: ${recentMediaItem?.originalFilename}`);
         
         mediaData = {
-          url: recentMediaItem.secureUrl,
-          type: recentMediaItem.resourceType,
-          caption: recentMediaItem.caption || recentMediaItem.originalFilename,
-          filename: recentMediaItem.originalFilename,
+          url: recentMediaItem?.secureUrl,
+          type: recentMediaItem?.resourceType,
+          caption: recentMediaItem?.caption || recentMediaItem?.originalFilename,
+          filename: recentMediaItem?.originalFilename,
         };
         
         // Update parameters with media
@@ -376,8 +462,8 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
       .from(contacts)
       .where(
         and(
-          eq(contacts.id, contactId),
-          eq(contacts.userId, userId)
+          eq(contacts.id, contactId), // contactId is guaranteed string
+          eq(contacts.userId, userId) // userId is guaranteed string
         )
       )
       .limit(1);
@@ -404,7 +490,7 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
     console.log('🔍 Step 3: Getting user WhatsApp credentials...');
     const [user] = await db.select()
       .from(users)
-      .where(eq(users.id, userId))
+      .where(eq(users.id, userId)) // userId is guaranteed string
       .limit(1);
 
     if (!user?.whatsappPhoneNumberId || !user?.whatsappAccessToken) {
@@ -429,7 +515,7 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
     
     // Additional media validation
     if (hasMediaHeader && finalParameters?.media) {
-      const mediaErrors = validateTemplateMedia(template.components || [], finalParameters.media);
+      const mediaErrors = validateTemplateMedia(templateComponents, finalParameters.media);
       validationErrors.push(...mediaErrors);
     }
     
@@ -446,34 +532,34 @@ router.post('/:id/send', authenticate, async (req: AuthRequest, res) => {
 
     // 8. Build WhatsApp message
     console.log('🔍 Step 5: Building WhatsApp message...');
-const whatsappComponents = whatsappTemplateService.convertComponentsToWhatsAppFormat(
-  template.components || [],
-  finalParameters || {}
-);
+    const whatsappComponents = whatsappTemplateService.convertComponentsToWhatsAppFormat(
+      templateComponents,
+      finalParameters || {}
+    );
 
     console.log(`✅ Built ${whatsappComponents.length} WhatsApp components`);
 
-const builder = new WhatsAppTemplateBuilder()
-  .setRecipient(contact.phone!)
-  .setTemplate(template.name, template.language);
+    const builder = new WhatsAppTemplateBuilder()
+      .setRecipient(contact.phone!)
+      .setTemplate(template.name, template.language || 'en_US');
 
     const builtMessage = builder.build();
-   if (!builtMessage.template.components) {
-  builtMessage.template.components = [];
-}
-builtMessage.template.components.push(...whatsappComponents)
+    if (!builtMessage.template.components) {
+      builtMessage.template.components = [];
+    }
+    (builtMessage.template.components as any[]).push(...whatsappComponents);
 
-console.log('✅ Final message to send:');
-console.log(JSON.stringify({
-  to: builtMessage.to,
-  template: builtMessage.template.name,
-  language: builtMessage.template.language.code,
-  componentCount: builtMessage.template.components.length,
-  components: builtMessage.template.components.map((c: any) => ({
-    type: c.type,
-    hasParameters: !!(c.parameters?.length)
-  }))
-}, null, 2));
+    console.log('✅ Final message to send:');
+    console.log(JSON.stringify({
+      to: builtMessage.to,
+      template: builtMessage.template.name,
+      language: builtMessage.template.language.code,
+      componentCount: builtMessage.template.components.length,
+      components: (builtMessage.template.components as any[]).map((c: any) => ({
+        type: c.type,
+        hasParameters: !!(c.parameters?.length)
+      }))
+    }, null, 2));
 
     // Log the final payload (excluding sensitive info)
     const safePayload = {
@@ -484,7 +570,7 @@ console.log(JSON.stringify({
       template: {
         name: builtMessage.template.name,
         language: builtMessage.template.language,
-        components: builtMessage.template.components?.map((c: any) => ({
+        components: (builtMessage.template.components as any[])?.map((c: any) => ({
           type: c.type,
           parameters: c.parameters?.map((p: any) => ({
             type: p.type,
@@ -529,13 +615,12 @@ console.log(JSON.stringify({
       console.log('💾 Saving failed attempt to database...');
       try {
         const renderedMessage = `[Template: ${template.name}] - FAILED: ${whatsappError.message}`;
-        await messageService.sendMessage({
+        const sendMessageParams: SendMessageParams = {
           contactId: contact.id,
           userId: user.id,
           body: renderedMessage,
           direction: 'outgoing',
           messageType: 'template',
-          status: 'failed',
           metadata: {
             templateId: template.id,
             templateName: template.name,
@@ -546,7 +631,8 @@ console.log(JSON.stringify({
             mediaUsed: finalParameters?.media,
             sentAt: new Date().toISOString()
           },
-        });
+        };
+        await messageService.sendMessage(sendMessageParams);
         console.log('✅ Failed attempt saved to database');
       } catch (dbError: any) {
         console.error('❌ Failed to save to database:', dbError.message);
@@ -558,12 +644,12 @@ console.log(JSON.stringify({
     // 10. Render template for database
     console.log('🔍 Step 7: Rendering template for database...');
     
-    const bodyComponent = (template.components || []).find((c: any) => c.type === 'BODY');
+    const bodyComponent = templateComponents.find((c: any) => c.type === 'BODY');
     let renderedMessage = `[Template: ${template.name}]`;
     
     if (bodyComponent?.text && finalParameters?.variables) {
       renderedMessage = bodyComponent.text;
-      const variables = finalParameters.variables;
+      const variables = finalParameters.variables as Record<string, any>;
       
       // Replace all placeholders
       for (let i = 0; i <= 10; i++) {
@@ -582,26 +668,26 @@ console.log(JSON.stringify({
         const fullMatch = match[0];
         const paramName = match[1];
         
-        if (variables[paramName] !== undefined) {
+        // Check if paramName exists in variables before accessing
+        if (paramName && variables[paramName] !== undefined) {
           const paramRegex = new RegExp(fullMatch.replace(/[{}]/g, '\\$&'), 'g');
           renderedMessage = renderedMessage.replace(paramRegex, variables[paramName]);
         }
       }
     }
     
-    console.log('📝 Final rendered message:', renderedMessage);
+
 
     // 11. Save to database
     console.log('🔍 Step 8: Saving to database...');
     let messageResult;
     try {
-      messageResult = await messageService.sendMessage({
+      const sendMessageParams: SendMessageParams = {
         contactId: contact.id,
         userId: user.id,
         body: renderedMessage,
         direction: 'outgoing',
         messageType: 'template',
-        status: 'sent',
         metadata: {
           templateId: template.id,
           templateName: template.name,
@@ -614,7 +700,8 @@ console.log(JSON.stringify({
           whatsappResponse: whatsappResponse,
           sentAt: new Date().toISOString()
         },
-      });
+      };
+      messageResult = await messageService.sendMessage(sendMessageParams);
       console.log('✅ Message saved to database:', {
         id: messageResult.message?.id,
         bodyPreview: renderedMessage.substring(0, 100) + (renderedMessage.length > 100 ? '...' : '')
@@ -623,7 +710,7 @@ console.log(JSON.stringify({
       console.error('❌ Failed to save to database:', dbError.message);
     }
 
-    console.log('🎉 SUCCESS! Template sent and saved');
+
 
     return res.json({
       success: true,
@@ -720,16 +807,26 @@ router.post('/:id/preview', async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const { sampleData } = req.body;
     
+    // FIX 5: Ensure templateId is not undefined
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
+    
     const result = await templatesService.previewTemplate(
       userId,
       templateId,
       sampleData || {}
     );
     
+    // FIX 6: Type guard for result
     if (!result.success) {
+      const errorMessage = (result as any).error || 'Preview failed';
       return res.status(400).json({
         success: false,
-        error: result.error,
+        error: errorMessage,
       });
     }
     
@@ -751,14 +848,23 @@ router.post('/:id/duplicate', async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const { name } = req.body;
     
-    const result = await templatesService.duplicateTemplate(userId, templateId, name);
-    
-    if (!result.success) {
+    if (!templateId) {
       return res.status(400).json({
         success: false,
-        error: result.error,
+        error: 'Template ID is required'
       });
     }
+    
+    const result = await templatesService.duplicateTemplate(userId, templateId, name);
+    
+if (!result.success) {
+  // Option 1: Type assertion (if you're sure about the structure)
+  const errorResult = result as { success: false; error: string };
+  return res.status(400).json({
+    success: false,
+    error: errorResult.error,
+  });
+}
     
     res.status(201).json(result);
   } catch (error) {
@@ -776,6 +882,13 @@ router.post('/:id/refresh-status', async (req: AuthRequest, res) => {
   try {
     const templateId = req.params.id;
     const userId = req.user!.userId;
+    
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
     
     const result = await templatesService.refreshTemplateStatus(userId, templateId);
     
@@ -801,6 +914,14 @@ router.post('/:id/force-sync', async (req: AuthRequest, res) => {
   try {
     const templateId = req.params.id;
     const userId = req.user!.userId;
+    
+    // FIX 7: Ensure templateId is not undefined
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
     
     // Get user for access token
     const [user] = await getDb()
@@ -854,8 +975,9 @@ router.post('/:id/force-sync', async (req: AuthRequest, res) => {
       .set({
         status: metaResult.status?.toLowerCase(),
         metaStatus: metaResult.status,
-        quality_rating: metaResult.quality_rating,
-        lastSyncedAt: new Date(),
+        // FIX 8: Use correct property name (qualityRating, not quality_rating)
+        qualityRating: metaResult.quality_rating,
+        lastSyncedAt: sql`now()`,
       })
       .where(eq(messageTemplates.id, templateId))
       .returning();
@@ -884,6 +1006,14 @@ router.get('/:id/debug', authenticate, async (req: AuthRequest, res) => {
   try {
     const templateId = req.params.id;
     const userId = req.user!.userId;
+    
+    // FIX 9: Ensure templateId is not undefined
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
     
     const db = getDb();
     
@@ -928,10 +1058,11 @@ router.get('/:id/debug', authenticate, async (req: AuthRequest, res) => {
     }
 
     // Build preview of what would be sent
+    const components = template.components as any[] || [];
     const previewPayload = {
       name: template.name,
       language: template.language,
-      components: template.components?.map((c: any) => ({
+      components: components.map((c: any) => ({
         type: c.type,
         format: c.format,
         text: c.text?.substring(0, 100) + (c.text && c.text.length > 100 ? '...' : ''),
@@ -940,6 +1071,9 @@ router.get('/:id/debug', authenticate, async (req: AuthRequest, res) => {
       }))
     };
 
+    // FIX 10: Handle nullable template.language
+    const templateLanguage = template.language || '';
+    
     return res.json({
       success: true,
       data: {
@@ -959,12 +1093,12 @@ router.get('/:id/debug', authenticate, async (req: AuthRequest, res) => {
         whatsappStatus,
         previewPayload,
         diagnostic: {
-          languageIssue: !template.language.includes('_') ? 
-            `Language "${template.language}" might need conversion (e.g., "en" → "en_US")` : 
+          languageIssue: !templateLanguage.includes('_') ? 
+            `Language "${templateLanguage}" might need conversion (e.g., "en" → "en_US")` : 
             'Language format looks OK',
           missingWhatsAppId: !template.metaTemplateId && !template.whatsappTemplateId,
           notApproved: template.status !== 'approved' && template.metaStatus !== 'APPROVED',
-          suggestion: template.language === 'en' ? 
+          suggestion: templateLanguage === 'en' ? 
             'Try updating language to "en_US" if template exists with that language in WhatsApp' :
             'Use exact language from WhatsApp Business Manager'
         }
@@ -987,6 +1121,13 @@ router.post('/:id/fix-language', authenticate, async (req: AuthRequest, res) => 
     const templateId = req.params.id;
     const userId = req.user!.userId;
     const { language } = req.body;
+    
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
     
     if (!language) {
       return res.status(400).json({
@@ -1019,7 +1160,7 @@ router.post('/:id/fix-language', authenticate, async (req: AuthRequest, res) => 
     const [updated] = await db.update(messageTemplates)
       .set({ 
         language: language,
-        updatedAt: new Date()
+        updatedAt: sql`now()`
       })
       .where(eq(messageTemplates.id, templateId))
       .returning();
@@ -1048,6 +1189,13 @@ router.post('/:id/test-payload', authenticate, async (req: AuthRequest, res) => 
     const userId = req.user!.userId;
     const { parameters } = req.body;
     
+    if (!templateId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Template ID is required'
+      });
+    }
+    
     const db = getDb();
     
     const [template] = await db.select()
@@ -1068,22 +1216,25 @@ router.post('/:id/test-payload', authenticate, async (req: AuthRequest, res) => 
     }
 
     // Build WhatsApp template message
+    const templateComponents = (template.components as any[]) || [];
     const whatsappComponents = whatsappTemplateService.convertComponentsToWhatsAppFormat(
-      template.components || [],
+      templateComponents,
       parameters || {}
     );
 
     // Create builder
     const builder = new WhatsAppTemplateBuilder()
       .setRecipient('+1234567890') // Dummy number for testing
-      .setTemplate(template.name, template.language);
+      .setTemplate(template.name, template.language || 'en_US');
 
     const builtMessage = builder.build();
     if (!builtMessage.template.components) {
       builtMessage.template.components = [];
     }
-    builtMessage.template.components.push(...whatsappComponents);
+    (builtMessage.template.components as any[]).push(...whatsappComponents);
 
+    const componentsArray = builtMessage.template.components as any[];
+    
     return res.json({
       success: true,
       data: {
@@ -1091,8 +1242,8 @@ router.post('/:id/test-payload', authenticate, async (req: AuthRequest, res) => 
         analysis: {
           templateName: template.name,
           language: template.language,
-          componentCount: builtMessage.template.components.length,
-          parameterCount: builtMessage.template.components.reduce((acc, c) => acc + (c.parameters?.length || 0), 0),
+          componentCount: componentsArray.length,
+          parameterCount: componentsArray.reduce((acc, c) => acc + (c.parameters?.length || 0), 0),
           validation: validateTemplateParameters(template, parameters)
         }
       },

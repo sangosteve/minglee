@@ -2,26 +2,50 @@
   "compilerOptions": {
     "module": "CommonJS",
     "moduleResolution": "node",
-    "target": "esnext",
-
+    "target": "ES2020", // Changed from esnext to ES2020 for better compatibility
+    
     "types": ["node"],
-
+    
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
-
+    
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-
+    
     "strict": true,
     "jsx": "react-jsx",
-
+    
     "verbatimModuleSyntax": false,
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
     "skipLibCheck": true,
-
+    
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
-  }
+    "allowSyntheticDefaultImports": true,
+    
+    // Added for better project structure
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["*"]
+    }
+  },
+  "include": [
+    "src/**/*" // Only include files in src directory
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.backup.ts", // Exclude backup files
+    "**/*.backup.*", // Exclude any backup files
+    "drizzle", // Exclude drizzle migrations
+    "prisma.config.ts", // Exclude prisma config
+    "**/migrations/**", // Exclude any migration files
+    "**/test/**", // Exclude test directories
+    "**/__tests__/**" // Exclude test directories
+  ]
 }

@@ -9,7 +9,8 @@ import { authenticate, AuthRequest } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments, automations } from '../db/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
-import Busboy from 'busboy';
+// Fix 1: Change Busboy import to handle CommonJS module properly
+import * as Busboy from 'busboy';
 import { messageService } from '../services/message/message.service';
 import { triggerMatchingService } from '../services/trigger-matching.service';
 
@@ -260,7 +261,7 @@ async function checkIsFirstMessage(
   try {
     const db = getDb();
 
-    // Check if there are any previous messages from this contact
+    // Fix 2: Type cast the SQL query
     const previousMessages = await db.execute(sql`
       SELECT COUNT(*) as count
       FROM messages m
@@ -269,7 +270,7 @@ async function checkIsFirstMessage(
       AND c.user_id = ${userId}
       AND c.whatsapp_phone_number_id = ${phoneNumberId}
       AND m.direction = 'incoming'
-    `);
+    ` as any);
 
     const count = Number(previousMessages.rows[0]?.count || 0);
     return count === 0;
@@ -321,8 +322,8 @@ async function processIncomingMessage(
           .from(users)
           .where(
             and(
-              eq(users.whatsappPhoneNumberId, envWhatsAppPhoneNumberId),
-              eq(users.whatsappAccessToken, envWhatsAppAccessToken)
+              eq(users.whatsappPhoneNumberId, envWhatsAppPhoneNumberId || ''),
+              eq(users.whatsappAccessToken, envWhatsAppAccessToken || '')
             )
           )
           .limit(1);
@@ -352,10 +353,16 @@ async function processIncomingMessage(
           user = anyUser[0];
         }
 
-        console.log(`👤 Using user: ${user.email} (ID: ${user.id})`);
+        console.log(`👤 Using user: ${user?.email} (ID: ${user?.id})`);
       }
     } else {
       console.log(`✅ Found user: ${user.email} (ID: ${user.id})`);
+    }
+
+    // Fix 3: Add null check for user
+    if (!user) {
+      console.error('❌ User not found, cannot process message');
+      return;
     }
 
     // 2. Find or create contact
@@ -377,6 +384,7 @@ async function processIncomingMessage(
     if (!contact) {
       console.log(`➕ Creating new contact: ${senderName} (${formattedPhone})`);
 
+      // Fix 4: Use SQL expressions or string dates for timestamps
       const contactData: any = {
         phone: formattedPhone,
         name: senderName,
@@ -385,18 +393,17 @@ async function processIncomingMessage(
         userId: user.id,
         whatsappBusinessId: user.whatsappBusinessId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
         whatsappPhoneNumberId: whatsappPhoneNumberId,
-        tags: [],
         isActive: true,
         source: 'whatsapp' as any,
         status: 'active' as any,
         optIn: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: sql`now()`, // Use SQL expression instead of Date
+        updatedAt: sql`now()`, // Use SQL expression instead of Date
       };
 
       try {
         [contact] = await db.insert(contacts).values(contactData).returning();
-        console.log(`✅ Contact created: ${contact.name} (ID: ${contact.id})`);
+        console.log(`✅ Contact created: ${contact?.name} (ID: ${contact?.id})`);
       } catch (insertError: any) {
         console.error('❌ Error creating contact:', insertError);
 
@@ -406,15 +413,21 @@ async function processIncomingMessage(
           userId: user.id,
           source: 'whatsapp' as any,
           status: 'active' as any,
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          createdAt: sql`now()`, // Use SQL expression
+          updatedAt: sql`now()`, // Use SQL expression
         };
 
         [contact] = await db.insert(contacts).values(minimalContactData).returning();
-        console.log(`✅ Contact created with minimal data: ${contact.name} (ID: ${contact.id})`);
+       
       }
     } else {
       console.log(`✅ Found existing contact: ${contact.name} (ID: ${contact.id})`);
+    }
+
+    // Fix 5: Add null check for contact
+    if (!contact) {
+      console.error('❌ Contact not found or created, cannot process message');
+      return;
     }
 
     // 3. Find or create conversation
@@ -438,27 +451,34 @@ async function processIncomingMessage(
         userId: user.id,
         whatsappPhoneNumberId: whatsappPhoneNumberId,
         lastMessage: lastMessage,
-        lastMessageAt: new Date(),
+        lastMessageAt: sql`now()`, // Use SQL expression
         unreadCount: 1,
         status: 'active',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: sql`now()`, // Use SQL expression
+        updatedAt: sql`now()`, // Use SQL expression
       };
 
       [conversation] = await db.insert(conversations).values(conversationData).returning();
-      console.log(`✅ Conversation created: ID ${conversation.id}`);
+   
     } else {
       const lastMessage = getLastMessageText(message);
+      // Fix 6: Use string dates or SQL expressions for date fields
       await db.update(conversations)
         .set({
           lastMessage: lastMessage,
-          lastMessageAt: new Date(),
-          unreadCount: conversation.unreadCount + 1,
-          updatedAt: new Date(),
+          lastMessageAt: new Date().toISOString(), // Use ISO string instead of Date object
+          unreadCount: (conversation.unreadCount || 0) + 1,
+          updatedAt: new Date().toISOString(), // Use ISO string instead of Date object
         })
         .where(eq(conversations.id, conversation.id));
 
       console.log(`✅ Updated conversation: ID ${conversation.id}`);
+    }
+
+    // Fix 7: Add null check for conversation
+    if (!conversation) {
+      console.error('❌ Conversation not found or created, cannot save message');
+      return;
     }
 
     // 4. Check if this is the first message from this contact
@@ -678,12 +698,15 @@ async function processIncomingMessage(
         metadata: messageMetadata,
       });
 
-      console.log(`✅ Message saved: ID ${result.message.id}`);
+      console.log(`✅ Message saved: ID ${result.message?.id || 'unknown'}`);
 
       // Check and trigger automations for text messages using new trigger system
       if (message.text?.body && contact && user) {
         console.log(`🤖 Checking automations for incoming message: "${message.text.body.substring(0, 50)}..."`);
 
+        // FIX: Add null check for result.message
+        const savedMessageId = result.message?.id;
+        
         checkAndTriggerAutomations(
           contact.id,
           user.id,
@@ -693,7 +716,8 @@ async function processIncomingMessage(
             phone_number_id: metadata.phone_number_id,
             business_phone_number: metadata.display_phone_number,
             conversation_id: conversation.id,
-            saved_message_id: result.message.id,
+            // Only include saved_message_id if result.message exists
+            ...(savedMessageId && { saved_message_id: savedMessageId }),
           },
           isFirstMessage
         ).catch(error => {
@@ -701,6 +725,7 @@ async function processIncomingMessage(
         });
       }
     }
+
 
     // 7. Optional: Mark message as read
     try {
@@ -734,9 +759,9 @@ async function handleAutomationListSelection(
   userId: string,
   contactId: string,
   whatsappMessageId: string,
-  rowId: string,
-  selectedId: string,
-  selectedTitle: string,
+  rowId: string | undefined,
+  selectedId: string | undefined,
+  selectedTitle: string | undefined,
   conversationId: string
 ) {
   try {
@@ -753,7 +778,8 @@ async function handleAutomationListSelection(
           eq(messages.conversationId, conversationId),
           eq(messages.direction, 'outgoing'),
           eq(messages.contactId, contactId),
-          sql`messages.metadata->>'isInteractiveList' = 'true'`
+          // Fix 8: Type cast the SQL template literal
+          sql`messages.metadata->>'isInteractiveList' = 'true'` as any
         )
       )
       .orderBy(desc(messages.timestamp))
@@ -765,13 +791,20 @@ async function handleAutomationListSelection(
     }
 
     const listMessage = listMessages[0];
+    
+    // Check if listMessage exists
+    if (!listMessage) {
+      console.log(`🤖 Interactive list message not found`);
+      return;
+    }
 
     // Check if this list message is from an automation
-    if (listMessage.metadata?.automation && listMessage.metadata?.automationId) {
-      const automationId = listMessage.metadata.automationId;
-      const nodeId = listMessage.metadata.nodeId;
-      const executionId = listMessage.metadata.executionId;
-      const rowIds = listMessage.metadata.rowIds || [];
+    const metadata = listMessage.metadata as any;
+    if (metadata?.automation && metadata?.automationId) {
+      const automationId = metadata.automationId;
+      const nodeId = metadata.nodeId;
+      const executionId = metadata.executionId;
+      const rowIds = metadata.rowIds || [];
 
       console.log(`🤖 Found automation list message:`, {
         automationId,
@@ -804,7 +837,7 @@ async function handleAutomationListSelection(
       }
 
       // If still not found, try by title (as fallback)
-      if (!matchedRow) {
+      if (!matchedRow && selectedTitle) {
         matchedRow = rowIds.find((r: any) => r.title === selectedTitle);
       }
 
@@ -829,7 +862,7 @@ async function handleAutomationListSelection(
         } else {
           console.error(`🤖 ❌ Failed to continue automation: ${result.error}`);
         }
-      } else {
+      } else if (selectedId) {
         console.warn(`🤖 ⚠️ Selected row not found in list. Trying to use ${selectedId} as row ID...`);
 
         // If no match found, try to use the selectedId directly
@@ -868,8 +901,8 @@ async function handleAutomationInteractiveSelection(
   userId: string,
   contactId: string,
   whatsappMessageId: string,
-  buttonId: string,
-  buttonTitle: string,
+  buttonId: string | undefined,
+  buttonTitle: string | undefined,
   conversationId: string,
   interactiveType: 'button_reply' | 'cta_url_reply'
 ) {
@@ -886,7 +919,8 @@ async function handleAutomationInteractiveSelection(
           eq(messages.conversationId, conversationId),
           eq(messages.direction, 'outgoing'),
           eq(messages.contactId, contactId),
-          sql`messages.metadata->>'isInteractiveMessage' = 'true'`
+          // Fix 9: Type cast the SQL template literal
+          sql`messages.metadata->>'isInteractiveMessage' = 'true'` as any
         )
       )
       .orderBy(desc(messages.timestamp))
@@ -899,19 +933,19 @@ async function handleAutomationInteractiveSelection(
     
     const interactiveMessage = interactiveMessages[0];
     
+    // Check if interactiveMessage exists
+    if (!interactiveMessage) {
+      console.log(`🤖 Interactive message not found`);
+      return;
+    }
+    
     // Check if this interactive message is from an automation
-    if (interactiveMessage.metadata?.automation && interactiveMessage.metadata?.automationId) {
-      const automationId = interactiveMessage.metadata.automationId;
-      const nodeId = interactiveMessage.metadata.nodeId;
-      const executionId = interactiveMessage.metadata.executionId;
-      const actions = interactiveMessage.metadata.actions || [];
-      
-      console.log(`🤖 Found automation interactive message:`, {
-        automationId,
-        nodeId,
-        executionId,
-        actionCount: actions.length,
-      });
+    const metadata = interactiveMessage.metadata as any;
+    if (metadata?.automation && metadata?.automationId) {
+      const automationId = metadata.automationId;
+      const nodeId = metadata.nodeId;
+      const executionId = metadata.executionId;
+      const actions = metadata.actions || [];
       
       // Find the matching action by button ID
       const matchedAction = actions.find((action: any) => 
@@ -922,7 +956,7 @@ async function handleAutomationInteractiveSelection(
       );
       
       // If not found by ID, try by title as fallback
-      const fallbackAction = !matchedAction ? actions.find((action: any) => 
+      const fallbackAction = !matchedAction && buttonTitle ? actions.find((action: any) => 
         action.title === buttonTitle
       ) : null;
       
@@ -949,7 +983,7 @@ async function handleAutomationInteractiveSelection(
         } else {
           console.error(`🤖 ❌ Failed to continue automation: ${result.error}`);
         }
-      } else {
+      } else if (buttonId) {
         console.warn(`🤖 ⚠️ Selected action not found in interactive message. Trying to use ${buttonId} as action ID...`);
         
         // If no match found, try to use the buttonId directly
@@ -1072,9 +1106,23 @@ async function processMessageStatus(status: any) {
       return;
     }
 
+    // Check if conversationId exists
+    if (!message.conversationId) {
+      console.log(`⚠️ Message ${message.id} has no conversation ID, skipping conversation update`);
+      
+      // Update just the message status
+      await db.update(messages)
+        .set({
+          status: status.status,
+        })
+        .where(eq(messages.id, message.id));
+      
+      console.log(`✅ Updated message ${message.id} status to ${status.status}`);
+      return;
+    }
+
     const updateData: any = {
       status: status.status,
-      updatedAt: new Date(),
     };
 
     // Update the message
@@ -1091,11 +1139,10 @@ async function processMessageStatus(status: any) {
         .where(eq(conversations.id, message.conversationId))
         .limit(1);
 
-      if (conversation && conversation.unreadCount > 0) {
+      if (conversation && conversation.unreadCount && conversation.unreadCount > 0) {
         await db.update(conversations)
           .set({
             unreadCount: Math.max(0, conversation.unreadCount - 1),
-            updatedAt: new Date(),
           })
           .where(eq(conversations.id, message.conversationId));
 
@@ -1136,7 +1183,6 @@ async function processMediaMessageInBackground(
             processed: false,
             error: 'No media ID found',
           },
-          updatedAt: new Date(),
         })
         .where(eq(messages.id, messageId));
 
@@ -1162,7 +1208,6 @@ async function processMediaMessageInBackground(
             processed: false,
             error: 'WhatsApp access token not found',
           },
-          updatedAt: new Date(),
         })
         .where(eq(messages.id, messageId));
 
@@ -1203,25 +1248,25 @@ async function processMediaMessageInBackground(
             mediaAttachmentId: result.mediaAttachment.id,
             cloudinaryUrl: result.mediaAttachment.secureUrl,
           },
-          updatedAt: new Date(),
         })
         .where(eq(messages.id, messageId));
 
       // Update conversation
       const messageBody = mediaData.caption || mediaData.filename || `${messageType} message`;
-      await db.update(conversations)
-        .set({
-          lastMessage: messageBody,
-          lastMessageAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(conversations.id,
-          (await db.select({ conversationId: messages.conversationId })
-            .from(messages)
-            .where(eq(messages.id, messageId))
-            .limit(1)
-          )[0]?.conversationId
-        ));
+      
+      // Get conversation ID for the message
+      const [messageRecord] = await db.select({ conversationId: messages.conversationId })
+        .from(messages)
+        .where(eq(messages.id, messageId))
+        .limit(1);
+
+      if (messageRecord?.conversationId) {
+        await db.update(conversations)
+          .set({
+            lastMessage: messageBody,
+          })
+          .where(eq(conversations.id, messageRecord.conversationId));
+      }
 
     } else {
       console.error(`❌ Media upload failed for message ${messageId}:`, result.error);
@@ -1236,7 +1281,6 @@ async function processMediaMessageInBackground(
             error: result.error || 'Unknown error',
           },
           body: `Failed to process ${messageType}`,
-          updatedAt: new Date(),
         })
         .where(eq(messages.id, messageId));
     }
@@ -1253,8 +1297,7 @@ async function processMediaMessageInBackground(
           processing: false,
           processed: false,
           error: error.message,
-        },
-        updatedAt: new Date(),
+        }
       })
       .where(eq(messages.id, messageId));
   }
@@ -1322,7 +1365,14 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
       user.id
     );
 
-    // Use MessageService to send message
+    // Use MessageService to send message - FIXED: Add null check for contact
+    if (!contact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create or find contact'
+      });
+    }
+
     const result = await messageService.sendMessage({
       contactId: contact.id,
       userId: user.id,
@@ -1361,8 +1411,8 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
 router.post('/send-media', authenticate, (req: AuthRequest, res) => {
   console.log('📤 Send-media endpoint (busboy) called');
 
-  // Create busboy instance to parse multipart/form-data
-  const busboy = Busboy({
+  // Fix 10: Use Busboy constructor properly
+  const busboy = (Busboy as any)({
     headers: req.headers,
     limits: {
       fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'), // 50MB
@@ -1376,19 +1426,19 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
   let fileSize = 0;
 
   // Handle form fields
-  busboy.on('field', (fieldname, val) => {
+  busboy.on('field', (fieldname: string, val: string) => {
     console.log(`📝 Field [${fieldname}]: ${val.substring(0, 100)}`);
     fields[fieldname] = val;
   });
 
   // Handle file upload
-  busboy.on('file', (fieldname, file, info) => {
+  busboy.on('file', (fieldname: string, file: any, info: any) => {
     console.log(`📁 File [${fieldname}]: ${info.filename} (${info.mimeType})`);
     fileName = info.filename;
     fileMimeType = info.mimeType;
 
     const chunks: Buffer[] = [];
-    file.on('data', (chunk) => {
+    file.on('data', (chunk: Buffer) => {
       chunks.push(chunk);
     });
 
@@ -1398,7 +1448,7 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
       console.log(`✅ File read complete: ${fileName} (${fileSize} bytes)`);
     });
 
-    file.on('error', (err) => {
+    file.on('error', (err: Error) => {
       console.error('❌ File read error:', err);
     });
   });
@@ -1492,7 +1542,7 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
         .limit(1);
 
       if (!contact) {
-        // Create new contact
+        // Create new contact - use SQL expressions for timestamps
         [contact] = await db.insert(contacts).values({
           phone: formattedPhone,
           name: `Contact ${formattedPhone}`,
@@ -1500,30 +1550,50 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
           whatsappPhoneNumberId: user.whatsappPhoneNumberId,
           source: 'whatsapp' as any,
           status: 'active' as any,
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          createdAt: sql`now()`,
+          updatedAt: sql`now()`,
         }).returning();
-        console.log(`✅ Contact created: ${contact.id}`);
+    
       } else {
         console.log(`✅ Found existing contact: ${contact.id}`);
       }
 
-      // 4. Use MessageService to send media message
+      // Use MessageService to send media message - FIXED: Add null check for contact
+      if (!contact) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to create contact'
+        });
+      }
+
+      // Create attachment with proper optional properties
+      const attachment: any = {
+        url: cloudinaryResult.secureUrl,
+        secureUrl: cloudinaryResult.secureUrl,
+        mimeType: fileMimeType,
+        originalFilename: fileName,
+        fileSize: fileSize,
+        caption: caption,
+      };
+
+      // Add optional properties only if they exist
+      if (cloudinaryResult.width !== undefined) {
+        attachment.width = cloudinaryResult.width;
+      }
+      
+      if (cloudinaryResult.height !== undefined) {
+        attachment.height = cloudinaryResult.height;
+      }
+      
+      if (cloudinaryResult.duration !== undefined) {
+        attachment.duration = cloudinaryResult.duration;
+      }
+
       const result = await messageService.sendMessage({
         contactId: contact.id,
         userId: user.id,
         body: caption,
-        attachments: [{
-          url: cloudinaryResult.secureUrl,
-          secureUrl: cloudinaryResult.secureUrl,
-          mimeType: fileMimeType,
-          originalFilename: fileName,
-          fileSize: fileSize,
-          width: cloudinaryResult.width,
-          height: cloudinaryResult.height,
-          duration: cloudinaryResult.duration || undefined,
-          caption: caption,
-        }],
+        attachments: [attachment],
         direction: 'outgoing',
         metadata: {
           cloudinaryPublicId: cloudinaryResult.publicId,
@@ -1539,9 +1609,9 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
           cloudinaryUrl: cloudinaryResult.secureUrl,
           whatsappMessageId: result.whatsappResponse?.messages?.[0]?.id,
           message: {
-            id: result.message.id,
-            type: result.message.messageType,
-            body: result.message.body,
+            id: result?.message?.id,
+            type: result?.message?.messageType,
+            body: result?.message?.body,
           },
           conversation: {
             id: result.conversation.id,
@@ -1561,11 +1631,11 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
   });
 
   // Handle busboy errors
-  busboy.on('error', (error) => {
+  busboy.on('error', (error: Error) => {
     console.error('❌ Busboy parsing error:', error);
     res.status(400).json({
       success: false,
-      error: `Failed to parse form data: ${error.message}`
+      error: `Failed to parse form data: ${error}`
     });
   });
 
@@ -1647,7 +1717,6 @@ router.post('/config', authenticate, async (req: AuthRequest, res) => {
         whatsappBusinessId: whatsappBusinessId || null,
         whatsappPhoneNumberId,
         whatsappAccessToken,
-        updatedAt: new Date(),
       })
       .where(eq(users.id, req.user!.userId));
 
@@ -1696,7 +1765,7 @@ router.get('/health', authenticate, async (req: AuthRequest, res) => {
         whatsappStatus = 'connected';
       } catch (error) {
         whatsappStatus = 'error';
-        console.warn('⚠️ WhatsApp connection test failed:', error.message);
+        console.warn('⚠️ WhatsApp connection test failed:', error);
       }
     }
 
@@ -1710,7 +1779,7 @@ router.get('/health', authenticate, async (req: AuthRequest, res) => {
         cloudinaryStatus = 'connected';
       } catch (error) {
         cloudinaryStatus = 'error';
-        console.warn('⚠️ Cloudinary connection test failed:', error.message);
+       
       }
     }
 

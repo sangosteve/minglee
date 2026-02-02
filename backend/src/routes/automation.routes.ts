@@ -1,6 +1,5 @@
 // backend/src/routes/automation.routes.ts
 import { Router } from 'express';
-import { z } from 'zod';
 import { db } from '../db/client';
 import { contacts } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -13,10 +12,13 @@ const router = Router();
 // Apply authentication middleware to all routes
 router.use(authenticate);
 
-// Validation schemas
-
-
-
+// Helper function to validate automation ID
+const validateAutomationId = (automationId: string | undefined): string => {
+  if (!automationId || typeof automationId !== 'string') {
+    throw new Error('Automation ID is required');
+  }
+  return automationId;
+};
 
 // GET /api/automations - Get all automations with filters
 router.get('/', async (req: AuthRequest, res) => {
@@ -62,7 +64,7 @@ router.get('/', async (req: AuthRequest, res) => {
 // GET /api/automations/:id - Get automation by ID
 router.get('/:id', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     
     const result = await automationsService.getAutomation(userId, automationId);
@@ -77,6 +79,12 @@ router.get('/:id', async (req: AuthRequest, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error fetching automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch automation',
@@ -90,8 +98,6 @@ router.post('/', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     
-    console.log('📝 CREATE AUTOMATION (No Zod)');
-    console.log('Request body:', req.body);
     
     // Basic validation
     if (!req.body || typeof req.body !== 'object') {
@@ -114,7 +120,7 @@ router.post('/', async (req: AuthRequest, res) => {
       name: req.body.name.trim(),
       description: req.body.description || '',
       status: req.body.status || 'draft',
-      triggerType: req.body.triggerType || 'manual',
+      triggerType: req.body.triggerType || 'manual', // Ensure this is not null
       triggerConfig: req.body.triggerConfig || {},
       flowData: req.body.flowData || { nodes: [], edges: [] },
     };
@@ -145,7 +151,7 @@ router.post('/', async (req: AuthRequest, res) => {
 // PUT /api/automations/:id - Update automation
 router.put('/:id', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     
     console.log('📝 UPDATE AUTOMATION (No Zod)');
@@ -266,6 +272,12 @@ router.put('/:id', async (req: AuthRequest, res) => {
     
   } catch (error) {
     console.error('💥 Error updating automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to update automation',
@@ -277,7 +289,7 @@ router.put('/:id', async (req: AuthRequest, res) => {
 // PATCH /api/automations/:id/status - Update automation status
 router.patch('/:id/status', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     const { status } = req.body;
     
@@ -300,6 +312,12 @@ router.patch('/:id/status', async (req: AuthRequest, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error updating automation status:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to update automation status',
@@ -311,7 +329,7 @@ router.patch('/:id/status', async (req: AuthRequest, res) => {
 // DELETE /api/automations/:id - Delete automation
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     
     const result = await automationsService.deleteAutomation(userId, automationId);
@@ -326,6 +344,12 @@ router.delete('/:id', async (req: AuthRequest, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error deleting automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to delete automation',
@@ -359,10 +383,10 @@ router.get('/stats/overview', async (req: AuthRequest, res) => {
   }
 });
 
-// POST /api/automations/:id/test - Test automation
+// POST /api/automations/:id/test - Test automation (existing route)
 router.post('/:id/test', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     
     const result = await automationsService.testAutomation(userId, automationId);
@@ -377,6 +401,12 @@ router.post('/:id/test', async (req: AuthRequest, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error testing automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to test automation',
@@ -388,7 +418,7 @@ router.post('/:id/test', async (req: AuthRequest, res) => {
 // GET /api/automations/:id/runs - Get automation runs
 router.get('/:id/runs', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -405,6 +435,12 @@ router.get('/:id/runs', async (req: AuthRequest, res) => {
     res.json(result);
   } catch (error) {
     console.error('Error fetching automation runs:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to fetch automation runs',
@@ -440,16 +476,16 @@ router.get('/analytics/overview', async (req: AuthRequest, res) => {
   }
 });
 
-// GET /api/automations/:id/duplicate - Duplicate automation
+// POST /api/automations/:id/duplicate - Duplicate automation
 router.post('/:id/duplicate', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     const { name } = req.body;
     
     // First get the original automation
     const originalResult = await automationsService.getAutomation(userId, automationId);
-    if (!originalResult.success) {
+    if (!originalResult.success || !originalResult.data) {
       return res.status(404).json({
         success: false,
         error: 'Automation not found',
@@ -459,10 +495,10 @@ router.post('/:id/duplicate', async (req: AuthRequest, res) => {
     // Create a duplicate with updated name if provided
     const duplicateData = {
       name: name || `${originalResult.data.name} (Copy)`,
-      description: originalResult.data.description,
-      triggerType: originalResult.data.triggerType,
-      triggerConfig: originalResult.data.triggerConfig,
-      flowData: originalResult.data.flowData,
+      description: originalResult.data.description || '', // Ensure description is not null
+      triggerType: originalResult.data.triggerType || 'manual', // Handle null case
+      triggerConfig: originalResult.data.triggerConfig || {},
+      flowData: originalResult.data.flowData || { nodes: [], edges: [] },
       status: 'draft' as const, // Always set duplicate to draft
     };
     
@@ -482,6 +518,12 @@ router.post('/:id/duplicate', async (req: AuthRequest, res) => {
     });
   } catch (error) {
     console.error('Error duplicating automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to duplicate automation',
@@ -489,11 +531,10 @@ router.post('/:id/duplicate', async (req: AuthRequest, res) => {
     });
   }
 });
-
 // POST /api/automations/:id/trigger - Manually trigger automation
 router.post('/:id/trigger', async (req: AuthRequest, res) => {
   try {
-    const automationId = req.params.id;
+    const automationId = validateAutomationId(req.params.id);
     const userId = req.user!.userId;
     const { contactId, triggerData } = req.body;
     
@@ -506,7 +547,7 @@ router.post('/:id/trigger', async (req: AuthRequest, res) => {
     
     // First check if automation exists and is active
     const automationResult = await automationsService.getAutomation(userId, automationId);
-    if (!automationResult.success) {
+    if (!automationResult.success || !automationResult.data) {
       return res.status(404).json({
         success: false,
         error: 'Automation not found',
@@ -566,81 +607,15 @@ router.post('/:id/trigger', async (req: AuthRequest, res) => {
     
   } catch (error) {
     console.error('Error triggering automation:', error);
+    if (error instanceof Error && error.message === 'Automation ID is required') {
+      return res.status(400).json({ 
+        success: false, 
+        error: error.message 
+      });
+    }
     res.status(500).json({ 
       success: false, 
       error: 'Failed to trigger automation',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
-
-router.post('/:id/test', async (req: AuthRequest, res) => {
-  try {
-    const automationId = req.params.id;
-    const userId = req.user!.userId;
-    const { contactId } = req.body; // Allow specifying a test contact
-    
-    const automationResult = await automationsService.getAutomation(userId, automationId);
-    if (!automationResult.success) {
-      return res.status(404).json({
-        success: false,
-        error: 'Automation not found',
-      });
-    }
-    
-    const automation = automationResult.data;
-    
-    // For testing, we'll create a test contact if none provided
-    let testContactId = contactId;
-    
-    if (!testContactId) {
-      // Create a test contact
-      const [testContact] = await db
-        .insert(contacts)
-        .values({
-          userId,
-          name: 'Test Contact',
-          phone: '+15551234567', // Test phone number
-          email: 'test@example.com',
-          status: 'active',
-          createdAt: new Date(),
-          updatedAt: new Date()
-        })
-        .returning();
-      
-      testContactId = testContact.id;
-    }
-    
-    // Test the automation
-    const result = await automationExecutionService.triggerAutomation(
-      automationId,
-      testContactId,
-      userId,
-      { test: true, timestamp: new Date().toISOString() }
-    );
-    
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        error: result.error,
-      });
-    }
-    
-    res.json({
-      success: true,
-      message: 'Automation test executed successfully',
-      data: {
-        automationId,
-        runId: result.executionId,
-        contactId: testContactId,
-        status: 'test_executed',
-      },
-    });
-  } catch (error) {
-    console.error('Error testing automation:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to test automation',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }

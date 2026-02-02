@@ -3,7 +3,7 @@ import { AuthService } from '../services/auth.service';
 
 export interface AuthRequest extends Request {
   user?: {
-    userId: number;
+    userId: string; 
     email: string;
     isAdmin: boolean;
   };
@@ -29,7 +29,10 @@ export const authenticate = async (
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
     
-    req.user = payload;
+    req.user = {
+      ...payload,
+      userId: payload.userId.toString() // Ensure userId is string
+    };
     next();
   } catch (error) {
     console.error('Authentication error:', error);
@@ -63,7 +66,10 @@ export const optionalAuth = async (
       const payload = AuthService.verifyAccessToken(token);
       
       if (payload) {
-        req.user = payload;
+        req.user = {
+          ...payload,
+          userId: payload.userId.toString() // Ensure userId is string
+        };
       }
     }
     

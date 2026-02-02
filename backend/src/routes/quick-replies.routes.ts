@@ -7,50 +7,6 @@ import { eq, and, or, like, desc, inArray, sql } from 'drizzle-orm';
 
 const router = Router();
 
-// Helper function to create media attachment using existing media routes logic
-const createMediaAttachment = async (
-  userId: string, 
-  fileData: any, 
-  quickReplyId?: string
-) => {
-  const db = getDb();
-  
-  // Extract file data
-  const { 
-    originalname, 
-    mimetype, 
-    size, 
-    buffer, 
-    url, 
-    secureUrl, 
-    publicId 
-  } = fileData;
-
-  // Create media attachment record
-  const [mediaAttachment] = await db.insert(mediaAttachments).values({
-    messageId: null, // Quick reply media have null messageId
-    uploadedByUserId: userId,
-    publicId: publicId || `qr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    secureUrl: secureUrl || url,
-    thumbnailUrl: secureUrl || url,
-    originalFilename: originalname,
-    mimeType: mimetype,
-    fileSize: size,
-    format: originalname.split('.').pop(),
-    resourceType: mimetype.startsWith('image/') ? 'image' : 
-                 mimetype.startsWith('video/') ? 'video' : 
-                 mimetype.startsWith('audio/') ? 'video' : 'raw', // Cloudinary treats audio as video
-    tags: ['quick_reply', quickReplyId ? `quick_reply_${quickReplyId}` : ''],
-    caption: originalname,
-    status: 'active',
-    uploadedAt: new Date(),
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }).returning();
-
-  return mediaAttachment;
-};
-
 // Helper function to validate media attachments
 const validateMediaAttachments = async (attachmentIds: string[], userId: string) => {
   const db = getDb();
@@ -74,35 +30,53 @@ const validateMediaAttachments = async (attachmentIds: string[], userId: string)
 // ==================== GET ENDPOINTS ====================
 
 // GET all quick replies (with pagination and filters)
+// GET all quick replies (with pagination and filters)
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
     const { 
       page = 1, 
       limit = 20, 
       search, 
       topics,
-      isActive = 'true' // Default to active
+      isActive = 'true'
     } = req.query;
     
     const offset = (Number(page) - 1) * Number(limit);
     const db = getDb();
 
-    const whereConditions: any[] = [eq(quickReplies.userId, userId)];
+    // Start with base condition
+    const whereConditions = [eq(quickReplies.userId, userId)];
 
-    if (isActive !== undefined) {
-      whereConditions.push(eq(quickReplies.isActive, isActive === 'true'));
+    // Add isActive condition
+    whereConditions.push(eq(quickReplies.isActive, isActive === 'true'));
+
+    // Add search condition if provided
+    if (search && typeof search === 'string') {
+      const searchPattern = `%${search}%`;
+      const searchConditions = [
+        like(quickReplies.name, searchPattern),
+        like(quickReplies.message, searchPattern),
+        like(quickReplies.topics, searchPattern)
+      ].filter(Boolean) as any[];
+      
+      if (searchConditions.length > 0) {
+        const orCondition = or(...searchConditions);
+        if (orCondition) { // Check if orCondition is not undefined
+          whereConditions.push(orCondition);
+        }
+      }
     }
 
-    if (search) {
-      whereConditions.push(or(
-        like(quickReplies.name, `%${search}%`),
-        like(quickReplies.message, `%${search}%`),
-        like(quickReplies.topics, `%${search}%`)
-      ));
-    }
-
-    if (topics) {
+    // Add topics condition if provided
+    if (topics && typeof topics === 'string') {
       whereConditions.push(like(quickReplies.topics, `%${topics}%`));
     }
 
@@ -117,7 +91,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     // Get all media attachment IDs from all quick replies
     const allMediaAttachmentIds = quickRepliesList
       .flatMap(qr => qr.mediaAttachmentIds || [])
-      .filter(Boolean);
+      .filter(Boolean) as string[];
 
     let mediaAttachmentsMap: Record<string, any> = {};
 
@@ -143,11 +117,11 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     }));
 
     // Get total count
-    const totalResult = await db.select({ count: sql`count(*)` })
+    const totalResult = await db.select({ count: sql<number>`count(*)` })
       .from(quickReplies)
       .where(and(...whereConditions));
 
-    const total = totalResult.length ? Number(totalResult[0].count) : 0;
+    const total = totalResult[0]?.count ? Number(totalResult[0].count) : 0;
 
     res.json({
       success: true,
@@ -173,7 +147,23 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
+    // Check if id is defined
+    if (!id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Quick reply ID is required' 
+      });
+    }
+
     const db = getDb();
 
     const quickReplyResult = await db.select()
@@ -184,7 +174,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       ))
       .limit(1);
 
-    if (!quickReplyResult.length) {
+    if (!quickReplyResult.length || !quickReplyResult[0]) {
       return res.status(404).json({ 
         success: false, 
         error: 'Quick reply not found' 
@@ -221,7 +211,15 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
 // GET all unique topics for quick replies
 router.get('/topics/all', authenticate, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
     const db = getDb();
 
     // Get all quick replies for the user
@@ -263,7 +261,15 @@ router.get('/topics/all', authenticate, async (req: AuthRequest, res) => {
 // POST create quick reply
 router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
     const { name, message, topics, mediaAttachmentIds = [], isActive } = req.body;
     const db = getDb();
 
@@ -275,10 +281,11 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     }
 
     // Validate media attachments belong to user
-    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
-      const validMediaAttachments = await validateMediaAttachments(mediaAttachmentIds, userId);
+    const validatedAttachmentIds = mediaAttachmentIds || [];
+    if (validatedAttachmentIds.length > 0) {
+      const validMediaAttachments = await validateMediaAttachments(validatedAttachmentIds, userId);
 
-      if (validMediaAttachments.length !== mediaAttachmentIds.length) {
+      if (validMediaAttachments.length !== validatedAttachmentIds.length) {
         return res.status(400).json({ 
           success: false, 
           error: 'One or more media attachments not found or do not belong to user' 
@@ -292,25 +299,27 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       name,
       message,
       topics: topics || 'General',
-      mediaAttachmentIds: mediaAttachmentIds || [],
+      mediaAttachmentIds: validatedAttachmentIds,
       isActive: isActive !== undefined ? isActive : true,
     }).returning();
 
     // Update media attachments with quick reply tag
-    if (mediaAttachmentIds.length > 0) {
-      for (const attachmentId of mediaAttachmentIds) {
-        const [attachment] = await db.select()
+    if (validatedAttachmentIds.length > 0 && quickReply) {
+      for (const attachmentId of validatedAttachmentIds) {
+        const attachmentResult = await db.select()
           .from(mediaAttachments)
           .where(eq(mediaAttachments.id, attachmentId))
           .limit(1);
         
+        const attachment = attachmentResult[0];
         if (attachment) {
-          const updatedTags = [...(attachment.tags || []), `quick_reply_${quickReply.id}`];
+          const currentTags = attachment.tags || [];
+          const updatedTags = [...currentTags, `quick_reply_${quickReply.id}`];
           
           await db.update(mediaAttachments)
             .set({
               tags: updatedTags,
-              updatedAt: new Date(),
+              updatedAt: new Date().toISOString(),
             })
             .where(eq(mediaAttachments.id, attachmentId));
         }
@@ -319,8 +328,8 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 
     // Get media attachments for response
     let mediaAttachmentsList: any[] = [];
-    if (mediaAttachmentIds.length > 0) {
-      mediaAttachmentsList = await validateMediaAttachments(mediaAttachmentIds, userId);
+    if (validatedAttachmentIds.length > 0) {
+      mediaAttachmentsList = await validateMediaAttachments(validatedAttachmentIds, userId);
     }
 
     res.json({
@@ -344,7 +353,23 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 router.post('/:id/duplicate', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
+    // Check if id is defined
+    if (!id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Quick reply ID is required' 
+      });
+    }
+
     const db = getDb();
 
     // Get original quick reply
@@ -356,7 +381,7 @@ router.post('/:id/duplicate', authenticate, async (req: AuthRequest, res) => {
       ))
       .limit(1);
 
-    if (!originalResult.length) {
+    if (!originalResult.length || !originalResult[0]) {
       return res.status(404).json({ 
         success: false, 
         error: 'Quick reply not found' 
@@ -395,7 +420,23 @@ router.post('/:id/duplicate', authenticate, async (req: AuthRequest, res) => {
 router.put('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
+    // Check if id is defined
+    if (!id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Quick reply ID is required' 
+      });
+    }
+
     const { name, message, topics, mediaAttachmentIds, isActive } = req.body;
     const db = getDb();
 
@@ -408,7 +449,7 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       ))
       .limit(1);
 
-    if (!existingResult.length) {
+    if (!existingResult.length || !existingResult[0]) {
       return res.status(404).json({ 
         success: false, 
         error: 'Quick reply not found' 
@@ -416,10 +457,11 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     }
 
     // Validate media attachments belong to user
-    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
-      const validMediaAttachments = await validateMediaAttachments(mediaAttachmentIds, userId);
+    const validatedAttachmentIds = mediaAttachmentIds || [];
+    if (validatedAttachmentIds.length > 0) {
+      const validMediaAttachments = await validateMediaAttachments(validatedAttachmentIds, userId);
 
-      if (validMediaAttachments.length !== mediaAttachmentIds.length) {
+      if (validMediaAttachments.length !== validatedAttachmentIds.length) {
         return res.status(400).json({ 
           success: false, 
           error: 'One or more media attachments not found or do not belong to user' 
@@ -431,9 +473,9 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     if (name !== undefined) updateData.name = name;
     if (message !== undefined) updateData.message = message;
     if (topics !== undefined) updateData.topics = topics;
-    if (mediaAttachmentIds !== undefined) updateData.mediaAttachmentIds = mediaAttachmentIds;
+    if (mediaAttachmentIds !== undefined) updateData.mediaAttachmentIds = validatedAttachmentIds;
     if (isActive !== undefined) updateData.isActive = isActive;
-    updateData.updatedAt = new Date();
+    updateData.updatedAt = new Date().toISOString();
 
     const [updatedQuickReply] = await db.update(quickReplies)
       .set(updateData)
@@ -444,20 +486,22 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
       .returning();
 
     // Update media attachments with quick reply tag
-    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
-      for (const attachmentId of mediaAttachmentIds) {
-        const [attachment] = await db.select()
+    if (validatedAttachmentIds.length > 0 && updatedQuickReply) {
+      for (const attachmentId of validatedAttachmentIds) {
+        const attachmentResult = await db.select()
           .from(mediaAttachments)
           .where(eq(mediaAttachments.id, attachmentId))
           .limit(1);
         
+        const attachment = attachmentResult[0];
         if (attachment) {
-          const updatedTags = [...(attachment.tags || []), `quick_reply_${id}`];
+          const currentTags = attachment.tags || [];
+          const updatedTags = [...currentTags, `quick_reply_${id}`];
           
           await db.update(mediaAttachments)
             .set({
               tags: updatedTags,
-              updatedAt: new Date(),
+              updatedAt: new Date().toISOString(),
             })
             .where(eq(mediaAttachments.id, attachmentId));
         }
@@ -466,8 +510,8 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 
     // Get media attachments for response
     let mediaAttachmentsList: any[] = [];
-    if (mediaAttachmentIds && mediaAttachmentIds.length > 0) {
-      mediaAttachmentsList = await validateMediaAttachments(mediaAttachmentIds, userId);
+    if (validatedAttachmentIds.length > 0) {
+      mediaAttachmentsList = await validateMediaAttachments(validatedAttachmentIds, userId);
     }
 
     res.json({
@@ -493,7 +537,23 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'User not authenticated' 
+      });
+    }
+
+    // Check if id is defined
+    if (!id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Quick reply ID is required' 
+      });
+    }
+
     const db = getDb();
 
     const [deletedQuickReply] = await db.delete(quickReplies)

@@ -1,15 +1,20 @@
-//backend/src/services/cloudinary.service.ts
-import { v2 as cloudinary, UploadApiResponse, UploadApiErrorResponse } from 'cloudinary';
+// backend/src/services/cloudinary.service.ts
+import { v2 as cloudinary, UploadApiResponse} from 'cloudinary';
 import path from 'path';
-import stream from 'stream';
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true,
-});
+// Configure Cloudinary with validated environment variables
+const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+const apiKey = process.env.CLOUDINARY_API_KEY;
+const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+if (cloudName && apiKey && apiSecret) {
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+}
 
 export interface CloudinaryUploadOptions {
   folder?: string;
@@ -103,7 +108,6 @@ export class CloudinaryService {
         resourceType: result.resource_type,
       };
     } catch (error: any) {
-      console.error('❌ Cloudinary upload error:', error);
       return {
         success: false,
         error: error.message,
@@ -134,7 +138,6 @@ export class CloudinaryService {
         },
         (error, result) => {
           if (error) {
-            console.error('❌ Cloudinary stream upload error:', error);
             resolve({
               success: false,
               error: error.message,
@@ -185,7 +188,6 @@ export class CloudinaryService {
         result: result.result,
       };
     } catch (error: any) {
-      console.error('❌ Cloudinary delete error:', error);
       return {
         success: false,
         error: error.message,
@@ -309,7 +311,6 @@ export class CloudinaryService {
         data,
       };
     } catch (error: any) {
-      console.error('❌ Cloudinary get file info error:', error);
       return {
         success: false,
         error: error.message,
@@ -328,7 +329,6 @@ export class CloudinaryService {
       if (error.error?.message?.includes('already exists')) {
         return { success: true };
       }
-      console.error('❌ Cloudinary create folder error:', error);
       return { success: false, error: error.message };
     }
   }
@@ -357,7 +357,6 @@ export class CloudinaryService {
         data,
       };
     } catch (error: any) {
-      console.error('❌ Cloudinary search error:', error);
       return {
         success: false,
         error: error.message,
@@ -369,6 +368,10 @@ export class CloudinaryService {
    * Generate upload signature for direct frontend uploads
    */
   static generateUploadSignature(params: any): string {
-    return cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET!);
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    if (!apiSecret) {
+      throw new Error('CLOUDINARY_API_SECRET is not configured');
+    }
+    return cloudinary.utils.api_sign_request(params, apiSecret);
   }
 }

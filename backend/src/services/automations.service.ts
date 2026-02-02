@@ -3,6 +3,19 @@ import { db } from '../db/client';
 import { automations, automationRuns } from '../db/schema';
 import { eq, and, desc, asc, like, sql } from 'drizzle-orm';
 
+
+
+type ValidTriggerType = 
+  | 'manual' 
+  | 'message_received' 
+  | 'keyword' 
+  | 'tag_added' 
+  | 'campaign_reply' 
+  | 'time_delay' 
+  | 'contact_created' 
+  | 'contact_updated' 
+  | 'webhook';
+
 export interface CreateAutomationDto {
   name: string;
   description?: string;
@@ -44,18 +57,27 @@ export class AutomationsService {
       const conditions = [eq(automations.userId, userId)];
 
       if (status && status !== 'all') {
-        conditions.push(eq(automations.status, status));
+        // Type guard for status values
+        if (status === 'active' || status === 'archived' || status === 'draft' || status === 'paused') {
+          conditions.push(eq(automations.status, status));
+        }
       }
 
       if (search) {
         conditions.push(like(automations.name, `%${search}%`));
       }
 
-      // Build order by
+      // Build order by - handle different sort fields
+      let orderBy: any = desc(automations.createdAt); // Default
       const orderByField = sortBy as keyof typeof automations;
-      const orderBy = sortOrder === 'asc' 
-        ? asc(automations[orderByField]) 
-        : desc(automations[orderByField]);
+      
+      // Check if the field exists and is a column
+      if (orderByField in automations) {
+        const column = automations[orderByField] as any;
+        if (column && typeof column === 'object' && 'name' in column) {
+          orderBy = sortOrder === 'asc' ? asc(column) : desc(column);
+        }
+      }
 
       // Get automations with pagination
       const data = await db
@@ -66,11 +88,13 @@ export class AutomationsService {
         .limit(limitNum)
         .offset(offset);
 
-      // Get total count
-      const [{ count }] = await db
-        .select({ count: sql`count(*)` })
+      // Get total count - fix type issue
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
         .from(automations)
         .where(and(...conditions));
+
+      const count = countResult[0]?.count || 0;
 
       return {
         success: true,
@@ -126,119 +150,147 @@ export class AutomationsService {
   }
 
   // Create automation
-async createAutomation(userId: string, data: CreateAutomationDto) {
-  try {
-    // Ensure flow_data has a start node if not provided
-    let flowData = data.flowData;
-    
-    if (!flowData || !flowData.nodes || flowData.nodes.length === 0) {
-      // Create a default start node
-      flowData = {
-        nodes: [
-          {
-            id: 'trigger-' + Date.now(),
-            type: 'triggerNode',
-            position: { x: 100, y: 100 },
-            data: {
-              label: 'Trigger',
-              triggerType: data.triggerType || 'new_conversation',
-              triggerConfig: data.triggerConfig || {},
+  async createAutomation(userId: string, data: CreateAutomationDto) {
+    try {
+      // Ensure flow_data has a start node if not provided
+      let flowData = data.flowData;
+      
+      if (!flowData || !flowData.nodes || flowData.nodes.length === 0) {
+        // Create a default start node
+        flowData = {
+          nodes: [
+            {
+              id: 'trigger-' + Date.now(),
+              type: 'triggerNode',
+              position: { x: 100, y: 100 },
+              data: {
+                label: 'Trigger',
+                triggerType: data.triggerType || 'new_conversation',
+                triggerConfig: data.triggerConfig || {},
+              },
             },
+          ],
+          edges: [],
+        };
+      } else if (!flowData.nodes.some((node: any) => node.type === 'triggerNode')) {
+        // Add start node if not present
+        flowData.nodes.unshift({
+          id: 'trigger-' + Date.now(),
+          type: 'triggerNode', 
+          position: { x: 100, y: 100 },
+          data: {
+            label: 'Trigger',
+            triggerType: data.triggerType || 'new_conversation',
+            triggerConfig: data.triggerConfig || {},
           },
-        ],
-        edges: [],
+        });
+      }
+
+const [automation] = await db
+  .insert(automations)
+  .values({
+    name: data.name,
+    userId: userId,
+    description: data.description || null,
+    status: (data.status || 'draft') as 'draft' | 'active' | 'paused',
+    // Don't include triggerType if it's not provided or invalid
+    ...(data.triggerType && {
+      triggerType: data.triggerType as ValidTriggerType
+    }),
+    triggerConfig: data.triggerConfig || null,
+    flowData: flowData || null,
+  })
+  .returning();
+
+      return {
+        success: true,
+        data: automation,
+        message: 'Automation created successfully',
       };
-    } else if (!flowData.nodes.some((node: any) => node.type === 'triggerNode')) {
-      // Add start node if not present
-      flowData.nodes.unshift({
-    id: 'trigger-' + Date.now(),
-        type: 'triggerNode', 
-        position: { x: 100, y: 100 },
-        data: {
-          label: 'Trigger',
-          triggerType: data.triggerType || 'new_conversation',
-          triggerConfig: data.triggerConfig || {},
-        },
-      });
+    } catch (error) {
+      console.error('Error creating automation:', error);
+      return {
+        success: false,
+        error: 'Failed to create automation',
+      };
+    }
+  }
+
+  // Update automation
+// Update automation
+async updateAutomation(userId: string, automationId: string, data: UpdateAutomationDto) {
+  try {
+    // Check if automation exists and belongs to user
+    const [existing] = await db
+      .select()
+      .from(automations)
+      .where(
+        and(
+          eq(automations.id, automationId),
+          eq(automations.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!existing) {
+      return {
+        success: false,
+        error: 'Automation not found',
+      };
     }
 
+    // Prepare update data with proper types
+    const updateData: any = {};
+    
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.description !== undefined) updateData.description = data.description;
+    
+    // Handle status with type safety
+    if (data.status !== undefined) {
+      // Type guard to check if status is valid
+      const status = data.status as any; // Cast to any to bypass TypeScript check
+      if (status === 'active' || status === 'archived' || status === 'draft' || status === 'paused') {
+        updateData.status = status;
+      }
+    }
+    
+    if (data.triggerType !== undefined) updateData.triggerType = data.triggerType;
+    if (data.triggerConfig !== undefined) updateData.triggerConfig = data.triggerConfig;
+    if (data.flowData !== undefined) updateData.flowData = data.flowData;
+    
+    // Convert Date to string for updatedAt
+    updateData.updatedAt = new Date().toISOString();
+
     const [automation] = await db
-      .insert(automations)
-      .values({
-        ...data,
-        flowData, // Use the updated flowData
-        userId,
-      })
+      .update(automations)
+      .set(updateData)
+      .where(
+        and(
+          eq(automations.id, automationId),
+          eq(automations.userId, userId)
+        )
+      )
       .returning();
 
     return {
       success: true,
       data: automation,
-      message: 'Automation created successfully',
+      message: 'Automation updated successfully',
     };
   } catch (error) {
-    console.error('Error creating automation:', error);
+    console.error('Error updating automation:', error);
     return {
       success: false,
-      error: 'Failed to create automation',
+      error: 'Failed to update automation',
     };
   }
 }
-
-  // Update automation
-  async updateAutomation(userId: string, automationId: string, data: UpdateAutomationDto) {
-    try {
-      // Check if automation exists and belongs to user
-      const [existing] = await db
-        .select()
-        .from(automations)
-        .where(
-          and(
-            eq(automations.id, automationId),
-            eq(automations.userId, userId)
-          )
-        )
-        .limit(1);
-
-      if (!existing) {
-        return {
-          success: false,
-          error: 'Automation not found',
-        };
-      }
-
-      const [automation] = await db
-        .update(automations)
-        .set({
-          ...data,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(automations.id, automationId),
-            eq(automations.userId, userId)
-          )
-        )
-        .returning();
-
-      return {
-        success: true,
-        data: automation,
-        message: 'Automation updated successfully',
-      };
-    } catch (error) {
-      console.error('Error updating automation:', error);
-      return {
-        success: false,
-        error: 'Failed to update automation',
-      };
-    }
-  }
-
   // Update automation status
   async updateAutomationStatus(userId: string, automationId: string, status: string) {
     try {
-      if (!['draft', 'active', 'paused', 'archived'].includes(status)) {
+      // Type guard for valid status values
+      const validStatuses = ['draft', 'active', 'paused', 'archived'] as const;
+      if (!validStatuses.includes(status as any)) {
         return {
           success: false,
           error: 'Invalid status',
@@ -267,8 +319,8 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
       const [automation] = await db
         .update(automations)
         .set({
-          status,
-          updatedAt: new Date(),
+          status: status as 'active' | 'archived' | 'draft' | 'paused',
+          updatedAt: new Date().toISOString(), // Convert to string
         })
         .where(
           and(
@@ -342,7 +394,7 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
       const stats = await db
         .select({
           status: automations.status,
-          count: sql`count(*)`,
+          count: sql<number>`count(*)`,
         })
         .from(automations)
         .where(eq(automations.userId, userId))
@@ -412,12 +464,14 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
       const [run] = await db
         .insert(automationRuns)
         .values({
-          automationId,
-          userId,
+          automationId: automationId,
+          userId: userId,
           triggerData: { test: true },
           status: 'completed',
           executionData: { test: true, success: true },
-          completedAt: new Date(),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
         })
         .returning();
 
@@ -426,7 +480,7 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
         message: 'Automation test executed successfully',
         data: {
           automationId,
-          runId: run.id,
+          runId: run?.id,
           status: 'test_executed',
         },
       };
@@ -471,10 +525,13 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
         .limit(limit)
         .offset(offset);
 
-      const [{ count }] = await db
-        .select({ count: sql`count(*)` })
+      // Fix count type issue
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
         .from(automationRuns)
         .where(eq(automationRuns.automationId, automationId));
+
+      const count = countResult[0]?.count || 0;
 
       return {
         success: true,
@@ -507,8 +564,17 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
       const [run] = await db
         .insert(automationRuns)
         .values({
-          ...data,
-          createdAt: new Date(),
+          automationId: data.automationId,
+          contactId: data.contactId || null,
+          userId: data.userId || null,
+          status: data.status || 'pending',
+          triggerData: data.triggerData || {},
+          executionData: {},
+          nodeExecutions: [],
+          error: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          createdAt: new Date().toISOString(),
         })
         .returning();
 
@@ -534,11 +600,18 @@ async createAutomation(userId: string, data: CreateAutomationDto) {
     completedAt?: Date;
   }) {
     try {
+      // Prepare update data with proper types
+      const updateData: any = {};
+      
+      if (data.executionData !== undefined) updateData.executionData = data.executionData;
+      if (data.nodeExecutions !== undefined) updateData.nodeExecutions = data.nodeExecutions;
+      if (data.error !== undefined) updateData.error = data.error;
+      if (data.status !== undefined) updateData.status = data.status;
+      if (data.completedAt !== undefined) updateData.completedAt = data.completedAt.toISOString();
+
       const [run] = await db
         .update(automationRuns)
-        .set({
-          ...data,
-        })
+        .set(updateData)
         .where(eq(automationRuns.id, runId))
         .returning();
 

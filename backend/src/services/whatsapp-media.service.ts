@@ -63,7 +63,7 @@ static async processWhatsAppMedia(
     const user = userResult[0];
     
     // Use provided access token or get from user
-    const whatsappAccessToken = accessToken || user.whatsappAccessToken;
+    const whatsappAccessToken = accessToken || user?.whatsappAccessToken;
     
     if (!whatsappAccessToken) {
       return {
@@ -170,7 +170,7 @@ static async processWhatsAppMedia(
       .values(mediaAttachmentData)
       .returning();
     
-    console.log(`✅ Media attachment saved: ${mediaAttachment.id}`);
+    console.log(`✅ Media attachment saved: ${mediaAttachment?.id}`);
     
     // 6. Return success result
     return {
@@ -207,26 +207,27 @@ static async processWhatsAppMedia(
       }
 
       // 1. Save message first (will update with media ID later)
-      const [savedMessage] = await db.insert(messages).values({
-        conversationId,
-        contactId,
-        whatsappMessageId: message.id,
-        direction: 'incoming',
-        messageType,
-        body: mediaData.caption || mediaData.filename || `${messageType} message`,
-        status: 'received',
-        timestamp: new Date(parseInt(message.timestamp) * 1000),
-        metadata: {
-          type: messageType,
-          [messageType]: mediaData,
-          processing: true, // Mark as processing
-        },
-      }).returning();
+const [savedMessage] = await db.insert(messages).values({
+  conversationId,
+  contactId,
+  whatsappMessageId: message.id,
+  direction: 'incoming',
+  messageType,
+  body: mediaData.caption || mediaData.filename || `${messageType} message`,
+  status: 'received',
+  timestamp: new Date(parseInt(message.timestamp) * 1000).toISOString(), // Convert to ISO string
+  metadata: {
+    type: messageType,
+    [messageType]: mediaData,
+    processing: true, // Mark as processing
+  },
+  
+}).returning();
 
-      console.log(`💾 Message saved for processing: ${savedMessage.id}`);
+
 
       // 2. Process media in background (don't wait)
-      this.processMediaInBackground(mediaData, messageType, userId, savedMessage.id);
+      this.processMediaInBackground(mediaData, messageType, userId, savedMessage?.id||'');
 
       return savedMessage;
     } catch (error: any) {
@@ -311,8 +312,8 @@ static async processWhatsAppMedia(
     to: string,
     cloudinaryUrl: string,
     mediaType: 'image' | 'video' | 'audio' | 'document',
-    caption?: string,
     accessToken: string,
+    caption?: string,
     filename?: string
   ) {
     try {
@@ -614,14 +615,22 @@ private static getMimeTypeFromBuffer(buffer: ArrayBuffer): string {
   /**
    * Configure Cloudinary
    */
-  private static configureCloudinary() {
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-      secure: true,
-    });
+private static configureCloudinary() {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  
+  if (!cloudName || !apiKey || !apiSecret) {
+    throw new Error('Cloudinary configuration is missing. Please check your environment variables.');
   }
+  
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+}
 
   /**
    * Download WhatsApp media to buffer
@@ -679,26 +688,26 @@ private static getMimeTypeFromBuffer(buffer: ArrayBuffer): string {
   /**
    * List user's WhatsApp media
    */
-  static async listUserMedia(
-    userId: string,
-    page: number = 1,
-    limit: number = 20
-  ): Promise<any[]> {
-    try {
-      const db = getDb();
-      const offset = (page - 1) * limit;
+static async listUserMedia(
+  userId: string,
+  page: number = 1,
+  limit: number = 20
+): Promise<any[]> {
+  try {
+    const db = getDb();
+    const offset = (page - 1) * limit;
 
-      const media = await db.select()
-        .from(mediaAttachments)
-        .where(eq(mediaAttachments.userId, userId))
-        .orderBy(mediaAttachments.createdAt)
-        .limit(limit)
-        .offset(offset);
+    const media = await db.select()
+      .from(mediaAttachments)
+      .where(eq(mediaAttachments.uploadedByUserId, userId))
+      .orderBy(mediaAttachments.createdAt)
+      .limit(limit)
+      .offset(offset);
 
-      return media;
-    } catch (error: any) {
-      console.error('❌ Error listing user media:', error);
-      return [];
-    }
+    return media;
+  } catch (error: any) {
+    console.error('❌ Error listing user media:', error);
+    return [];
   }
+}
 }
