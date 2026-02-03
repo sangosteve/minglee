@@ -1,4 +1,4 @@
-// backend/src/app.ts
+// backend/src/app.ts - UPDATE THE CORS SECTION
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -22,11 +22,16 @@ import teamRoutes from './routes/team.routes';
 import { getDb } from './db/client';
 import templateRoutes from './routes/templates.routes';
 import broadcastRoutes from './routes/broadcasts.routes';
+
 const app = express();
 
-// 1. CORS
+// 1. CORS - UPDATED TO ALLOW YOUR FRONTEND
 app.use(cors({
-  origin: "http://localhost:8080",
+  origin: [
+    "http://localhost:8080",      // Keep for local dev
+    "http://localhost:5173",      // Vite dev server
+    "https://minglee-frontend.onrender.com",  // Your deployed frontend
+  ],
   credentials: true,
 }));
 
@@ -82,7 +87,6 @@ app.get("/api/test", (_req, res) => {
 });
 
 // Debug route for invitation testing
-
 app.get('/debug/invitation/:token', async (req, res) => {
   try {
     const db = getDb();
