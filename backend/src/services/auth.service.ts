@@ -31,19 +31,21 @@ export class AuthService {
 
   // Generate access token
   static generateAccessToken(payload: TokenPayload): string {
+    // FIXED: Remove jwt.SignOptions reference
     return jwt.sign(
       payload,
       process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' } as jwt.SignOptions
+      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
     );
   }
 
   // Generate refresh token
   static generateRefreshToken(userId: string): string {
+    // FIXED: Remove jwt.SignOptions reference
     return jwt.sign(
       { userId },
       process.env.JWT_REFRESH_SECRET!,
-      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' }
     );
   }
 
