@@ -1,5 +1,5 @@
 // backend/src/services/auth.service.ts
-import jwt from 'jsonwebtoken';
+const jwt = require('jsonwebtoken');
 import bcrypt from 'bcryptjs';
 import { getDb } from '../db/client';
 import { users, refreshTokens } from '../db/schema';

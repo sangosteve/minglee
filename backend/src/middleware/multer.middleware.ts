@@ -1,21 +1,34 @@
 // backend/src/middleware/multer.middleware.ts
-// @ts-ignore
-import multer from 'multer';
+// Use require instead of import for problematic modules
+const multer = require('multer');
 import path from 'path';
 import { Request } from 'express';
+
+// Define File type locally since we can't import Express.Multer.File
+interface MulterFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  destination: string;
+  filename: string;
+  path: string;
+  buffer: Buffer;
+}
 
 // Configure storage
 const storage = multer.diskStorage({
   destination: (
     req: Request, 
-    file: Express.Multer.File, 
+    file: MulterFile, 
     cb: (error: Error | null, destination: string) => void
   ) => {
     cb(null, 'uploads/');
   },
   filename: (
     req: Request, 
-    file: Express.Multer.File, 
+    file: MulterFile, 
     cb: (error: Error | null, filename: string) => void
   ) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -23,13 +36,8 @@ const storage = multer.diskStorage({
   }
 });
 
-// File filter - this is separate from storage
-const fileFilter = (
-  req: Request, 
-  file: Express.Multer.File, 
-  cb: multer.FileFilterCallback
-) => {
-  // Accept images, videos, documents
+// File filter - simplified
+const fileFilter = (req: Request, file: MulterFile, cb: any) => {
   const allowedTypes = /jpeg|jpg|png|gif|mp4|mpeg|pdf|doc|docx|txt/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
   const mimetype = allowedTypes.test(file.mimetype);
@@ -43,7 +51,7 @@ const fileFilter = (
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: fileFilter
 });
 
