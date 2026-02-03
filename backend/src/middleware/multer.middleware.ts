@@ -1,4 +1,5 @@
 // backend/src/middleware/multer.middleware.ts
+// @ts-ignore
 import multer from 'multer';
 import path from 'path';
 import { Request } from 'express';
