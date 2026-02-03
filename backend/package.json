@@ -2,11 +2,12 @@
   "name": "minglee-backend",
   "version": "1.0.0",
   "description": "backend for minglee whatsapp crm",
-  "main": "server.ts",
+  "main": "dist/server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "start": "node dist/server.js" 
   },
   "author": "steve sango",
   "license": "ISC",
