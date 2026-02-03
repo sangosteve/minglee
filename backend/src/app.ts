@@ -8,7 +8,7 @@ dotenv.config();
 
 // Import routes
 import testRoute from "./routes/test";
-import contactsRoute from "./routes/contacts";
+import contactsRoute from "./routes/contacts.routes";
 import authRoutes from "./routes/auth.routes";
 import whatsappRoutes from "./routes/whatsapp.routes";
 import conversationsRoute from "./routes/conversations.routes";
