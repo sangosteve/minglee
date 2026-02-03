@@ -18,7 +18,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.10.1",
-    "@types/nodemailer": "^7.0.4",
+    "@types/nodemailer": "^7.0.9",
     "drizzle-kit": "^0.31.7",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

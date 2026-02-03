@@ -1,27 +1,52 @@
 // backend/src/routes/whatsapp.routes.ts
-import { Router } from 'express';
-import { WhatsAppService, WhatsAppWebhookEvent } from '../services/whatsapp.service';
-import { CloudinaryService, MediaFile } from '../services/cloudinary.service';
+import { Router, Request, Response } from 'express';
+import { WhatsAppService } from '../services/whatsapp.service';
+import { CloudinaryService } from '../services/cloudinary.service';
 import { WhatsAppMediaService } from '../services/whatsapp-media.service';
 import { automationExecutionService } from '../services/automation-execution.service';
 import { ContactsService } from '../services/contacts.service';
-import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { authenticate } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments, automations } from '../db/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
-// Fix 1: Change Busboy import to handle CommonJS module properly
-import * as Busboy from 'busboy';
+// Use require for CommonJS modules that don't have proper TypeScript support
+const Busboy = require('busboy');
 import { messageService } from '../services/message/message.service';
 import { triggerMatchingService } from '../services/trigger-matching.service';
 
 const router = Router();
+
+// Type definitions for incoming webhook data
+interface WhatsAppWebhookEvent {
+  entry?: Array<{
+    changes?: Array<{
+      value?: {
+        messaging_product?: string;
+        metadata?: {
+          display_phone_number?: string;
+          phone_number_id?: string;
+        };
+        messages?: any[];
+        statuses?: any[];
+      };
+      field?: string;
+    }>;
+  }>;
+}
+
+interface AuthRequest extends Request {
+  user?: {
+    userId: string;
+    email: string;
+  };
+}
 
 // ==================== WEBHOOK ENDPOINTS ====================
 
 /**
  * Webhook verification (GET)
  */
-router.get('/webhook', (req, res) => {
+router.get('/webhook', (req: Request, res: Response) => {
   try {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -50,14 +75,14 @@ router.get('/webhook', (req, res) => {
 /**
  * Webhook receiver (POST)
  */
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', async (req: Request, res: Response) => {
   try {
     console.log('📩 Webhook received');
 
     // WhatsApp requires a fast 200 response
     res.status(200).send('EVENT_RECEIVED');
 
-    const event = req.body;
+    const event = req.body as WhatsAppWebhookEvent;
 
     if (!event || Object.keys(event).length === 0) {
       console.log('📭 Empty webhook payload');
@@ -261,7 +286,7 @@ async function checkIsFirstMessage(
   try {
     const db = getDb();
 
-    // Fix 2: Type cast the SQL query
+    // Fix: Use proper SQL template literal
     const previousMessages = await db.execute(sql`
       SELECT COUNT(*) as count
       FROM messages m
@@ -270,9 +295,9 @@ async function checkIsFirstMessage(
       AND c.user_id = ${userId}
       AND c.whatsapp_phone_number_id = ${phoneNumberId}
       AND m.direction = 'incoming'
-    ` as any);
+    `);
 
-    const count = Number(previousMessages.rows[0]?.count || 0);
+    const count = Number((previousMessages as any).rows?.[0]?.count || 0);
     return count === 0;
 
   } catch (error) {
@@ -359,7 +384,7 @@ async function processIncomingMessage(
       console.log(`✅ Found user: ${user.email} (ID: ${user.id})`);
     }
 
-    // Fix 3: Add null check for user
+    // Fix: Add null check for user
     if (!user) {
       console.error('❌ User not found, cannot process message');
       return;
@@ -384,22 +409,22 @@ async function processIncomingMessage(
     if (!contact) {
       console.log(`➕ Creating new contact: ${senderName} (${formattedPhone})`);
 
-      // Fix 4: Use SQL expressions or string dates for timestamps
-      const contactData: any = {
-        phone: formattedPhone,
-        name: senderName,
-        email: '',
-        note: `WhatsApp contact created on ${new Date().toISOString()}`,
-        userId: user.id,
-        whatsappBusinessId: user.whatsappBusinessId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
-        whatsappPhoneNumberId: whatsappPhoneNumberId,
-        isActive: true,
-        source: 'whatsapp' as any,
-        status: 'active' as any,
-        optIn: true,
-        createdAt: sql`now()`, // Use SQL expression instead of Date
-        updatedAt: sql`now()`, // Use SQL expression instead of Date
-      };
+      // Fix: Use proper type for contactData
+const contactData = {
+  phone: formattedPhone,
+  name: senderName,
+  email: '',
+  note: `WhatsApp contact created on ${new Date().toISOString()}`,
+  userId: user.id,
+  whatsappBusinessId: user.whatsappBusinessId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
+  whatsappPhoneNumberId: whatsappPhoneNumberId,
+  isActive: true,
+  source: 'whatsapp' as const, // Use 'as const' to make it a literal type
+  status: 'active' as const, // Use 'as const' to make it a literal type
+  optIn: true,
+  createdAt: sql`now()`,
+  updatedAt: sql`now()`,
+};
 
       try {
         [contact] = await db.insert(contacts).values(contactData).returning();
@@ -407,24 +432,23 @@ async function processIncomingMessage(
       } catch (insertError: any) {
         console.error('❌ Error creating contact:', insertError);
 
-        const minimalContactData = {
-          phone: formattedPhone,
-          name: senderName,
-          userId: user.id,
-          source: 'whatsapp' as any,
-          status: 'active' as any,
-          createdAt: sql`now()`, // Use SQL expression
-          updatedAt: sql`now()`, // Use SQL expression
-        };
+const minimalContactData = {
+  phone: formattedPhone,
+  name: senderName,
+  userId: user.id,
+  source: 'whatsapp' as const, // Use 'as const'
+  status: 'active' as const, // Use 'as const'
+  createdAt: sql`now()`,
+  updatedAt: sql`now()`,
+};
 
         [contact] = await db.insert(contacts).values(minimalContactData).returning();
-       
       }
     } else {
       console.log(`✅ Found existing contact: ${contact.name} (ID: ${contact.id})`);
     }
 
-    // Fix 5: Add null check for contact
+    // Fix: Add null check for contact
     if (!contact) {
       console.error('❌ Contact not found or created, cannot process message');
       return;
@@ -451,31 +475,29 @@ async function processIncomingMessage(
         userId: user.id,
         whatsappPhoneNumberId: whatsappPhoneNumberId,
         lastMessage: lastMessage,
-        lastMessageAt: sql`now()`, // Use SQL expression
+        lastMessageAt: sql`now()`,
         unreadCount: 1,
         status: 'active',
-        createdAt: sql`now()`, // Use SQL expression
-        updatedAt: sql`now()`, // Use SQL expression
+        createdAt: sql`now()`,
+        updatedAt: sql`now()`,
       };
 
       [conversation] = await db.insert(conversations).values(conversationData).returning();
-   
     } else {
       const lastMessage = getLastMessageText(message);
-      // Fix 6: Use string dates or SQL expressions for date fields
       await db.update(conversations)
         .set({
           lastMessage: lastMessage,
-          lastMessageAt: new Date().toISOString(), // Use ISO string instead of Date object
+          lastMessageAt: sql`now()`,
           unreadCount: (conversation.unreadCount || 0) + 1,
-          updatedAt: new Date().toISOString(), // Use ISO string instead of Date object
+          updatedAt: sql`now()`,
         })
         .where(eq(conversations.id, conversation.id));
 
       console.log(`✅ Updated conversation: ID ${conversation.id}`);
     }
 
-    // Fix 7: Add null check for conversation
+    // Fix: Add null check for conversation
     if (!conversation) {
       console.error('❌ Conversation not found or created, cannot save message');
       return;
@@ -716,7 +738,6 @@ async function processIncomingMessage(
             phone_number_id: metadata.phone_number_id,
             business_phone_number: metadata.display_phone_number,
             conversation_id: conversation.id,
-            // Only include saved_message_id if result.message exists
             ...(savedMessageId && { saved_message_id: savedMessageId }),
           },
           isFirstMessage
@@ -778,8 +799,8 @@ async function handleAutomationListSelection(
           eq(messages.conversationId, conversationId),
           eq(messages.direction, 'outgoing'),
           eq(messages.contactId, contactId),
-          // Fix 8: Type cast the SQL template literal
-          sql`messages.metadata->>'isInteractiveList' = 'true'` as any
+          // Fix: Use proper SQL template literal
+          sql`messages.metadata->>'isInteractiveList' = 'true'`
         )
       )
       .orderBy(desc(messages.timestamp))
@@ -919,8 +940,8 @@ async function handleAutomationInteractiveSelection(
           eq(messages.conversationId, conversationId),
           eq(messages.direction, 'outgoing'),
           eq(messages.contactId, contactId),
-          // Fix 9: Type cast the SQL template literal
-          sql`messages.metadata->>'isInteractiveMessage' = 'true'` as any
+          // Fix: Use proper SQL template literal
+          sql`messages.metadata->>'isInteractiveMessage' = 'true'`
         )
       )
       .orderBy(desc(messages.timestamp))
@@ -1325,7 +1346,7 @@ function getMimeTypeFromMessageType(messageType: string): string {
  * NOTE: This endpoint is kept for backward compatibility
  * Use /conversations/:id/messages instead for sending messages within conversations
  */
-router.post('/send', authenticate, async (req: AuthRequest, res) => {
+router.post('/send', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const { phoneNumber, message } = req.body;
 
@@ -1408,11 +1429,11 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
  * NOTE: This endpoint is kept for backward compatibility
  * Use /conversations/:id/messages with attachments instead for sending media within conversations
  */
-router.post('/send-media', authenticate, (req: AuthRequest, res) => {
+router.post('/send-media', authenticate, (req: AuthRequest, res: Response) => {
   console.log('📤 Send-media endpoint (busboy) called');
 
-  // Fix 10: Use Busboy constructor properly
-  const busboy = (Busboy as any)({
+  // Fix: Use require for CommonJS module
+  const busboy = new (Busboy as any)({
     headers: req.headers,
     limits: {
       fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'), // 50MB
@@ -1548,12 +1569,11 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
           name: `Contact ${formattedPhone}`,
           userId: user.id,
           whatsappPhoneNumberId: user.whatsappPhoneNumberId,
-          source: 'whatsapp' as any,
-          status: 'active' as any,
+          source: 'whatsapp',
+          status: 'active',
           createdAt: sql`now()`,
           updatedAt: sql`now()`,
         }).returning();
-    
       } else {
         console.log(`✅ Found existing contact: ${contact.id}`);
       }
@@ -1655,7 +1675,7 @@ router.post('/send-media', authenticate, (req: AuthRequest, res) => {
 /**
  * Get user's WhatsApp configuration
  */
-router.get('/config', authenticate, async (req: AuthRequest, res) => {
+router.get('/config', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb();
     const [user] = await db.select({
@@ -1695,7 +1715,7 @@ router.get('/config', authenticate, async (req: AuthRequest, res) => {
 /**
  * Update user's WhatsApp configuration
  */
-router.post('/config', authenticate, async (req: AuthRequest, res) => {
+router.post('/config', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const {
       whatsappBusinessId,
@@ -1739,7 +1759,7 @@ router.post('/config', authenticate, async (req: AuthRequest, res) => {
 /**
  * Health check endpoint
  */
-router.get('/health', authenticate, async (req: AuthRequest, res) => {
+router.get('/health', authenticate, async (req: AuthRequest, res: Response) => {
   try {
     const db = getDb();
     const [user] = await db.select()
@@ -1779,7 +1799,6 @@ router.get('/health', authenticate, async (req: AuthRequest, res) => {
         cloudinaryStatus = 'connected';
       } catch (error) {
         cloudinaryStatus = 'error';
-       
       }
     }
 

@@ -1,20 +1,33 @@
-// backend/src/middleware/multer.ts
+// backend/src/middleware/multer.middleware.ts
 import multer from 'multer';
 import path from 'path';
+import { Request } from 'express';
 
 // Configure storage
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (
+    req: Request, 
+    file: Express.Multer.File, 
+    cb: (error: Error | null, destination: string) => void
+  ) => {
     cb(null, 'uploads/');
   },
-  filename: (req, file, cb) => {
+  filename: (
+    req: Request, 
+    file: Express.Multer.File, 
+    cb: (error: Error | null, filename: string) => void
+  ) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-// File filter
-const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+// File filter - this is separate from storage
+const fileFilter = (
+  req: Request, 
+  file: Express.Multer.File, 
+  cb: multer.FileFilterCallback
+) => {
   // Accept images, videos, documents
   const allowedTypes = /jpeg|jpg|png|gif|mp4|mpeg|pdf|doc|docx|txt/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());

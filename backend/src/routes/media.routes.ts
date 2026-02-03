@@ -3,20 +3,20 @@ import { Router } from 'express';
 import multer from 'multer';
 import { CloudinaryService } from '../services/cloudinary.service';
 import { WhatsAppService } from '../services/whatsapp.service';
-import { authenticate, AuthRequest } from '../middleware/auth.middleware';
+import { authenticate } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 
 const router = Router();
 
-// Configure multer for file uploads
+// Configure multer for file uploads - simplified version
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'),
   },
-  fileFilter: (req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  fileFilter: (req: any, file: any, cb: any) => {
     const allowedMimes = [
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
       'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
@@ -37,7 +37,7 @@ const upload = multer({
 /**
  * Upload media to Cloudinary and send via WhatsApp
  */
-router.post('/send', authenticate, upload.single('file'), async (req: AuthRequest, res) => {
+router.post('/send', authenticate, upload.single('file'), async (req: any, res: any) => {
   try {
     const { phoneNumber, caption } = req.body;
     const file = req.file;
@@ -250,7 +250,7 @@ router.post('/send', authenticate, upload.single('file'), async (req: AuthReques
 /**
  * Get Cloudinary upload signature for frontend direct uploads
  */
-router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
+router.get('/upload-signature', authenticate, async (req: any, res: any) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -317,9 +317,9 @@ router.get('/upload-signature', authenticate, async (req: AuthRequest, res) => {
 /**
  * Upload multiple files
  */
-router.post('/upload-multiple', authenticate, upload.array('files', 10), async (req: AuthRequest, res) => {
+router.post('/upload-multiple', authenticate, upload.array('files', 10), async (req: any, res: any) => {
   try {
-    const files = req.files as Express.Multer.File[];
+    const files = req.files as any[];
     const folder = req.body.folder;
 
     if (!files || files.length === 0) {
@@ -340,7 +340,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
       });
     }
     
-    const uploadPromises = files.map(async (file) => {
+    const uploadPromises = files.map(async (file: any) => {
       try {
         console.log(`📄 Processing file: ${file.originalname} (${file.size} bytes)`);
         
@@ -428,8 +428,8 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 
     const results = await Promise.all(uploadPromises);
 
-    const successful = results.filter(r => r.success);
-    const failed = results.filter(r => !r.success);
+    const successful = results.filter((r: any) => r.success);
+    const failed = results.filter((r: any) => !r.success);
 
     console.log(`📊 Upload results: ${successful.length} successful, ${failed.length} failed`);
 
@@ -455,7 +455,7 @@ router.post('/upload-multiple', authenticate, upload.array('files', 10), async (
 /**
  * Get user's media attachments
  */
-router.get('/attachments', authenticate, async (req: AuthRequest, res) => {
+router.get('/attachments', authenticate, async (req: any, res: any) => {
   try {
     const { page = 1, limit = 20, type } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -516,7 +516,7 @@ router.get('/attachments', authenticate, async (req: AuthRequest, res) => {
 /**
  * Delete media attachment
  */
-router.delete('/attachments/:id', authenticate, async (req: AuthRequest, res) => {
+router.delete('/attachments/:id', authenticate, async (req: any, res: any) => {
   try {
     const { id } = req.params;
     
@@ -697,7 +697,7 @@ async function findOrCreateConversation(
     lastMessage: 'New conversation',
     lastMessageAt: new Date().toISOString(),
     unreadCount: 0,
-    status: 'active' as const, // FIXED: Added "as const" for literal type
+    status: 'active' as const,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     id: undefined as any,

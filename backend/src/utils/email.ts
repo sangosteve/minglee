@@ -23,23 +23,20 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  debug: true, // Enable debug output
-  logger: true, // Enable logging
-  tls: {
-    // Do not fail on invalid certs
-    rejectUnauthorized: false
-  }
+  debug: true,
+  logger: true,
+  tls: { rejectUnauthorized: false },
 });
 
 // Verify connection configuration
-transporter.verify((error, success) => {
+transporter.verify((error: Error | null, success: boolean) => {
   if (error) {
     console.error('❌ SMTP connection error:', error.message);
-
   } else {
     console.log('✅ SMTP server is ready to take messages');
   }
 });
+
 
 export interface EmailOptions {
   to: string | string[];
