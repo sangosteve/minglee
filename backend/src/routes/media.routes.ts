@@ -1,6 +1,6 @@
 // backend/src/routes/media.routes.ts
 import { Router } from 'express';
-import multer from 'multer';
+const multer = require('multer');
 import { CloudinaryService } from '../services/cloudinary.service';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { authenticate } from '../middleware/auth.middleware';

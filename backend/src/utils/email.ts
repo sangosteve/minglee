@@ -1,18 +1,11 @@
 // backend/src/utils/email.ts
-import nodemailer from 'nodemailer';
+const nodemailer = require('nodemailer');
 import dotenv from 'dotenv';
 
 // Load environment variables explicitly
 dotenv.config();
 
-console.log('📧 Email utility initialized');
-console.log('📧 Environment check:');
-console.log('  SMTP_USER exists:', !!process.env.SMTP_USER);
-console.log('  SMTP_PASS exists:', !!process.env.SMTP_PASS);
-console.log('  SMTP_HOST:', process.env.SMTP_HOST || '(default: smtp.gmail.com)');
-console.log('  SMTP_PORT:', process.env.SMTP_PORT || '(default: 587)');
-console.log('  SMTP_SECURE:', process.env.SMTP_SECURE || '(default: false)');
-console.log('  FRONTEND_URL:', process.env.FRONTEND_URL || '(default: http://localhost:8080)');
+
 
 // Configure email transporter
 const transporter = nodemailer.createTransport({
