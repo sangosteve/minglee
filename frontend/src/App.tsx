@@ -288,7 +288,7 @@ const App = () => {
         <Toaster />
         <Sonner />
         <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
-          <BrowserRouter>
+          <BrowserRouter basename="/">
             <AuthInterceptor>
               <TagsProvider>
                 <AppContent />
