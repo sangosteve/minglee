@@ -14,7 +14,7 @@ import { eq, and, sql, desc } from 'drizzle-orm';
 
 import { messageService } from '../services/message/message.service';
 import { triggerMatchingService } from '../services/trigger-matching.service';
-import upload from '@/middleware/multer.middleware';
+import upload from '../middleware/multer.middleware';
 
 const router = Router();
 
