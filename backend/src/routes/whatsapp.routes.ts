@@ -9,10 +9,12 @@ import { authenticate } from '../middleware/auth.middleware';
 import { getDb } from '../db/client';
 import { users, contacts, conversations, messages, mediaAttachments, automations } from '../db/schema';
 import { eq, and, sql, desc } from 'drizzle-orm';
+
 // Use require for CommonJS modules that don't have proper TypeScript support
-const Busboy = require('busboy');
+
 import { messageService } from '../services/message/message.service';
 import { triggerMatchingService } from '../services/trigger-matching.service';
+import upload from '@/middleware/multer.middleware';
 
 const router = Router();
 
@@ -34,11 +36,24 @@ interface WhatsAppWebhookEvent {
   }>;
 }
 
+interface MulterFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  destination?: string;
+  filename?: string;
+  path?: string;
+  buffer: Buffer;
+}
+
 interface AuthRequest extends Request {
   user?: {
     userId: string;
     email: string;
   };
+ file?: MulterFile; 
 }
 
 // ==================== WEBHOOK ENDPOINTS ====================
@@ -1429,247 +1444,175 @@ router.post('/send', authenticate, async (req: AuthRequest, res: Response) => {
  * NOTE: This endpoint is kept for backward compatibility
  * Use /conversations/:id/messages with attachments instead for sending media within conversations
  */
-router.post('/send-media', authenticate, (req: AuthRequest, res: Response) => {
-  console.log('📤 Send-media endpoint (busboy) called');
-
-  // Fix: Use require for CommonJS module
-  const busboy = new (Busboy as any)({
-    headers: req.headers,
-    limits: {
-      fileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800'), // 50MB
-    }
-  });
-
-  const fields: Record<string, string> = {};
-  let fileBuffer: Buffer | null = null;
-  let fileName = '';
-  let fileMimeType = '';
-  let fileSize = 0;
-
-  // Handle form fields
-  busboy.on('field', (fieldname: string, val: string) => {
-    console.log(`📝 Field [${fieldname}]: ${val.substring(0, 100)}`);
-    fields[fieldname] = val;
-  });
-
-  // Handle file upload
-  busboy.on('file', (fieldname: string, file: any, info: any) => {
-    console.log(`📁 File [${fieldname}]: ${info.filename} (${info.mimeType})`);
-    fileName = info.filename;
-    fileMimeType = info.mimeType;
-
-    const chunks: Buffer[] = [];
-    file.on('data', (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    file.on('end', () => {
-      fileBuffer = Buffer.concat(chunks);
-      fileSize = fileBuffer.length;
-      console.log(`✅ File read complete: ${fileName} (${fileSize} bytes)`);
-    });
-
-    file.on('error', (err: Error) => {
-      console.error('❌ File read error:', err);
-    });
-  });
-
-  // When all fields and files have been processed
-  busboy.on('finish', async () => {
-    try {
-      console.log('✅ Busboy parsing complete');
-
-      // Extract fields
-      const phoneNumber = fields.phoneNumber;
-      const caption = fields.caption || '';
-
-      console.log('📊 Parsed data:', { phoneNumber, caption, hasFile: !!fileBuffer });
-
-      // Validate required fields
-      if (!fileBuffer || !phoneNumber) {
-        return res.status(400).json({
-          success: false,
-          error: 'File and phone number are required'
-        });
-      }
-
-      const db = getDb();
-
-      // 1. Get user's WhatsApp configuration
-      const [user] = await db.select()
-        .from(users)
-        .where(eq(users.id, req.user!.userId))
-        .limit(1);
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found'
-        });
-      }
-
-      if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
-        return res.status(400).json({
-          success: false,
-          error: 'WhatsApp not configured for this user'
-        });
-      }
-
-      console.log(`📤 Processing media upload for user: ${user.email}`);
-      console.log(`📁 File: ${fileName} (${(fileSize / 1024).toFixed(2)} KB, ${fileMimeType})`);
-
-      // 2. Upload file to Cloudinary
-      console.log('☁️ Uploading to Cloudinary...');
-
-      const mediaFile = {
-        buffer: fileBuffer,
-        originalname: fileName,
-        mimetype: fileMimeType,
-        size: fileSize,
-      };
-
-      const cloudinaryResult = await CloudinaryService.uploadFile(mediaFile, {
-        folder: `whatsapp_media/user_${user.id}`,
-        tags: ['whatsapp', `user_${user.id}`],
-        context: {
-          uploaded_by: user.email,
-          original_filename: fileName,
-        },
-      });
-
-      if (!cloudinaryResult.success) {
-        console.error('❌ Cloudinary upload failed:', cloudinaryResult.error);
-        return res.status(500).json({
-          success: false,
-          error: cloudinaryResult.error || 'Failed to upload to Cloudinary'
-        });
-      }
-
-      console.log(`✅ Cloudinary upload successful:`);
-      console.log(`   URL: ${cloudinaryResult.secureUrl}`);
-      console.log(`   Public ID: ${cloudinaryResult.publicId}`);
-
-      // 3. Find or create contact
-      let formattedPhone = phoneNumber.replace(/\D/g, '');
-
-      let [contact] = await db.select()
-        .from(contacts)
-        .where(
-          and(
-            eq(contacts.phone, formattedPhone),
-            eq(contacts.userId, user.id)
-          )
-        )
-        .limit(1);
-
-      if (!contact) {
-        // Create new contact - use SQL expressions for timestamps
-        [contact] = await db.insert(contacts).values({
-          phone: formattedPhone,
-          name: `Contact ${formattedPhone}`,
-          userId: user.id,
-          whatsappPhoneNumberId: user.whatsappPhoneNumberId,
-          source: 'whatsapp',
-          status: 'active',
-          createdAt: sql`now()`,
-          updatedAt: sql`now()`,
-        }).returning();
-      } else {
-        console.log(`✅ Found existing contact: ${contact.id}`);
-      }
-
-      // Use MessageService to send media message - FIXED: Add null check for contact
-      if (!contact) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to create contact'
-        });
-      }
-
-      // Create attachment with proper optional properties
-      const attachment: any = {
-        url: cloudinaryResult.secureUrl,
-        secureUrl: cloudinaryResult.secureUrl,
-        mimeType: fileMimeType,
-        originalFilename: fileName,
-        fileSize: fileSize,
-        caption: caption,
-      };
-
-      // Add optional properties only if they exist
-      if (cloudinaryResult.width !== undefined) {
-        attachment.width = cloudinaryResult.width;
-      }
-      
-      if (cloudinaryResult.height !== undefined) {
-        attachment.height = cloudinaryResult.height;
-      }
-      
-      if (cloudinaryResult.duration !== undefined) {
-        attachment.duration = cloudinaryResult.duration;
-      }
-
-      const result = await messageService.sendMessage({
-        contactId: contact.id,
-        userId: user.id,
-        body: caption,
-        attachments: [attachment],
-        direction: 'outgoing',
-        metadata: {
-          cloudinaryPublicId: cloudinaryResult.publicId,
-        },
-      });
-
-      console.log(`✅ All records saved successfully`);
-
-      res.json({
-        success: true,
-        message: 'Media sent successfully',
-        data: {
-          cloudinaryUrl: cloudinaryResult.secureUrl,
-          whatsappMessageId: result.whatsappResponse?.messages?.[0]?.id,
-          message: {
-            id: result?.message?.id,
-            type: result?.message?.messageType,
-            body: result?.message?.body,
-          },
-          conversation: {
-            id: result.conversation.id,
-            contactId: result.conversation.contactId,
-          },
-        },
-      });
-
-    } catch (error: any) {
-      console.error('❌ Error processing media upload:', error);
-      console.error('❌ Error stack:', error.stack);
-      res.status(500).json({
+router.post('/send-media', authenticate, upload.single('file'), async (req: AuthRequest, res: Response) => {
+  try {
+    console.log('📤 Send-media endpoint (multer) called');
+    
+    const { phoneNumber, caption } = req.body;
+    //const file = req.file;
+ const file = req.file;
+    if (!file || !phoneNumber) {
+      return res.status(400).json({
         success: false,
-        error: error.response?.data?.error?.message || error.message || 'Failed to send media'
+        error: 'File and phone number are required'
       });
     }
-  });
 
-  // Handle busboy errors
-  busboy.on('error', (error: Error) => {
-    console.error('❌ Busboy parsing error:', error);
-    res.status(400).json({
-      success: false,
-      error: `Failed to parse form data: ${error}`
+    const db = getDb();
+
+    // 1. Get user's WhatsApp configuration
+    const [user] = await db.select()
+      .from(users)
+      .where(eq(users.id, req.user!.userId))
+      .limit(1);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    if (!user.whatsappPhoneNumberId || !user.whatsappAccessToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'WhatsApp not configured for this user'
+      });
+    }
+
+    console.log(`📤 Processing media upload for user: ${user.email}`);
+    console.log(`📁 File: ${file.originalname} (${(file.size / 1024).toFixed(2)} KB, ${file.mimetype})`);
+
+    // 2. Upload file to Cloudinary
+    console.log('☁️ Uploading to Cloudinary...');
+
+    const mediaFile = {
+      buffer: file.buffer,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+    };
+
+    const cloudinaryResult = await CloudinaryService.uploadFile(mediaFile, {
+      folder: `whatsapp_media/user_${user.id}`,
+      tags: ['whatsapp', `user_${user.id}`],
+      context: {
+        uploaded_by: user.email,
+        original_filename: file.originalname,
+      },
     });
-  });
 
-  // Handle file limit errors
-  busboy.on('filesLimit', () => {
-    console.error('❌ File limit exceeded');
-    res.status(400).json({
-      success: false,
-      error: 'File size exceeds limit (50MB)'
+    if (!cloudinaryResult.success) {
+      console.error('❌ Cloudinary upload failed:', cloudinaryResult.error);
+      return res.status(500).json({
+        success: false,
+        error: cloudinaryResult.error || 'Failed to upload to Cloudinary'
+      });
+    }
+
+    console.log(`✅ Cloudinary upload successful:`);
+    console.log(`   URL: ${cloudinaryResult.secureUrl}`);
+    console.log(`   Public ID: ${cloudinaryResult.publicId}`);
+
+    // 3. Find or create contact
+    let formattedPhone = phoneNumber.replace(/\D/g, '');
+
+    let [contact] = await db.select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.phone, formattedPhone),
+          eq(contacts.userId, user.id)
+        )
+      )
+      .limit(1);
+
+    if (!contact) {
+      // Create new contact - use SQL expressions for timestamps
+      [contact] = await db.insert(contacts).values({
+        phone: formattedPhone,
+        name: `Contact ${formattedPhone}`,
+        userId: user.id,
+        whatsappPhoneNumberId: user.whatsappPhoneNumberId,
+        source: 'whatsapp',
+        status: 'active',
+        createdAt: sql`now()`,
+        updatedAt: sql`now()`,
+      }).returning();
+    } else {
+      console.log(`✅ Found existing contact: ${contact.id}`);
+    }
+
+    // Use MessageService to send media message - FIXED: Add null check for contact
+    if (!contact) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create contact'
+      });
+    }
+
+    // Create attachment with proper optional properties
+    const attachment: any = {
+      url: cloudinaryResult.secureUrl,
+      secureUrl: cloudinaryResult.secureUrl,
+      mimeType: file.mimetype,
+      originalFilename: file.originalname,
+      fileSize: file.size,
+      caption: caption,
+    };
+
+    // Add optional properties only if they exist
+    if (cloudinaryResult.width !== undefined) {
+      attachment.width = cloudinaryResult.width;
+    }
+    
+    if (cloudinaryResult.height !== undefined) {
+      attachment.height = cloudinaryResult.height;
+    }
+    
+    if (cloudinaryResult.duration !== undefined) {
+      attachment.duration = cloudinaryResult.duration;
+    }
+
+    const result = await messageService.sendMessage({
+      contactId: contact.id,
+      userId: user.id,
+      body: caption,
+      attachments: [attachment],
+      direction: 'outgoing',
+      metadata: {
+        cloudinaryPublicId: cloudinaryResult.publicId,
+      },
     });
-  });
 
-  // Pipe the request to busboy
-  req.pipe(busboy);
+    console.log(`✅ All records saved successfully`);
+
+    res.json({
+      success: true,
+      message: 'Media sent successfully',
+      data: {
+        cloudinaryUrl: cloudinaryResult.secureUrl,
+        whatsappMessageId: result.whatsappResponse?.messages?.[0]?.id,
+        message: {
+          id: result?.message?.id,
+          type: result?.message?.messageType,
+          body: result?.message?.body,
+        },
+        conversation: {
+          id: result.conversation.id,
+          contactId: result.conversation.contactId,
+        },
+      },
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error processing media upload:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data?.error?.message || error.message || 'Failed to send media'
+    });
+  }
 });
 
 /**
